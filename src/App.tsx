@@ -1,6 +1,11 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import { commands, type Todo, type TodoFilter } from "./bindings";
-import "./App.css";
+import { Card, CardContent, CardFooter, CardHeader, CardTitle } from "@/components/ui/card";
+import { Input } from "@/components/ui/input";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Badge } from "@/components/ui/badge";
+import { Trash2, CheckCheck } from "lucide-react";
 
 function App() {
   const [todos, setTodos] = useState<Todo[]>([]);
@@ -86,68 +91,51 @@ function App() {
     setEditingId(null);
   };
 
-  // 从完整列表计算活跃数（filter=All 时直接用，否则需单独请求）
-  // 简化处理：始终显示当前列表的统计
   const activeCount = todos.filter((t) => !t.completed).length;
   const completedCount = todos.filter((t) => t.completed).length;
   const allCompleted = todos.length > 0 && todos.every((t) => t.completed);
 
   return (
-    <section className="todoapp">
-      <header className="header">
-        <h1>todos</h1>
-        <input
-          className="new-todo"
-          placeholder="What needs to be done?"
-          value={newTitle}
-          onChange={(e) => setNewTitle(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === "Enter") handleCreate();
-          }}
-          autoFocus
-        />
-      </header>
-
-      {todos.length > 0 && (
-        <section className="main">
-          <input
-            id="toggle-all"
-            className="toggle-all"
-            type="checkbox"
-            checked={allCompleted}
-            onChange={handleToggleAll}
-          />
-          <label htmlFor="toggle-all">Mark all as complete</label>
-          <ul className="todo-list">
-            {todos.map((todo) => (
-              <li
-                key={todo.id}
-                className={[
-                  todo.completed ? "completed" : "",
-                  editingId === todo.id ? "editing" : "",
-                ]
-                  .join(" ")
-                  .trim()}
+    <div className="flex min-h-screen items-start justify-center bg-background p-8">
+      <Card className="w-full max-w-lg">
+        <CardHeader className="pb-4">
+          <CardTitle className="text-center text-2xl font-light tracking-wide">
+            todos
+          </CardTitle>
+          <div className="flex gap-2 pt-2">
+            {todos.length > 0 && (
+              <Button
+                variant={allCompleted ? "default" : "outline"}
+                size="icon"
+                onClick={handleToggleAll}
+                title="Toggle all"
               >
-                <div className="view">
-                  <input
-                    className="toggle"
-                    type="checkbox"
-                    checked={todo.completed}
-                    onChange={() => handleToggle(todo.id)}
-                  />
-                  <label onDoubleClick={() => startEditing(todo)}>
-                    {todo.title}
-                  </label>
-                  <button
-                    className="destroy"
-                    onClick={() => handleDelete(todo.id)}
-                  />
-                </div>
-                {editingId === todo.id && (
-                  <input
+                <CheckCheck className="size-4" />
+              </Button>
+            )}
+            <Input
+              placeholder="What needs to be done?"
+              value={newTitle}
+              onChange={(e) => setNewTitle(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") handleCreate();
+              }}
+              autoFocus
+              className="flex-1"
+            />
+          </div>
+        </CardHeader>
+
+        {todos.length > 0 && (
+          <CardContent className="space-y-1 px-4 pb-4">
+            {todos.map((todo) => (
+              <div
+                key={todo.id}
+                className="group flex items-center gap-3 rounded-md px-2 py-2 hover:bg-muted/50"
+              >
+                {editingId === todo.id ? (
+                  <Input
                     ref={editRef}
-                    className="edit"
                     value={editText}
                     onChange={(e) => setEditText(e.target.value)}
                     onKeyDown={(e) => {
@@ -155,44 +143,71 @@ function App() {
                       if (e.key === "Escape") cancelEdit();
                     }}
                     onBlur={() => submitEdit(todo.id)}
+                    className="flex-1"
                   />
+                ) : (
+                  <>
+                    <Checkbox
+                      checked={todo.completed}
+                      onCheckedChange={() => handleToggle(todo.id)}
+                    />
+                    <span
+                      className={`flex-1 cursor-pointer text-sm ${
+                        todo.completed
+                          ? "text-muted-foreground line-through"
+                          : ""
+                      }`}
+                      onDoubleClick={() => startEditing(todo)}
+                    >
+                      {todo.title}
+                    </span>
+                    <Button
+                      variant="ghost"
+                      size="icon-xs"
+                      className="opacity-0 group-hover:opacity-100"
+                      onClick={() => handleDelete(todo.id)}
+                    >
+                      <Trash2 className="size-3.5 text-muted-foreground" />
+                    </Button>
+                  </>
                 )}
-              </li>
+              </div>
             ))}
-          </ul>
-        </section>
-      )}
+          </CardContent>
+        )}
 
-      {todos.length > 0 && (
-        <footer className="footer">
-          <span className="todo-count">
-            <strong>{activeCount}</strong>{" "}
-            {activeCount === 1 ? "item" : "items"} left
-          </span>
-          <ul className="filters">
-            {(["All", "Active", "Completed"] as const).map((f) => (
-              <li key={f}>
-                <a
-                  href="#"
-                  className={filter === f ? "selected" : ""}
-                  onClick={(e) => {
-                    e.preventDefault();
-                    setFilter(f);
-                  }}
+        {todos.length > 0 && (
+          <CardFooter className="flex items-center justify-between border-t px-4 py-3">
+            <Badge variant="secondary">
+              {activeCount} {activeCount === 1 ? "item" : "items"} left
+            </Badge>
+
+            <div className="flex gap-1">
+              {(["All", "Active", "Completed"] as const).map((f) => (
+                <Button
+                  key={f}
+                  variant={filter === f ? "secondary" : "ghost"}
+                  size="sm"
+                  onClick={() => setFilter(f)}
                 >
                   {f}
-                </a>
-              </li>
-            ))}
-          </ul>
-          {completedCount > 0 && (
-            <button className="clear-completed" onClick={handleClearCompleted}>
-              Clear completed
-            </button>
-          )}
-        </footer>
-      )}
-    </section>
+                </Button>
+              ))}
+            </div>
+
+            {completedCount > 0 && (
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={handleClearCompleted}
+              >
+                Clear completed
+              </Button>
+            )}
+          </CardFooter>
+        )}
+      </Card>
+    </div>
   );
 }
 
