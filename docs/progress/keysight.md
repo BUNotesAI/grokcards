@@ -6,7 +6,6 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 
 ## Next
 
-- [ ] Phase 1: Rust domain 移植（TDD + Trait-First，🔴🟢 关卡）
 - [ ] Phase 2: Tauri commands + specta 绑定（接线验证 + Operation Contract）
 - [ ] Phase 3: 一次性旧 DB 导入（TDD + Trait-First，LegacyReader/LegacyImporter trait，🔴🟢 关卡）
 - [ ] Phase 4: 文件监听（TDD + Trait-First，FileEventSource/Handler trait，🔴🟢 关卡）
@@ -14,3 +13,7 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 - [ ] Phase 6: UI 补全（每个组件 TDD，🔴🟢 关卡）
 
 ## Done
+
+### 2026-04-11
+
+- [x] Phase 1: Rust domain 移植（102 tests, 10 domain modules, TDD + Trait-First）
