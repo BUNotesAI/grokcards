@@ -319,7 +319,7 @@ pub(in crate::modules::keysight) fn sync_vault(
 
     // 4. 清理孤儿（db_map 中剩余的 = 文件已删除）
     let mut removed = 0u32;
-    for (orphan_path, _) in &db_map {
+    for orphan_path in db_map.keys() {
         remove_file(conn, orphan_path)?;
         removed += 1;
     }

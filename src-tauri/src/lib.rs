@@ -63,6 +63,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::sync_file,
         modules::keysight::commands::sync_remove_file,
         modules::keysight::commands::sync_all_file_mtimes,
+        modules::keysight::commands::sync_vault,
         // keysight: overview
         modules::keysight::commands::overview_stats,
         modules::keysight::commands::overview_graph,
@@ -117,6 +118,17 @@ pub fn run() {
         .setup(move |app| {
             let keysight_state = init_keysight_state(app);
             app.manage(keysight_state);
+
+            // 启动时全量同步 vault → DB
+            let ks = app.state::<modules::keysight::state::KeysightState>();
+            match modules::keysight::startup_sync(&ks) {
+                Ok(report) => eprintln!(
+                    "[keysight] startup sync: scanned={}, synced={}, removed={}, skipped={}, backfilled={}",
+                    report.scanned, report.synced, report.removed, report.skipped, report.backfilled
+                ),
+                Err(e) => eprintln!("[keysight] startup sync failed: {e}"),
+            }
+
             builder.mount_events(app);
             Ok(())
         })

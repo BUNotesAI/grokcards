@@ -14,7 +14,7 @@ use super::domain::{overview, sync};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, Edge, EdgeStyle, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, Position, StatsResponse, SyncFileResponse,
-    VaultInfoResponse,
+    SyncVaultReport, VaultInfoResponse,
 };
 use super::state::KeysightState;
 use super::vault_fs::RealVaultFs;
@@ -827,6 +827,31 @@ pub fn sync_all_file_mtimes(
 ) -> Result<Vec<(String, f64)>, AppError> {
     let conn = state.db.lock().unwrap();
     sync::all_file_mtimes(&conn).map_err(Into::into)
+}
+
+/// # sync_vault
+///
+/// ## 前置条件
+/// - KEYSIGHT_VAULT_PATH 已设置且目录存在
+///
+/// ## 执行效果
+/// 1. 扫描 whiteboard/ 下所有 .md 文件
+/// 2. mtime diff → 同步变更文件到 DB
+/// 3. 清理孤儿（DB 有但文件不存在的实体）
+/// 4. 回写缺少 id 的文件 frontmatter
+///
+/// ## 幂等性
+/// 幂等 — mtime 未变的文件不重复同步
+///
+/// ## 关联操作
+/// - [`sync_file`] — 单文件同步（内部调用）
+/// - [`sync_remove_file`] — 删除文件（内部调用）
+#[tauri::command]
+#[specta::specta]
+pub fn sync_vault(state: State<'_, KeysightState>) -> Result<SyncVaultReport, AppError> {
+    let conn = state.db.lock().unwrap();
+    let fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    sync::sync_vault(&conn, &fs).map_err(Into::into)
 }
 
 // ============================================================
