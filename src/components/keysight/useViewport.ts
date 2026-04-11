@@ -119,3 +119,6 @@ export function useViewport() {
     actions: { zoomIn, zoomOut, resetView },
   };
 }
+
+/** useViewport hook 的返回值类型，供 GraphCanvas props 使用 */
+export type UseViewportReturn = ReturnType<typeof useViewport>;

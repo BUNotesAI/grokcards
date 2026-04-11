@@ -1,7 +1,9 @@
-import { useViewport } from "@/components/keysight/useViewport";
 import { useEffect } from "react";
+import type { UseViewportReturn } from "@/components/keysight/useViewport";
 
 interface GraphCanvasProps {
+  /** 从外部注入的 viewport 状态（GraphView 创建，Toolbar 和 Canvas 共享） */
+  viewport: UseViewportReturn;
   children?: React.ReactNode;
 }
 
@@ -14,10 +16,11 @@ interface GraphCanvasProps {
  * - Cmd/Ctrl + =/-/0 键盘快捷键（放大/缩小/重置）
  * - 普通滚轮平移
  *
- * children 渲染在 transform 容器内，跟随视口变换
+ * viewport 由外部通过 props 注入，使 GraphView 可以同时给 Toolbar 和 Canvas 共享同一个 viewport 状态。
+ * children 渲染在 transform 容器内，跟随视口变换。
  */
-export function GraphCanvas({ children }: GraphCanvasProps) {
-  const { state, handlers, actions } = useViewport();
+export function GraphCanvas({ viewport, children }: GraphCanvasProps) {
+  const { state, handlers, actions } = viewport;
 
   // 键盘快捷键：Cmd+= 放大，Cmd+- 缩小，Cmd+0 重置
   useEffect(() => {
