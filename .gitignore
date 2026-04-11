@@ -31,3 +31,4 @@ mock-*.html
 *.njsproj
 *.sln
 *.sw?
+keysight-imported.db
