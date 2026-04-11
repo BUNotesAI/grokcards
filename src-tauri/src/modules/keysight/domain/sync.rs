@@ -232,6 +232,39 @@ pub(in crate::modules::keysight) fn all_file_mtimes(
     Ok(rows)
 }
 
+/// 在 frontmatter 中插入 id 字段。
+///
+/// 找到第一个 `---\n` 后的位置，插入 `id: {id}\n`。
+/// 纯字符串操作，不使用 YAML 解析器。
+///
+/// ## 前置条件
+/// - content 以 `---\n` 开头（有 frontmatter）
+///
+/// ## 不做的事
+/// - 不校验 id 是否已存在（sync_file 已判断）
+/// - 不重新格式化 frontmatter
+pub(in crate::modules::keysight) fn insert_id_into_frontmatter(
+    content: &str,
+    id: &str,
+) -> Result<String, KeysightError> {
+    if !content.starts_with("---") {
+        return Err(KeysightError::ParseError(
+            "文件没有 frontmatter（不以 --- 开头）".to_string(),
+        ));
+    }
+    // 找到第一个 ---\n 后的位置
+    let insert_pos = content
+        .find("---\n")
+        .map(|p| p + 4) // "---\n" 长度为 4
+        .ok_or_else(|| KeysightError::ParseError("无法定位 frontmatter 起始".to_string()))?;
+
+    let mut result = String::with_capacity(content.len() + id.len() + 5);
+    result.push_str(&content[..insert_pos]);
+    result.push_str(&format!("id: {id}\n"));
+    result.push_str(&content[insert_pos..]);
+    Ok(result)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -490,5 +523,36 @@ Body content here.
             )
             .unwrap();
         assert_eq!(count, 0);
+    }
+
+    // --- insert_id_into_frontmatter ---
+
+    #[test]
+    fn test_insert_id_basic() {
+        let content = "---\ntype: atomic-card\ntags:\n  - rust\n---\n\n# Title\n\nBody.\n";
+        let result = insert_id_into_frontmatter(content, "card_abc12345").unwrap();
+        assert!(result.contains("id: card_abc12345\n"));
+        // id 应在第一个 --- 之后
+        let id_pos = result.find("id: card_abc12345").unwrap();
+        let first_sep = result.find("---").unwrap();
+        assert!(id_pos > first_sep);
+        // 其余 frontmatter 字段不变
+        assert!(result.contains("type: atomic-card"));
+        assert!(result.contains("tags:"));
+    }
+
+    #[test]
+    fn test_insert_id_preserves_body() {
+        let content = "---\ntype: atomic-card\n---\n\n# Title\n\nBody content.\n";
+        let result = insert_id_into_frontmatter(content, "card_xyz99999").unwrap();
+        assert!(result.contains("# Title"));
+        assert!(result.contains("Body content."));
+    }
+
+    #[test]
+    fn test_insert_id_no_frontmatter_errors() {
+        let content = "# Just a title\n\nNo frontmatter.\n";
+        let result = insert_id_into_frontmatter(content, "card_abc12345");
+        assert!(result.is_err());
     }
 }
