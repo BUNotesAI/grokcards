@@ -62,7 +62,6 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 ## Active
 
 ## Next
-- [ ] Phase 5b: 实体渲染（Card/Note/Section 节点在画布上的渲染 + Toolbar）
 - [ ] Phase 5c: 交互（拖拽定位 + context menu + containment 检测）
 - [ ] Phase 5d: Edge 渲染（实体间连线 + clipToRect）
 - [ ] Phase 5e: 多白板（白板切换 + Root 画布预览卡 + viewport 持久化）
@@ -71,6 +70,7 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 
 ## Done
 
+- [x] Phase 5b: 实体渲染 — 6 种实体节点 + GraphToolbar + TanStack Query + 视口裁剪, 47 新 TS tests (56 total), 4 新 Rust tests (160 total), 8 commits
 - [x] Phase 5a: 画布基础设施 — useViewport hook + GraphCanvas CSS transform + pan/zoom + 键盘快捷键 + 9 TS tests, 手动验证通过
 - [x] Phase 4: Vault 同步管道 — VaultFs.list_md_files + sync_vault + insert_id_into_frontmatter + 启动同步 + 11 tests (156 total), Code Review passed
 - [x] Phase 3: 一次性旧 DB 导入 — LegacyReader/Importer traits, 23 tests, app_data_dir 迁移, 真实数据验证 (145 cards, 0 skipped)
