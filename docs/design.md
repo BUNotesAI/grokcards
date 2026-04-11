@@ -69,6 +69,7 @@
 | frontend | React UI 组件 | `docs/progress/frontend.md` |
 | ipc | Command/Event 定义 + specta 配置 | `docs/progress/ipc.md` |
 | infra | 构建、分发、CI/CD、权限配置 | `docs/progress/infra.md` |
+| keysight | KeySight 从 Obsidian 插件迁移（domain + GraphView + 旧 DB 导入） | `docs/progress/keysight.md` |
 
 ## 推荐实施顺序
 

@@ -54,6 +54,8 @@ Devlog「下次从这里开始」简化为 pointer → `docs/handoff/{area}.md`
 | L0 | TS/Rust 职责边界硬约束 — TS 只负责 UI，Rust 独占业务 | 任何 commit |
 | L0 | IPC 类型安全 — tauri-specta 编译期保障 | 新增/修改 command |
 | L0 | 测试真实代码路径 — 禁止 test theater | 新增测试 / Code Review |
+| L0 | TDD — Red-Green-Refactor 开发循环 | 新功能 / Bug 修复 / 迁移 / 重构 |
+| L0 | Trait-First — 面向接口编程 | 新增模块 / 跨模块依赖 / 可测试性设计 |
 | L1 | 框架参考资料 — 不猜 API，查 Tauri skills + 官方文档 | 使用 Tauri / React API 时 |
 | L1 | Rust Skills — 10 个领域 | 遇到编译错误/设计问题 |
 | L2 | LESSONS.md — 模块级踩坑经验 | 修改模块代码前**必须先读** |
@@ -61,6 +63,7 @@ Devlog「下次从这里开始」简化为 pointer → `docs/handoff/{area}.md`
 | L4 | MEMORY + Skills — 个人偏好 + 跨项目知识 | 关键词触发 / 按需召回 |
 | 测试 | 集成测试 tests/ | cargo test |
 | 测试 | 副作用矩阵 | 新增写操作时同步更新 |
+| 测试 | TS 组件测试 — Vitest + RTL | 新增/修改 TS 组件 / UI Bug 修复 |
 
 ---
 
@@ -331,6 +334,172 @@ mod tests {
 
 ---
 
+### L0: TDD — Red-Green-Refactor 开发循环
+
+**原则**：所有代码变更（新功能、Bug 修复、迁移、重构）遵循 Red-Green-Refactor 循环。先写失败的测试定义期望行为，再写最少的代码让测试通过，最后重构保持测试绿色。
+
+**为什么测试先行**：
+
+测试先行的核心价值不是"测试覆盖率"，而是**让失败的测试成为进度的客观度量**。测试红色 = 确切地知道缺什么。测试绿色 = 确切地知道做完了。"写完代码再补测试"会让测试去适应实现的 bug——你以为测通了，其实是测试和 bug 一起错。
+
+**各场景的 TDD 流程**：
+
+| 场景 | Red（写什么测试） | Green（写什么代码） | Refactor |
+|------|------------------|-------------------|----------|
+| **新功能** | 期望行为的 happy path + error path | 最少的实现让测试通过 | 提取重复、命名优化 |
+| **Bug 修复** | 精确复现 bug 的测试用例 | 修复 bug | 测试永久保留为回归防护 |
+| **迁移** | 旧系统已知行为写成测试 | 新实现让测试逐个通过 | 清理迁移临时代码 |
+| **重构** | 现有测试必须全绿（不新增/不修改测试） | 改结构 | 确认仍全绿 |
+
+**Bug 修复的 TDD 特殊价值**：
+
+Bug 修复是 TDD 收益最高的场景。先写复现测试有三个好处：
+1. 确认你真正理解了 bug（测试能复现 = 理解正确）
+2. 修复后测试变绿 = 修复确实有效（不是你以为有效）
+3. 测试永久留下 = 这个 bug 不会再回来（回归防护）
+
+```rust
+#[test]
+fn test_empty_title_should_error_not_insert() {
+    // 复现：旧代码对空白 title 没校验，直接 INSERT 产生脏数据
+    let conn = test_conn();
+    let result = create_todo(&conn, "   ");
+    assert!(result.is_err()); // Red → 旧代码这里会 Ok（bug！）
+
+    // 确认没有脏数据写入
+    let count: i64 = conn.query_row(
+        "SELECT COUNT(*) FROM todos", [], |r| r.get(0)
+    ).unwrap();
+    assert_eq!(count, 0);
+}
+```
+
+**执行流程（人工确认关卡）**：
+
+Red 和 Green 的转换必须经过用户确认。Agent 不得跳过确认自行继续。
+
+```
+1. 写测试
+2. 跑测试 → 展示结果给用户
+3. 🔴 Red 关卡 — 等待用户确认
+   - 用户自己跑测试，确认确实是 Red 且失败原因正确
+   - 用户确认 → 继续
+   - 用户否定 → 停下来讨论（测试写错了？断言不对？）
+4. 写实现
+5. 跑测试 → 展示结果给用户
+6. 🟢 Green 关卡 — 等待用户确认
+   - 用户自己跑测试，确认确实是 Green
+   - 用户确认 → 进入 Refactor
+   - 用户否定 → 停下来讨论（哪个测试还红？为什么？）
+7. Refactor（保持绿色）
+```
+
+**为什么需要人工确认**：
+- Red 确认：确保测试是因为正确的原因失败（不是语法错误、import 错误、断言写反）
+- Green 确认：确保实现真正让测试通过（不是测试被意外跳过、mock 吞了错误）
+- 用户保持对代码状态的掌控，不会出现 agent 自以为通过但实际没通过的情况
+
+**和 Anti-Test-Theater 的关系**：
+
+TDD 回答"什么时候写测试"（代码之前），Anti-Test-Theater 回答"怎么写测试"（调用真实代码，不复制逻辑）。两者互补。
+
+**触发时机**：
+- 新功能开发：先写测试再写实现，没有例外
+- Bug 修复：先写复现测试，确认红色，再修复
+- 迁移：从旧系统已知行为推导测试，先全红，逐个变绿
+- 重构：不改测试，只改实现，全程保持绿色
+- **所有场景都遵循 Red/Green 人工确认关卡**
+
+---
+
+### L0: Trait-First — 面向接口编程
+
+**原则**：先定义行为契约（trait），再写实现（impl）。Trait 是可执行的契约——编译器强制实现者遵守签名，比 doc comment 更强。
+
+**Trait-First 不是"每个 struct 抽一个 trait"的教条**。判断标准：**这个行为边界是否需要在测试或开发中被替换？** 需要 → trait；不需要 → 具体类型。
+
+**使用 trait 的场景**：
+
+| 场景 | 为什么需要 trait | 示例 |
+|------|----------------|------|
+| **模块对外行为** | 调用者依赖契约，不依赖实现细节 | `CardStore` trait — 卡片读写能力 |
+| **外部依赖隔离** | 测试时替换为 mock，不碰真实副作用 | `FileSystem` trait — 测试不碰真实文件 |
+| **增量开发** | A 依赖 B 但 B 还没实现 | B 的 trait 先定，A 用 mock 开发测试 |
+| **多种实现** | 同一行为的不同策略 | `Parser` trait — 不同 frontmatter 格式 |
+
+**不需要 trait 的场景**：
+
+- 纯数据类型（struct 只有字段，没行为方法）
+- 模块内部的 helper 函数
+- 已有天然替身的依赖（如 `&Connection` — in-memory SQLite 就是测试替身，不需要额外 trait）
+
+**和 Deep Module 的关系**：Deep Module 说"窄接口 + 深实现"。Trait-First 把它具体化——trait 的方法签名 = 窄接口，impl block = 深实现。定义 trait 时就是在画模块边界。
+
+**和 TDD 的联合工作流**：
+
+```
+1. 定义 trait（行为契约 — 这一步强制你想清楚模块"做什么"）
+2. 写测试（针对 trait 的期望行为）→ 跑测试
+3. 🔴 Red 关卡 — 等用户确认失败原因正确
+4. 写 impl → 跑测试
+5. 🟢 Green 关卡 — 等用户确认全部通过
+6. Refactor（保持绿色）
+```
+
+**Rust 实践模式**：
+
+```rust
+/// 卡片存储的行为契约
+pub(super) trait CardStore {
+    /// 创建新卡片，返回完整的 AtomicCard（含生成的 id）
+    fn create(&self, title: &str, content: &str) -> Result<AtomicCard, KeysightError>;
+    /// 按 id 查询单张卡片
+    fn get(&self, id: &str) -> Result<AtomicCard, KeysightError>;
+    /// 查询所有卡片，支持分页
+    fn query_all(&self, limit: Option<i64>) -> Result<Vec<AtomicCard>, KeysightError>;
+}
+
+/// 真实实现 — SQLite
+pub(super) struct SqliteCardStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> CardStore for SqliteCardStore<'a> {
+    fn create(&self, title: &str, content: &str) -> Result<AtomicCard, KeysightError> {
+        // 真实 SQLite 操作
+    }
+    // ...
+}
+
+// 测试 — 用 in-memory SQLite 的真实实现（不需要 mock，因为 SQLite 天然有测试替身）
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_create_card() {
+        let conn = test_conn(); // in-memory SQLite
+        let store = SqliteCardStore { conn: &conn };
+        let card = store.create("test", "content").unwrap();
+        assert_eq!(card.title, "test");
+    }
+}
+```
+
+**何时用 mock vs 真实实现测试**：
+
+| 依赖类型 | 测试策略 | 原因 |
+|----------|---------|------|
+| SQLite | in-memory 真实实现 | SQLite 本身就是测试友好的，不需要 mock |
+| 文件系统 | trait + mock | 真实文件操作慢、有副作用、难清理 |
+| 网络 / 外部 API | trait + mock | 不稳定、慢、测试环境不可控 |
+| 其他模块（未实现） | trait + stub | 模块还不存在，trait 定义了契约 |
+
+**触发时机**：
+- 新增模块：先定义 trait 描述对外行为，再写实现
+- 跨模块依赖：通过 trait 边界解耦，允许独立开发和测试
+- 需要隔离外部副作用（文件系统、网络）：定义 trait，测试用 mock
+
+---
+
 ### L1: 框架参考资料 — 不猜 API，查源码
 
 使用 Tauri / React API 时，不凭记忆猜测，查以下资料：
@@ -401,18 +570,24 @@ pub(super) fn list_todos(conn: &Connection, filter: TodoFilter) -> Result<Vec<To
 
 ---
 
-### 测试：集成测试结构
+### 测试：全栈测试结构
 
 ```
 src-tauri/
-├── src/modules/todo/domain.rs    # 内含 #[cfg(test)] mod tests — unit tests
-└── tests/                        # 集成测试（跨模块交互）
+├── src/modules/todo/domain.rs    # 内含 #[cfg(test)] mod tests — Rust unit tests
+└── tests/                        # Rust 集成测试（跨模块交互）
     └── todo_stories.rs           # 按用户故事组织
+
+src/
+└── __tests__/                    # TS 组件测试
+    └── components/               # 按组件组织
+        └── TodoList.test.tsx
 ```
 
-- **Unit test**：每个 domain.rs 内部，用 `:memory:` SQLite，测单个业务函数
-- **集成测试**：`tests/` 目录，测跨模块交互和完整用户场景
-- 测试辅助：共享 `test_conn()` helper 用 in-memory SQLite
+- **Rust unit test**：每个 domain.rs 内部，用 `:memory:` SQLite，测单个业务函数
+- **Rust 集成测试**：`tests/` 目录，测跨模块交互和完整用户场景
+- **TS 组件测试**：`src/__tests__/` 目录，测组件渲染和事件接线
+- 测试辅助：Rust 共享 `test_conn()` helper；TS 共享 `vi.mock('../bindings')` setup
 
 ---
 
@@ -428,6 +603,81 @@ src-tauri/
 
 ---
 
+### 测试：TS 组件测试 — Vitest + React Testing Library
+
+**工具**：Vitest + @testing-library/react + @testing-library/jest-dom
+
+**TS 测试的定位**：TS 没有业务逻辑（L0 硬约束），所以 TS 测试只验证两件事：
+
+| 测试什么 | 为什么需要测 | 不测什么 |
+|----------|-------------|---------|
+| **渲染正确性** — 给定数据，组件是否正确显示 | CSS/JSX 变更可能静默破坏 UI | 数据本身的正确性（Rust 测试覆盖） |
+| **事件接线** — 用户操作是否触发正确的 command | 重构时可能断开 handler 绑定 | command 的业务行为（Rust 测试覆盖） |
+| **UI 状态切换** — loading / error / empty 状态是否正确渲染 | 异步状态处理容易出错 | 错误本身的语义（Rust 定义） |
+
+**Mock 策略**：mock `commands` from `bindings.ts`。这不是 test theater，因为：
+- 业务逻辑正确性由 Rust unit test 保证
+- TS 测试只验证"给定 command 返回值 X，UI 是否渲染为 Y"
+- 两层测试互补：Rust 保证数据正确，TS 保证展示正确
+
+**标准模式**：
+
+```tsx
+import { render, screen, fireEvent } from '@testing-library/react';
+import { vi } from 'vitest';
+import { commands } from '../bindings';
+
+// mock Tauri commands — 隔离 IPC，只测 UI 层
+vi.mock('../bindings', () => ({
+  commands: {
+    listTodos: vi.fn(),
+    createTodo: vi.fn(),
+  },
+}));
+
+describe('TodoList', () => {
+  // 渲染正确性：给定数据 → 正确显示
+  it('renders todos from command response', async () => {
+    vi.mocked(commands.listTodos).mockResolvedValue([
+      { id: 1, title: 'Buy milk', completed: false },
+    ]);
+
+    render(<TodoList />);
+
+    expect(await screen.findByText('Buy milk')).toBeInTheDocument();
+  });
+
+  // 事件接线：用户操作 → 正确的 command 被调用
+  it('calls createTodo on form submit', async () => {
+    render(<TodoList />);
+
+    fireEvent.change(screen.getByRole('textbox'), {
+      target: { value: 'New' },
+    });
+    fireEvent.submit(screen.getByRole('form'));
+
+    expect(commands.createTodo).toHaveBeenCalledWith('New');
+  });
+
+  // UI 状态：loading 态正确渲染
+  it('shows loading state while fetching', () => {
+    vi.mocked(commands.listTodos).mockReturnValue(new Promise(() => {}));
+
+    render(<TodoList />);
+
+    expect(screen.getByText('Loading...')).toBeInTheDocument();
+  });
+});
+```
+
+**TDD 同样适用于 UI（含人工确认关卡）**：
+- UI Bug 修复：写 RTL 测试复现 bug → 🔴 用户确认 Red → 修 UI 代码 → 🟢 用户确认 Green → 测试永久保留
+- 新组件：写"给定数据应该渲染什么"的测试 → 🔴 用户确认 Red → 写组件 → 🟢 用户确认 Green
+
+**判断标准**：如果 TS 测试里出现了业务逻辑判定（校验规则、数据转换、条件分支），说明业务逻辑泄漏到了 TS 层——先修正架构（把逻辑移到 Rust），再写测试。
+
+---
+
 ### 质量流程（非 Hook，CLAUDE.md 流程规则）
 
 由于不使用 Claude Code hooks，以下质量检查作为 agent 必须遵循的**流程规则**执行。
@@ -436,18 +686,19 @@ src-tauri/
 
 - **每次 `cargo build`**：改为 `cargo clippy --workspace -- -D warnings`（lint 融入开发，错误自然暴露）
 - **修改 command 签名后**：立即 `cargo test export_bindings` 重新生成 bindings.ts
-- **修改 TS 代码后**：`pnpm build`（tsc 类型检查 + vite 构建）
+- **修改 TS 代码后**：`pnpm test`（组件测试）+ `pnpm build`（tsc 类型检查 + vite 构建）
 
 #### 提交前
 
 ```
 1. cargo clippy --workspace -- -D warnings    ← Rust lint
 2. cargo test --workspace                     ← Rust 测试（unit + 集成）
-3. pnpm build                                 ← TS 类型检查
-4. 确认 bindings.ts 是最新的
+3. pnpm test                                  ← TS 组件测试
+4. pnpm build                                 ← TS 类型检查 + 构建
+5. 确认 bindings.ts 是最新的
 ```
 
-四项全部通过后才可 commit。任何一项失败必须先修复。
+五项全部通过后才可 commit。任何一项失败必须先修复。
 
 #### 功能域完成时
 
@@ -498,14 +749,17 @@ src-tauri/
 2. 写 models.rs — derive Serialize + Deserialize + specta::Type
 3. 写 errors.rs — thiserror + impl Into<AppError>
 4. 写 db.rs — 建表 migration
-5. 写 domain.rs — 业务纯函数 + #[cfg(test)] mod tests
-6. 写 commands.rs — 薄壳 + #[tauri::command] + #[specta::specta]
-7. 写 mod.rs — pub use commands + models
-8. 在 modules/mod.rs 注册
-9. 在 lib.rs 的 collect_commands![] 添加
-10. cargo test export_bindings → 验证 bindings.ts 更新
-11. 在副作用矩阵中登记写操作
-12. 如涉及新 plugin → 更新 capabilities/default.json（最小权限）
+5. 定义 domain traits — 行为契约（Trait-First）
+6. 写 domain 测试 — 针对 trait 的期望行为（TDD: Red）
+7. 写 domain.rs — 业务纯函数实现 trait（TDD: Green → Refactor）
+8. 写 commands.rs — 薄壳 + #[tauri::command] + #[specta::specta]
+9. 写 mod.rs — pub use commands + models
+10. 在 modules/mod.rs 注册
+11. 在 lib.rs 的 collect_commands![] 添加
+12. cargo test export_bindings → 验证 bindings.ts 更新
+13. 在副作用矩阵中登记写操作
+14. 如涉及新 plugin → 更新 capabilities/default.json（最小权限）
+15. 写 TS 组件时 → 配套组件测试（渲染 + 事件接线）
 ```
 
 ---
@@ -538,6 +792,9 @@ cargo clippy --workspace -- -D warnings
 
 # Rust 测试
 cargo test --workspace
+
+# TS 组件测试
+pnpm test
 
 # TS 类型检查
 pnpm build  # tsc && vite build
