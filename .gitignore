@@ -32,3 +32,4 @@ mock-*.html
 *.sln
 *.sw?
 keysight-imported.db
+.superpowers/
