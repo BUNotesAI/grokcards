@@ -391,12 +391,101 @@ impl CardStore for SqliteCardStore<'_> {
         Ok(())
     }
 
-    fn search(&self, _text: &str) -> Result<Vec<AtomicCard>, KeysightError> {
-        todo!()
+    fn search(&self, text: &str) -> Result<Vec<AtomicCard>, KeysightError> {
+        let text = text.trim();
+        if text.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        // 构造 FTS5 MATCH 查询：按空格拆词，每个加引号，AND 连接
+        let words: Vec<String> = text
+            .split_whitespace()
+            .map(|w| format!("\"{}\"", w.replace('"', "")))
+            .collect();
+        let fts_query = words.join(" AND ");
+
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM entities_fts WHERE entities_fts MATCH ?1"
+        )?;
+        let ids: Vec<String> = stmt
+            .query_map([&fts_query], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+
+        if !ids.is_empty() {
+            return self.query_by_ids(&ids);
+        }
+
+        // FTS 无结果 — fallback 到 LIKE
+        let like_pattern = format!("%{text}%");
+        let rows = query_card_rows(
+            self.conn,
+            "AND (e.title LIKE ?1 OR e.content LIKE ?1)",
+            &[&like_pattern as &dyn rusqlite::types::ToSql],
+        )?;
+        assemble_cards(self.conn, rows)
     }
 
-    fn query_links(&self, _id: &str) -> Result<CardLinksResponse, KeysightError> {
-        todo!()
+    fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError> {
+        // 验证卡片存在
+        let exists: bool = self.conn.query_row(
+            "SELECT COUNT(*) FROM entities WHERE id = ?1 AND kind = 'card'",
+            [id],
+            |r| r.get::<_, i64>(0),
+        )? > 0;
+        if !exists {
+            return Err(KeysightError::NotFound(id.to_string()));
+        }
+
+        // 出边
+        let mut out_stmt = self.conn.prepare(
+            "SELECT to_id, edge_type FROM edges WHERE from_id = ?1"
+        )?;
+        let out_rows = out_stmt.query_map([id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+
+        let mut link_to = Vec::new();
+        let mut related = Vec::new();
+        let mut see_also = Vec::new();
+        for r in out_rows {
+            let (to_id, edge_type) = r?;
+            match edge_type.as_str() {
+                "link_to" => link_to.push(to_id),
+                "related" => related.push(to_id),
+                "see_also" => see_also.push(to_id),
+                _ => {}
+            }
+        }
+
+        // 入边
+        let mut in_stmt = self.conn.prepare(
+            "SELECT from_id, edge_type FROM edges WHERE to_id = ?1"
+        )?;
+        let in_rows = in_stmt.query_map([id], |r| {
+            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
+        })?;
+
+        let mut linked_from = Vec::new();
+        let mut related_from = Vec::new();
+        let mut see_also_from = Vec::new();
+        for r in in_rows {
+            let (from_id, edge_type) = r?;
+            match edge_type.as_str() {
+                "link_to" => linked_from.push(from_id),
+                "related" => related_from.push(from_id),
+                "see_also" => see_also_from.push(from_id),
+                _ => {}
+            }
+        }
+
+        Ok(CardLinksResponse {
+            link_to,
+            related,
+            see_also,
+            linked_from,
+            related_from,
+            see_also_from,
+        })
     }
 }
 
@@ -672,5 +761,83 @@ Body content.
         // 文件更新 — frontmatter 中 understanding 已变
         let file = vfs.get_file("atomic cards/test.md").unwrap();
         assert!(file.contains("新的理解"));
+    }
+
+    // --- search ---
+
+    #[test]
+    fn test_search_by_title() {
+        let conn = test_conn();
+        seed_card(&conn);
+        seed_card2(&conn);
+        let store = SqliteCardStore::new(&conn);
+
+        let results = store.search("Test Card").unwrap();
+        assert_eq!(results.len(), 1);
+        assert_eq!(results[0].id, "card_test0001");
+    }
+
+    #[test]
+    fn test_search_by_content() {
+        let conn = test_conn();
+        seed_card(&conn);
+        let store = SqliteCardStore::new(&conn);
+
+        let results = store.search("Body content").unwrap();
+        assert_eq!(results.len(), 1);
+    }
+
+    #[test]
+    fn test_search_no_results() {
+        let conn = test_conn();
+        seed_card(&conn);
+        let store = SqliteCardStore::new(&conn);
+
+        let results = store.search("nonexistent_xyzzy").unwrap();
+        assert!(results.is_empty());
+    }
+
+    // --- query_links ---
+
+    #[test]
+    fn test_query_links() {
+        let conn = test_conn();
+        seed_card(&conn); // card_test0001 有 link_to/related/see_also 出边
+
+        // 再插一张卡片，link_to card_test0001（产生入边）
+        let md = "---\ntype: atomic-card\nid: card_linker1\nlinkTo:\n  - card_test0001\n---\n\n# 【ATC】Linker\n\nBody.\n";
+        sync::sync_file(&conn, "atomic cards/linker.md", md, 2000.0).unwrap();
+
+        let store = SqliteCardStore::new(&conn);
+        let links = store.query_links("card_test0001").unwrap();
+
+        // 出边
+        assert_eq!(links.link_to, vec!["card_other001"]);
+        assert_eq!(links.related, vec!["card_other002"]);
+        assert_eq!(links.see_also, vec!["card_other003"]);
+
+        // 入边
+        assert_eq!(links.linked_from, vec!["card_linker1"]);
+    }
+
+    #[test]
+    fn test_query_links_not_found() {
+        let conn = test_conn();
+        let store = SqliteCardStore::new(&conn);
+        let result = store.query_links("card_nonexist");
+        assert!(matches!(result, Err(KeysightError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_query_links_no_edges() {
+        let conn = test_conn();
+        // 无 edges 的卡片
+        let md = "---\ntype: atomic-card\nid: card_lonely1\n---\n\n# 【ATC】Lonely\n\nNo links.\n";
+        sync::sync_file(&conn, "atomic cards/lonely.md", md, 1000.0).unwrap();
+
+        let store = SqliteCardStore::new(&conn);
+        let links = store.query_links("card_lonely1").unwrap();
+        assert!(links.link_to.is_empty());
+        assert!(links.linked_from.is_empty());
     }
 }
