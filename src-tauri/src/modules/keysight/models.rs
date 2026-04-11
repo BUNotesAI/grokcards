@@ -249,6 +249,32 @@ pub struct CardAlias {
     pub incoming_card_ids: Option<Vec<String>>,
 }
 
+/// 任务实体（entities + task_fields 的联合查询结果）。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskEntity {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub whiteboard_id: String,
+    pub status: String,
+    #[serde(default)]
+    pub area: Option<String>,
+    #[serde(default)]
+    pub project: Option<String>,
+}
+
+/// 问题实体（entities + question_fields 的联合查询结果）。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct QuestionEntity {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub whiteboard_id: String,
+    pub status: String,
+}
+
 /// 边（edges 表的行）。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

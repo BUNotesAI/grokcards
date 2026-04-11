@@ -10,11 +10,11 @@ use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
 use super::domain::section::{SectionStore, SqliteSectionStore};
-use super::domain::{overview, sync};
+use super::domain::{overview, question, sync, task};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, Edge, EdgeStyle, EdgeType, GraphNote,
-    GraphOverviewResponse, GraphSection, ImportSummary, Position, StatsResponse, SyncFileResponse,
-    SyncVaultReport, VaultInfoResponse,
+    GraphOverviewResponse, GraphSection, ImportSummary, Position, QuestionEntity, StatsResponse,
+    SyncFileResponse, SyncVaultReport, TaskEntity, VaultInfoResponse,
 };
 use super::state::KeysightState;
 use super::vault_fs::RealVaultFs;
@@ -415,6 +415,36 @@ pub fn section_move_to_whiteboard(
     store
         .move_to_whiteboard(&section_id, &target_whiteboard_id)
         .map_err(Into::into)
+}
+
+// ============================================================
+// Task
+// ============================================================
+
+/// 查询指定白板的所有 task。
+#[tauri::command]
+#[specta::specta]
+pub fn task_query_all(
+    state: State<'_, KeysightState>,
+    whiteboard_id: String,
+) -> Result<Vec<TaskEntity>, AppError> {
+    let conn = state.db.lock().unwrap();
+    task::query_all(&conn, &whiteboard_id).map_err(Into::into)
+}
+
+// ============================================================
+// Question
+// ============================================================
+
+/// 查询指定白板的所有 question。
+#[tauri::command]
+#[specta::specta]
+pub fn question_query_all(
+    state: State<'_, KeysightState>,
+    whiteboard_id: String,
+) -> Result<Vec<QuestionEntity>, AppError> {
+    let conn = state.db.lock().unwrap();
+    question::query_all(&conn, &whiteboard_id).map_err(Into::into)
 }
 
 // ============================================================

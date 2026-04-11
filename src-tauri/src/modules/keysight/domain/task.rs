@@ -2,6 +2,7 @@
 use rusqlite::{params, Connection};
 
 use crate::modules::keysight::errors::KeysightError;
+use crate::modules::keysight::models::TaskEntity;
 
 /// 更新任务状态。
 pub(super) fn transition_status(conn: &Connection, id: &str, status: &str) -> Result<(), KeysightError> {
@@ -37,6 +38,28 @@ pub(super) fn update_project(conn: &Connection, id: &str, project: &str) -> Resu
         return Err(KeysightError::NotFound(id.to_string()));
     }
     Ok(())
+}
+
+/// 查询指定白板的所有任务。
+pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<TaskEntity>, KeysightError> {
+    let mut stmt = conn.prepare(
+        "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
+         t.status, t.area, t.project \
+         FROM entities e JOIN task_fields t ON e.id = t.entity_id \
+         WHERE e.whiteboard_id = ?1 ORDER BY e.title"
+    )?;
+    let rows = stmt.query_map([whiteboard_id], |r| {
+        Ok(TaskEntity {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            content: r.get(2)?,
+            whiteboard_id: r.get(3)?,
+            status: r.get(4)?,
+            area: r.get(5)?,
+            project: r.get(6)?,
+        })
+    })?;
+    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(KeysightError::from)
 }
 
 /// 按状态查询任务。
@@ -137,6 +160,28 @@ mod tests {
     fn test_by_status_empty() {
         let conn = test_conn();
         let tasks = by_status(&conn, "done").unwrap();
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn test_query_all_returns_typed_tasks() {
+        let conn = test_conn();
+        seed_task(&conn);
+        let tasks = query_all(&conn, "wb_root").unwrap();
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].id, "task_test0001");
+        assert_eq!(tasks[0].title, "Test Task");
+        assert_eq!(tasks[0].status, "next");
+        assert_eq!(tasks[0].area, Some("backend".to_string()));
+        assert_eq!(tasks[0].project, Some("keysight".to_string()));
+    }
+
+    #[test]
+    fn test_query_all_empty_whiteboard() {
+        let conn = test_conn();
+        seed_task(&conn);
+        // task 在 wb_root 白板，查 other 应为空
+        let tasks = query_all(&conn, "other").unwrap();
         assert!(tasks.is_empty());
     }
 }

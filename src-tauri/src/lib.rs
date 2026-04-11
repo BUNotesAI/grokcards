@@ -39,6 +39,10 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::section_add_member,
         modules::keysight::commands::section_remove_member,
         modules::keysight::commands::section_move_to_whiteboard,
+        // keysight: task
+        modules::keysight::commands::task_query_all,
+        // keysight: question
+        modules::keysight::commands::question_query_all,
         // keysight: note
         modules::keysight::commands::note_get,
         modules::keysight::commands::note_query_all,
