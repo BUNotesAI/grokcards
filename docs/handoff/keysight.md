@@ -40,6 +40,28 @@ stale_check: cd src-tauri && cargo test --lib modules::keysight -- -q 2>&1 | tai
 
 ## 关键上下文（/new 之后会丢的东西）
 
+### Phase 3 质量约束（CLAUDE.md 五层机制中适用的部分）
+
+**L0 TDD — Red-Green-Refactor 不可省略：**
+- 先写失败测试 → 🔴 用户确认 Red → 写实现 → 🟢 用户确认 Green → Refactor
+- Phase 3 涉及新 domain 逻辑（数据映射、转换），不是薄壳，必须有测试覆盖
+- subagent 模式下 Red/Green 由 subagent 内部自验证即可（跑测试 → 确认失败/通过原因正确）
+
+**L0 Trait-First — 先定义行为契约再写实现：**
+- LegacyReader trait — 读旧 DB 的行为契约
+- LegacyImporter trait — 转换 + 写入新 DB 的行为契约
+- 先定义 trait → 写测试 → 写 impl，不是先写 impl 再抽 trait
+
+**L0 Operation Contract — 有副作用的 pub fn 需要完整契约：**
+- import 操作有大量副作用（写 DB），需要 Operation Contract
+- 暴露为 Tauri command 后，也需要 command 层契约
+
+**L0 Anti-Test-Theater — 测试调用真实代码路径：**
+- 导入逻辑用 in-memory SQLite 测试，不 mock domain 函数
+- 测试直接调用 LegacyImporter impl，不在测试里复制转换逻辑
+
+**L0 功能域完成 Code Review — Phase 3 Active tasks 全部完成时触发 5 项检查**
+
 ### 本次会话的假设与决策
 
 - **KeysightState 独立 DB** — keysight 用 `keysight.db`，和 todo demo 的 `super_tauri.db` 分开。启动时读 `KEYSIGHT_VAULT_PATH` 环境变量，缺失则 panic
