@@ -7,4 +7,7 @@ use serde::Serialize;
 pub enum AppError {
     #[error("{0}")]
     Todo(String),
+
+    #[error("{0}")]
+    Keysight(String),
 }
