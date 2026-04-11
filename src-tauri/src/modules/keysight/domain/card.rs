@@ -525,7 +525,7 @@ see-also:
 
 Body content.
 ";
-        sync::sync_file(conn, "atomic cards/test.md", md, 1000.0).unwrap();
+        sync::sync_file(conn, "whiteboard/test.md", md, 1000.0).unwrap();
     }
 
     /// 插入第二张卡片用于批量查询测试。
@@ -542,7 +542,7 @@ tags:
 
 Second body.
 ";
-        sync::sync_file(conn, "atomic cards/test2.md", md, 2000.0).unwrap();
+        sync::sync_file(conn, "whiteboard/test2.md", md, 2000.0).unwrap();
     }
 
     #[test]
@@ -553,7 +553,7 @@ Second body.
 
         let card = store.get("card_test0001").unwrap();
         assert_eq!(card.title, "Test Card");
-        assert_eq!(card.file_path, "atomic cards/test.md");
+        assert_eq!(card.file_path, "whiteboard/test.md");
         assert_eq!(card.content, "Body content.\n");
         assert_eq!(card.tags, vec!["ownership", "rust"]); // 字母序（DB ORDER BY tag）
         assert_eq!(card.link_to, vec!["card_other001"]);
@@ -603,7 +603,7 @@ Second body.
         seed_card(&conn);
         let store = SqliteCardStore::new(&conn);
 
-        let cards = store.query_by_file("atomic cards/test.md").unwrap();
+        let cards = store.query_by_file("whiteboard/test.md").unwrap();
         assert_eq!(cards.len(), 1);
         assert_eq!(cards[0].id, "card_test0001");
     }
@@ -678,8 +678,8 @@ Body content.
 ";
 
     fn seed_card_with_file(conn: &Connection) -> MockVaultFs {
-        sync::sync_file(conn, "atomic cards/test.md", CARD_FILE_CONTENT, 1000.0).unwrap();
-        MockVaultFs::new().with_file("atomic cards/test.md", CARD_FILE_CONTENT)
+        sync::sync_file(conn, "whiteboard/test.md", CARD_FILE_CONTENT, 1000.0).unwrap();
+        MockVaultFs::new().with_file("whiteboard/test.md", CARD_FILE_CONTENT)
     }
 
     #[test]
@@ -695,7 +695,7 @@ Body content.
         assert_eq!(card.title, "New Title");
 
         // 文件更新 — H1 行应包含新标题
-        let file = vfs.get_file("atomic cards/test.md").unwrap();
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
         assert!(file.contains("# 【ATC】New Title"));
         assert!(!file.contains("# 【ATC】Test Card"));
     }
@@ -733,7 +733,7 @@ Body content.
         assert_eq!(card.content, "Brand new body.\n");
 
         // 文件更新 — frontmatter 和 H1 保留，body 替换
-        let file = vfs.get_file("atomic cards/test.md").unwrap();
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
         assert!(file.contains("Brand new body."));
         assert!(file.contains("# 【ATC】Test Card")); // H1 保留
         assert!(file.contains("type: atomic-card")); // frontmatter 保留
@@ -759,7 +759,7 @@ Body content.
         assert_eq!(understanding, "新的理解");
 
         // 文件更新 — frontmatter 中 understanding 已变
-        let file = vfs.get_file("atomic cards/test.md").unwrap();
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
         assert!(file.contains("新的理解"));
     }
 
@@ -806,7 +806,7 @@ Body content.
 
         // 再插一张卡片，link_to card_test0001（产生入边）
         let md = "---\ntype: atomic-card\nid: card_linker1\nlinkTo:\n  - card_test0001\n---\n\n# 【ATC】Linker\n\nBody.\n";
-        sync::sync_file(&conn, "atomic cards/linker.md", md, 2000.0).unwrap();
+        sync::sync_file(&conn, "whiteboard/linker.md", md, 2000.0).unwrap();
 
         let store = SqliteCardStore::new(&conn);
         let links = store.query_links("card_test0001").unwrap();
@@ -833,7 +833,7 @@ Body content.
         let conn = test_conn();
         // 无 edges 的卡片
         let md = "---\ntype: atomic-card\nid: card_lonely1\n---\n\n# 【ATC】Lonely\n\nNo links.\n";
-        sync::sync_file(&conn, "atomic cards/lonely.md", md, 1000.0).unwrap();
+        sync::sync_file(&conn, "whiteboard/lonely.md", md, 1000.0).unwrap();
 
         let store = SqliteCardStore::new(&conn);
         let links = store.query_links("card_lonely1").unwrap();

@@ -269,7 +269,7 @@ Body content here.
     #[test]
     fn test_sync_card_inserts_entity() {
         let conn = test_conn();
-        let resp = sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        let resp = sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
         assert_eq!(resp.inserted, 1);
         assert_eq!(resp.updated, 0);
 
@@ -282,7 +282,7 @@ Body content here.
     #[test]
     fn test_sync_card_writes_card_fields() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
 
         let understanding: String = conn
             .query_row(
@@ -296,7 +296,7 @@ Body content here.
     #[test]
     fn test_sync_card_writes_tags() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
 
         let count: i64 = conn
             .query_row(
@@ -310,7 +310,7 @@ Body content here.
     #[test]
     fn test_sync_card_writes_edges() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
 
         let count: i64 = conn
             .query_row(
@@ -324,11 +324,11 @@ Body content here.
     #[test]
     fn test_sync_card_updates_mtime() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
 
         let mtime: f64 = conn
             .query_row(
-                "SELECT mtime FROM file_mtimes WHERE filePath = 'atomic cards/test.md'",
+                "SELECT mtime FROM file_mtimes WHERE filePath = 'whiteboard/test.md'",
                 [], |r| r.get(0),
             )
             .unwrap();
@@ -338,8 +338,8 @@ Body content here.
     #[test]
     fn test_sync_idempotent_update() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
-        let resp = sync_file(&conn, "atomic cards/test.md", CARD_MD, 2000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
+        let resp = sync_file(&conn, "whiteboard/test.md", CARD_MD, 2000.0).unwrap();
         assert_eq!(resp.updated, 1);
         assert_eq!(resp.inserted, 0);
     }
@@ -348,7 +348,7 @@ Body content here.
     fn test_sync_without_id_generates_one() {
         let conn = test_conn();
         let md = "---\ntype: atomic-card\ntags:\n  - test\n---\n\n# 【ATC】No ID\n\nBody.\n";
-        let resp = sync_file(&conn, "atomic cards/noid.md", md, 1000.0).unwrap();
+        let resp = sync_file(&conn, "whiteboard/noid.md", md, 1000.0).unwrap();
         assert!(resp.needs_id_backfill);
         assert!(resp.assigned_id.starts_with("card_"));
     }
@@ -389,7 +389,10 @@ Body content here.
 
     #[test]
     fn test_derive_whiteboard_id_root() {
-        assert_eq!(derive_whiteboard_id("atomic cards/test.md"), "wb_root");
+        // whiteboard/ 下直接的文件映射到 wb_root
+        assert_eq!(derive_whiteboard_id("whiteboard/test.md"), "wb_root");
+        // 非 whiteboard 目录也映射到 wb_root
+        assert_eq!(derive_whiteboard_id("other/test.md"), "wb_root");
     }
 
     #[test]
@@ -402,12 +405,12 @@ Body content here.
     #[test]
     fn test_remove_file() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
-        remove_file(&conn, "atomic cards/test.md").unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
+        remove_file(&conn, "whiteboard/test.md").unwrap();
 
         let count: i64 = conn
             .query_row(
-                "SELECT COUNT(*) FROM entities WHERE file_path = 'atomic cards/test.md'",
+                "SELECT COUNT(*) FROM entities WHERE file_path = 'whiteboard/test.md'",
                 [], |r| r.get(0),
             )
             .unwrap();
@@ -431,7 +434,7 @@ Body content here.
     #[test]
     fn test_sync_card_writes_fts() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
 
         let count: i64 = conn
             .query_row(
@@ -446,11 +449,11 @@ Body content here.
     #[test]
     fn test_sync_update_refreshes_fts() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
 
         // 用不同内容重新 sync
         let md2 = "---\ntype: atomic-card\nid: card_test0001\n---\n\n# 【ATC】Updated Title\n\nNew body.\n";
-        sync_file(&conn, "atomic cards/test.md", md2, 2000.0).unwrap();
+        sync_file(&conn, "whiteboard/test.md", md2, 2000.0).unwrap();
 
         // 旧标题搜不到
         let old: i64 = conn
@@ -476,8 +479,8 @@ Body content here.
     #[test]
     fn test_remove_file_cleans_fts() {
         let conn = test_conn();
-        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
-        remove_file(&conn, "atomic cards/test.md").unwrap();
+        sync_file(&conn, "whiteboard/test.md", CARD_MD, 1000.0).unwrap();
+        remove_file(&conn, "whiteboard/test.md").unwrap();
 
         let count: i64 = conn
             .query_row(

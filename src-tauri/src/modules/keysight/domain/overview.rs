@@ -128,7 +128,6 @@ mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
     use crate::modules::keysight::domain::sync;
-    use crate::modules::keysight::models::GraphOverviewResponse;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -176,10 +175,10 @@ mod tests {
         let conn = test_conn();
 
         let card_md = "---\ntype: atomic-card\nid: card_ov_001\ntags:\n  - test\nlinkTo:\n  - card_ov_002\n---\n\n# 【ATC】Overview Card 1\n\nBody.\n";
-        sync::sync_file(&conn, "atomic cards/ov1.md", card_md, 100.0).unwrap();
+        sync::sync_file(&conn, "whiteboard/ov1.md", card_md, 100.0).unwrap();
 
         let card_md2 = "---\ntype: atomic-card\nid: card_ov_002\n---\n\n# 【ATC】Overview Card 2\n\nBody.\n";
-        sync::sync_file(&conn, "atomic cards/ov2.md", card_md2, 200.0).unwrap();
+        sync::sync_file(&conn, "whiteboard/ov2.md", card_md2, 200.0).unwrap();
 
         // 另一个白板的 task
         let task_md = "---\ntype: project-task\nid: task_ov_001\nstatus: next\n---\n\n# 【TASK】Task\n\nBody.\n";
