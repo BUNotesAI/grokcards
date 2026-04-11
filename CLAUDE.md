@@ -597,7 +597,26 @@ src/
 
 | 写操作 | 影响的表/资源 | 副作用 | 测试覆盖 |
 |---|---|---|---|
-| （项目初始，待 TodoMVC 实现后填充） | | | |
+| `card_edit_title` | `entities` + markdown 文件 | DB 写 + 文件写 | domain unit test |
+| `card_edit_body` | `entities` + markdown 文件 | DB 写 + 文件写 | domain unit test |
+| `card_update_understanding` | `card_fields` + markdown 文件 | DB 写 + 文件写 | domain unit test |
+| `section_create` | `entities` | DB 写 | domain unit test |
+| `section_delete` | `entities`, `section_members`, `edges`, `positions` | 级联删除 | domain unit test |
+| `section_update` | `entities` | DB 写 | domain unit test |
+| `section_add_member` | `section_members` | DB 写 | domain unit test |
+| `section_remove_member` | `section_members` | DB 写 | domain unit test |
+| `section_move_to_whiteboard` | `entities`, `positions`, `edges` | 跨白板迁移 + 清理 | domain unit test |
+| `note_create` | `entities` | DB 写 | domain unit test |
+| `note_delete` | `entities`, `edges`, `positions` | 级联删除 | domain unit test |
+| `note_update` | `entities` | DB 写 | domain unit test |
+| `alias_create` | `entities`, `alias_fields` | DB 写 | domain unit test |
+| `alias_delete` | `entities`, `alias_fields`, `edges` | 级联删除 | domain unit test |
+| `layout_set_position` | `positions` | DB 写 | domain unit test |
+| `layout_remove_position` | `positions` | DB 写 | domain unit test |
+| `entity_connect` | `edges` | DB 写 | domain unit test |
+| `entity_disconnect` | `edges` | DB 写 | domain unit test |
+| `sync_file` | `entities`, `card_fields`, `entity_tags`, `edges`, `entities_fts` | 全量同步 | domain unit test |
+| `sync_remove_file` | `entities`, `entities_fts` | 按文件删除 | domain unit test |
 
 **更新时机**：新增任何 domain 写函数时，同步在此登记。Code Review 时核对矩阵是否与代码一致。
 
