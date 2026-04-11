@@ -1111,57 +1111,76 @@ mod tests {
 
     // ==================== 真实旧 DB 验证（cargo test -- --ignored） ====================
 
+    /// 一次性导入：旧 DB → 磁盘上的新 DB 文件。
+    /// `cargo test -- --ignored --nocapture` 执行。
+    /// 导入完成后新 DB 位于输出路径，可直接被 app 使用。
     #[test]
     #[ignore]
-    fn test_real_legacy_db_import() {
+    fn run_real_legacy_import() {
         let old_path = "/Users/alexwang/codes/vibe-coding/obsidian-plugin-keysight/keysight.db";
-        if !std::path::Path::new(old_path).exists() {
-            eprintln!("旧 DB 不存在，跳过: {old_path}");
-            return;
-        }
+        let new_path = "/Users/alexwang/codes/vibe-coding/super-tauri/keysight-imported.db";
 
+        assert!(
+            std::path::Path::new(old_path).exists(),
+            "旧 DB 不存在: {old_path}"
+        );
+
+        // 备份旧 DB
+        let backup = format!("{old_path}.bak-import-{}", chrono::Local::now().format("%Y%m%d%H%M%S"));
+        std::fs::copy(old_path, &backup).expect("备份旧 DB 失败");
+        eprintln!("旧 DB 已备份: {backup}");
+
+        // 只读打开旧 DB
         let old_conn = Connection::open_with_flags(
             old_path,
             rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
         )
         .unwrap();
 
-        let new = new_conn();
+        // 创建新 DB 文件（如已存在则覆盖）
+        if std::path::Path::new(new_path).exists() {
+            std::fs::remove_file(new_path).unwrap();
+        }
+        let new_conn = Connection::open(new_path).unwrap();
+        super::super::super::db::init_db(&new_conn).unwrap();
+
+        // 导入
         let reader = SqliteLegacyReader::new(&old_conn);
-        let importer = SqliteLegacyImporter::new(&new);
+        let importer = SqliteLegacyImporter::new(&new_conn);
         let summary = importer.import(&reader).unwrap();
 
         eprintln!("=== Import Summary ===");
-        eprintln!("Cards: {}", summary.cards);
-        eprintln!("Sections: {}", summary.sections);
-        eprintln!("Notes: {}", summary.notes);
-        eprintln!("Aliases: {}", summary.aliases);
-        eprintln!("Edges: {}", summary.edges);
-        eprintln!("Positions: {}", summary.positions);
+        eprintln!("Cards:           {}", summary.cards);
+        eprintln!("Sections:        {}", summary.sections);
+        eprintln!("Notes:           {}", summary.notes);
+        eprintln!("Aliases:         {}", summary.aliases);
+        eprintln!("Edges:           {}", summary.edges);
+        eprintln!("Positions:       {}", summary.positions);
         eprintln!("Section Members: {}", summary.section_members);
-        eprintln!("Skipped: {}", summary.skipped.len());
+        eprintln!("Skipped:         {}", summary.skipped.len());
         for s in &summary.skipped {
             eprintln!("  SKIP: {} — {}", s.entity_id, s.reason);
         }
 
-        // 基本数量验证
+        // 验证
         assert_eq!(summary.cards, 145);
-        assert!(summary.sections >= 33, "sections: {}", summary.sections);
-        assert!(summary.notes >= 80, "notes: {}", summary.notes);
-        assert!(summary.aliases >= 125, "aliases: {}", summary.aliases);
+        assert!(summary.sections >= 33);
+        assert!(summary.notes >= 80);
+        assert!(summary.aliases >= 125);
+        assert_eq!(summary.skipped.len(), 0);
 
-        // 新 DB 完整性
-        let entity_count: i64 = new
+        let entity_count: i64 = new_conn
             .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))
             .unwrap();
-        eprintln!("Total entities: {entity_count}");
-        assert!(entity_count >= 383, "entities: {entity_count}"); // 145+33+80+125
+        assert!(entity_count >= 383);
 
-        let fts_count: i64 = new
+        let fts_count: i64 = new_conn
             .query_row("SELECT COUNT(*) FROM entities_fts", [], |r| r.get(0))
             .unwrap();
         assert_eq!(fts_count, 145);
 
-        eprintln!("=== ALL CHECKS PASSED ===");
+        eprintln!("\n新 DB 已写入: {new_path}");
+        eprintln!("大小: {} bytes", std::fs::metadata(new_path).unwrap().len());
+        eprintln!("=== DONE ===");
     }
 }
