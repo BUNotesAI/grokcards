@@ -152,6 +152,13 @@ pub(super) fn sync_file(
         )?;
     }
 
+    // 8.5 同步 FTS 索引
+    conn.execute("DELETE FROM entities_fts WHERE id = ?1", [&id])?;
+    conn.execute(
+        "INSERT INTO entities_fts (id, title, content) VALUES (?1, ?2, ?3)",
+        params![id, parsed.title, parsed.content],
+    )?;
+
     // 9. UPSERT file_mtimes
     conn.execute(
         "INSERT OR REPLACE INTO file_mtimes (filePath, mtime) VALUES (?1, ?2)",
@@ -200,6 +207,7 @@ pub(super) fn remove_file(conn: &Connection, file_path: &str) -> Result<(), Keys
         conn.execute("DELETE FROM question_fields WHERE entity_id = ?1", [id])?;
         conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", [id])?;
         conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id])?;
+        conn.execute("DELETE FROM entities_fts WHERE id = ?1", [id])?;
         conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
         conn.execute("DELETE FROM section_members WHERE entity_id = ?1", [id])?;
     }
@@ -416,5 +424,68 @@ Body content here.
         let mtimes = all_file_mtimes(&conn).unwrap();
         assert_eq!(mtimes.len(), 1);
         assert_eq!(mtimes[0].0, "a.md");
+    }
+
+    // --- FTS 同步 ---
+
+    #[test]
+    fn test_sync_card_writes_fts() {
+        let conn = test_conn();
+        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM entities_fts WHERE entities_fts MATCH 'Test'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_sync_update_refreshes_fts() {
+        let conn = test_conn();
+        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+
+        // 用不同内容重新 sync
+        let md2 = "---\ntype: atomic-card\nid: card_test0001\n---\n\n# 【ATC】Updated Title\n\nNew body.\n";
+        sync_file(&conn, "atomic cards/test.md", md2, 2000.0).unwrap();
+
+        // 旧标题搜不到
+        let old: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM entities_fts WHERE entities_fts MATCH 'Ownership'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(old, 0);
+
+        // 新标题能搜到
+        let new: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM entities_fts WHERE entities_fts MATCH 'Updated'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(new, 1);
+    }
+
+    #[test]
+    fn test_remove_file_cleans_fts() {
+        let conn = test_conn();
+        sync_file(&conn, "atomic cards/test.md", CARD_MD, 1000.0).unwrap();
+        remove_file(&conn, "atomic cards/test.md").unwrap();
+
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM entities_fts WHERE entities_fts MATCH 'Test'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 0);
     }
 }
