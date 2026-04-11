@@ -8,4 +8,7 @@ pub struct KeysightState {
     pub db: Mutex<Connection>,
     /// Obsidian vault 根目录路径。
     pub vault_path: PathBuf,
+    /// keysight.db 文件的绝对路径（供 import_legacy_db 等需要知道 DB 位置的场景使用）。
+    #[allow(dead_code)]
+    pub db_path: PathBuf,
 }

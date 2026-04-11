@@ -3,6 +3,7 @@ use std::sync::Mutex;
 
 use rusqlite::Connection;
 use specta_typescript::Typescript;
+use tauri::Manager;
 use tauri_specta::{collect_commands, Builder};
 
 mod app_error;
@@ -67,6 +68,8 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::overview_graph,
         // keysight: config
         modules::keysight::commands::get_vault_info,
+        // keysight: legacy import
+        modules::keysight::commands::import_legacy_db,
     ])
 }
 
@@ -78,14 +81,21 @@ fn init_todo_database() -> Connection {
 }
 
 /// 初始化 KeySight 的独立 SQLite 连接 + vault 路径。
-fn init_keysight_state() -> modules::keysight::state::KeysightState {
+/// 使用 app_data_dir 存放 keysight.db，确保跨平台路径正确。
+fn init_keysight_state(app: &tauri::App) -> modules::keysight::state::KeysightState {
     let vault_path = std::env::var("KEYSIGHT_VAULT_PATH")
         .expect("环境变量 KEYSIGHT_VAULT_PATH 未设置，请设置为 Obsidian vault 根目录路径");
-    let conn = Connection::open("keysight.db").expect("无法打开 keysight 数据库");
+
+    let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
+    std::fs::create_dir_all(&data_dir).expect("无法创建 app_data_dir");
+    let db_path = data_dir.join("keysight.db");
+
+    let conn = Connection::open(&db_path).expect("无法打开 keysight 数据库");
     modules::keysight::init(&conn).expect("keysight 建表失败");
     modules::keysight::state::KeysightState {
         db: Mutex::new(conn),
         vault_path: PathBuf::from(vault_path),
+        db_path,
     }
 }
 
@@ -99,14 +109,14 @@ pub fn run() {
         .expect("Failed to export typescript bindings");
 
     let todo_conn = init_todo_database();
-    let keysight_state = init_keysight_state();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(todo_conn))
-        .manage(keysight_state)
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
+            let keysight_state = init_keysight_state(app);
+            app.manage(keysight_state);
             builder.mount_events(app);
             Ok(())
         })
