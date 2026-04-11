@@ -317,11 +317,14 @@ pub(in crate::modules::keysight) fn sync_vault(
         }
     }
 
-    // 4. 清理孤儿（db_map 中剩余的 = 文件已删除）
+    // 4. 清理孤儿（db_map 中剩余的且在 whiteboard/ 下的 = 文件已删除）
+    // 只清理 whiteboard/ 前缀的文件，避免误删通过 sync_file command 同步的非 whiteboard 文件
     let mut removed = 0u32;
     for orphan_path in db_map.keys() {
-        remove_file(conn, orphan_path)?;
-        removed += 1;
+        if orphan_path.starts_with("whiteboard/") {
+            remove_file(conn, orphan_path)?;
+            removed += 1;
+        }
     }
 
     Ok(SyncVaultReport {
