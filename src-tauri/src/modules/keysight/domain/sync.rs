@@ -1,10 +1,13 @@
 #![allow(dead_code)]
+use std::collections::HashMap;
+
 use rusqlite::{params, Connection};
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
-use crate::modules::keysight::models::SyncFileResponse;
+use crate::modules::keysight::models::{SyncFileResponse, SyncVaultReport};
 use crate::modules::keysight::parser;
+use crate::modules::keysight::vault_fs::VaultFs;
 
 /// 将 markdown 文件内容同步到数据库。
 ///
@@ -265,10 +268,76 @@ pub(in crate::modules::keysight) fn insert_id_into_frontmatter(
     Ok(result)
 }
 
+/// 全量增量同步 vault 到 DB。
+///
+/// ## 执行效果
+/// 1. 扫描 whiteboard/ 下所有 .md 文件
+/// 2. 对比 DB 中已知的 file_mtimes
+/// 3. 同步变更文件（new + changed）
+/// 4. 清理孤儿（DB 有但文件不存在）
+/// 5. 回写缺少 id 的文件
+///
+/// ## 幂等性
+/// 幂等 — mtime 未变的文件不重复同步
+pub(in crate::modules::keysight) fn sync_vault(
+    conn: &Connection,
+    fs: &dyn VaultFs,
+) -> Result<SyncVaultReport, KeysightError> {
+    // 1. 扫描文件系统
+    let fs_files = fs.list_md_files("whiteboard")?;
+    let scanned = fs_files.len() as u32;
+
+    // 2. 查询 DB 已知 mtime
+    let db_files = all_file_mtimes(conn)?;
+    let mut db_map: HashMap<String, f64> = db_files.into_iter().collect();
+
+    let mut synced = 0u32;
+    let mut skipped = 0u32;
+    let mut backfilled = 0u32;
+
+    // 3. 遍历文件系统文件
+    for (path, mtime) in &fs_files {
+        if let Some(db_mtime) = db_map.remove(path) {
+            if (db_mtime - mtime).abs() < f64::EPSILON {
+                // mtime 相同 → 跳过
+                skipped += 1;
+                continue;
+            }
+        }
+        // new 或 changed → 同步
+        let content = fs.read_file(path)?;
+        let resp = sync_file(conn, path, &content, *mtime)?;
+        synced += 1;
+
+        // ID backfill
+        if resp.needs_id_backfill {
+            let new_content = insert_id_into_frontmatter(&content, &resp.assigned_id)?;
+            fs.write_file(path, &new_content)?;
+            backfilled += 1;
+        }
+    }
+
+    // 4. 清理孤儿（db_map 中剩余的 = 文件已删除）
+    let mut removed = 0u32;
+    for (orphan_path, _) in &db_map {
+        remove_file(conn, orphan_path)?;
+        removed += 1;
+    }
+
+    Ok(SyncVaultReport {
+        scanned,
+        synced,
+        removed,
+        skipped,
+        backfilled,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
+    use crate::modules::keysight::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -554,5 +623,148 @@ Body content here.
         let content = "# Just a title\n\nNo frontmatter.\n";
         let result = insert_id_into_frontmatter(content, "card_abc12345");
         assert!(result.is_err());
+    }
+
+    // --- sync_vault ---
+
+    #[test]
+    fn test_sync_vault_empty() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let report = sync_vault(&conn, &fs).unwrap();
+        assert_eq!(report.scanned, 0);
+        assert_eq!(report.synced, 0);
+        assert_eq!(report.removed, 0);
+        assert_eq!(report.skipped, 0);
+        assert_eq!(report.backfilled, 0);
+    }
+
+    #[test]
+    fn test_sync_vault_new_files() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 1000.0)
+            .with_file_and_mtime(
+                "whiteboard/b.md",
+                "---\ntype: atomic-card\nid: card_bbb00001\n---\n\n# 【ATC】Card B\n\nBody B.\n",
+                2000.0,
+            );
+        let report = sync_vault(&conn, &fs).unwrap();
+        assert_eq!(report.scanned, 2);
+        assert_eq!(report.synced, 2);
+        assert_eq!(report.skipped, 0);
+        assert_eq!(report.removed, 0);
+
+        // 验证 DB 中有 2 个实体
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 2);
+    }
+
+    #[test]
+    fn test_sync_vault_skips_unchanged() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 1000.0);
+
+        // 先同步一次
+        sync_vault(&conn, &fs).unwrap();
+
+        // 再同步一次，mtime 不变 → 跳过
+        let report = sync_vault(&conn, &fs).unwrap();
+        assert_eq!(report.scanned, 1);
+        assert_eq!(report.synced, 0);
+        assert_eq!(report.skipped, 1);
+    }
+
+    #[test]
+    fn test_sync_vault_resyncs_changed_mtime() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 1000.0);
+
+        // 先同步
+        sync_vault(&conn, &fs).unwrap();
+
+        // 模拟文件变更：mtime 变了
+        let fs2 = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 2000.0);
+        let report = sync_vault(&conn, &fs2).unwrap();
+        assert_eq!(report.synced, 1);
+        assert_eq!(report.skipped, 0);
+    }
+
+    #[test]
+    fn test_sync_vault_removes_orphans() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 1000.0);
+        sync_vault(&conn, &fs).unwrap();
+
+        // 文件消失 → 孤儿清理
+        let fs_empty = MockVaultFs::new();
+        let report = sync_vault(&conn, &fs_empty).unwrap();
+        assert_eq!(report.removed, 1);
+
+        let count: i64 = conn
+            .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(count, 0);
+    }
+
+    #[test]
+    fn test_sync_vault_backfills_id() {
+        let conn = test_conn();
+        let md_no_id = "---\ntype: atomic-card\ntags:\n  - test\n---\n\n# 【ATC】No ID Card\n\nBody.\n";
+        let fs = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/noid.md", md_no_id, 1000.0);
+
+        let report = sync_vault(&conn, &fs).unwrap();
+        assert_eq!(report.backfilled, 1);
+
+        // 验证文件内容已回写 id
+        let updated_content = fs.get_file("whiteboard/noid.md").unwrap();
+        assert!(updated_content.contains("id: card_"));
+    }
+
+    #[test]
+    fn test_sync_vault_mixed_scenario() {
+        let conn = test_conn();
+
+        // 初始同步 2 个文件
+        let fs1 = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 1000.0)
+            .with_file_and_mtime(
+                "whiteboard/b.md",
+                "---\ntype: atomic-card\nid: card_bbb00001\n---\n\n# 【ATC】Card B\n\nBody B.\n",
+                1000.0,
+            );
+        sync_vault(&conn, &fs1).unwrap();
+
+        // 第二次同步：a.md mtime 变了，b.md 删了，c.md 新增
+        let fs2 = MockVaultFs::new()
+            .with_file_and_mtime("whiteboard/a.md", CARD_MD, 2000.0)
+            .with_file_and_mtime(
+                "whiteboard/c.md",
+                "---\ntype: atomic-card\nid: card_ccc00001\n---\n\n# 【ATC】Card C\n\nBody C.\n",
+                1000.0,
+            );
+
+        let report = sync_vault(&conn, &fs2).unwrap();
+        assert_eq!(report.scanned, 2);
+        assert_eq!(report.synced, 2);   // a (changed) + c (new)
+        assert_eq!(report.skipped, 0);
+        assert_eq!(report.removed, 1);  // b (orphan)
+    }
+
+    #[test]
+    fn test_sync_vault_ignores_non_whiteboard_files() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_file_and_mtime("other/a.md", CARD_MD, 1000.0);
+
+        let report = sync_vault(&conn, &fs).unwrap();
+        assert_eq!(report.scanned, 0);
     }
 }
