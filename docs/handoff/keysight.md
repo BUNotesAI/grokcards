@@ -1,7 +1,7 @@
 ---
 area: keysight
-last_updated: 2026-04-12T04:50:00+08:00
-session_id: 4c993118
+last_updated: 2026-04-12T07:35:00+08:00
+session_id: 8f396fb1
 status: ready-to-resume
 stale_check: cd src-tauri && cargo test --lib modules::keysight -- -q 2>&1 | tail -3 && cd .. && pnpm test 2>&1 | tail -3
 ---
@@ -10,66 +10,49 @@ stale_check: cd src-tauri && cargo test --lib modules::keysight -- -q 2>&1 | tai
 
 ## 正在做的 Task
 
-准备执行 Phase 5b 实体渲染 — plan 已写好，待 subagent-driven 执行 8 个 tasks
+准备执行 Phase 5e 多白板 — 根白板显示子白板预览卡 + 白板切换导航 + viewport 持久化
 
 ## 已完成步骤
 
-### Phase 4: Vault 同步管道（本 session 完成）
+### Phase 5b: 实体渲染（本 session 完成，全部 8 tasks）
 
-- [x] VaultFs trait 扩展 `list_md_files` — `src-tauri/src/modules/keysight/vault_fs.rs` (`add8539`)
-- [x] SyncVaultReport 类型 — `src-tauri/src/modules/keysight/models.rs` (`7d973a2`)
-- [x] insert_id_into_frontmatter 纯函数 TDD — `src-tauri/src/modules/keysight/domain/sync.rs` (`7f338e9`)
-- [x] sync_vault domain 函数 TDD (8 tests) — `domain/sync.rs` (`5311723`)
-- [x] sync_vault command + startup_sync + bindings — `commands.rs`, `mod.rs`, `lib.rs` (`6c878b7`)
-- [x] 孤儿清理范围修复（whiteboard/ prefix） — `domain/sync.rs:321` (`6e05603`)
-- [x] 副作用矩阵更新 — `CLAUDE.md` (`7125c0f`)
-- [x] Phase 4 Code Review passed, 标记 Done — (`49908fa`)
-
-### Phase 5a: 画布基础设施（本 session 完成）
-
-- [x] TS 测试基础设施（vitest + RTL + jsdom） — `vitest.config.ts`, `src/test/setup.ts` (`91c708c`)
-- [x] useViewport hook TDD (6 tests) — `src/components/keysight/useViewport.ts` (`01596de`)
-- [x] GraphCanvas 组件 TDD (3 tests) — `src/components/keysight/GraphCanvas.tsx` (`e04f045`)
-- [x] GraphView + /keysight 路由 + 侧边栏 — `src/App.tsx`, `src/components/AppShell.tsx` (`ed029de`)
-- [x] 手动验证 pan/zoom 全部通过 — (`d592f47`)
-- [x] Phase 5a 标记 Done — (`2b30724`)
-
-### Phase 5b: 准备工作（本 session 完成）
-
-- [x] 旧项目完整功能调研 — `~/codes/vibe-coding/obsidian-plugin-keysight` 全量扫描
-- [x] progress 功能全景更新 — `docs/progress/keysight.md` 旧项目映射表
-- [x] Phase 5b brainstorm — 视觉风格选定 Clean Elevated (B)，TanStack Query，全部 6 种实体
-- [x] Phase 5b spec — `docs/superpowers/specs/2026-04-12-keysight-phase5b-entity-rendering.md` (`e0f9846`)
-- [x] Phase 5b plan — `docs/superpowers/plans/2026-04-12-keysight-phase5b-entity-rendering.md` (2670 行, `679b10f`)
+- [x] Task 1: Rust TaskEntity/QuestionEntity + query_all commands — `domain/task.rs:43`, `domain/question.rs:19`, `commands.rs:427,442` (`ab88075`)
+- [x] Task 2: TanStack Query + unwrapCommand + EntityWithPosition types — `src/main.tsx`, `src/lib/commandResult.ts`, `src/components/keysight/types.ts` (`7f7db02`)
+- [x] Task 3: GraphCanvas refactor (viewport via props) + useContainerSize — `GraphCanvas.tsx`, `hooks/useContainerSize.ts` (`a801612`)
+- [x] Task 4: useWhiteboardData + useVisibleEntities hooks — `hooks/useWhiteboardData.ts`, `hooks/useVisibleEntities.ts` (`6ea8e64`)
+- [x] Task 5: CardNode + NoteNode + SectionNode + EntityNode — `nodes/*.tsx` (`923ab53`)
+- [x] Task 6: TaskNode + QuestionNode + AliasNode — `nodes/*.tsx` (`246de78`)
+- [x] Task 7: GraphToolbar — `GraphToolbar.tsx` (`e442dc1`)
+- [x] Task 8: GraphView 集成 — `GraphView.tsx` (`eeb8d75`)
+- [x] 手动验证 + DB 迁移修复 + 白板 ID 修正 (`a36c98b`, `84ae9f2`)
+- [x] Phase 顺序调整: 5e → 5d → 5c → 5f (`5fbe7d4`)
 
 ## 下一步具体动作
 
-1. **执行 Phase 5b plan** — 用 `superpowers:subagent-driven-development` skill，从 Task 1 开始（Rust: Task/Question 查询 commands TDD）
-2. **Task 1 具体**: 在 `src-tauri/src/modules/keysight/models.rs` 新增 `TaskEntity` + `QuestionEntity` structs，在 `domain/task.rs` 和 `domain/question.rs` 新增 `query_all(conn, whiteboard_id)` 函数，在 `commands.rs` 新增 `task_query_all` + `question_query_all` commands
-3. **Task 2 具体**: `pnpm add @tanstack/react-query`，在 `src/main.tsx` 包裹 `QueryClientProvider`，创建 `src/lib/unwrap-command.ts` 工具函数处理 `typedError` wrapper
-4. **Task 3 具体**: 重构 `src/components/keysight/GraphCanvas.tsx` — viewport 从 props 注入而非内部创建，导出 `UseViewportReturn` type，创建 `useContainerSize` hook
-5. **后续 Tasks 4-8**: 见 plan 文件完整步骤
+1. **brainstorm Phase 5e** — 用 `superpowers:brainstorming` skill，明确 sub-whiteboard 预览卡的数据来源（Rust 新增 `whiteboard_list` command 查询所有 whiteboard_id + 统计实体数）、前端渲染方案（WhiteboardCard 新组件）、导航交互（点击进入子白板、返回根白板）
+2. **写 Phase 5e spec** — 输出到 `docs/superpowers/specs/` 下，覆盖：WhiteboardCard 组件、GraphView 白板切换状态、viewport 持久化（localStorage per whiteboard）、自动布局（无位置新卡片网格排列）
+3. **写 Phase 5e plan** — 用 `superpowers:writing-plans` skill，拆解为可执行 tasks
+4. **执行 plan** — 用 `superpowers:subagent-driven-development` skill
+5. **手动验证** — 根白板看到 sub-whiteboard 预览卡（rust/chentian/rust-examples/agent），点击进入子白板看到卡片，返回根白板
 
 ## 关键上下文（/new 之后会丢的东西）
 
 ### 本次会话的假设与决策
 
-- **旧项目路径**: `~/codes/vibe-coding/obsidian-plugin-keysight`（Obsidian 插件 + keysight-core Rust sidecar）
-- **视觉风格选定 Clean Elevated (B)**: 白底卡片 + 精致投影 + 渐变图标 + pill 标签，Notion/Linear 风格。用户明确表示对旧项目视觉不满意
-- **全部 6 种实体类型**: 用户选了 C（全部），不要让用户取舍子集——最终需求就是全部
-- **TanStack Query**: 用户主动要求用 TQ 管理数据获取，和视口裁剪不冲突（TQ 管数据获取层，viewport culling 管渲染层）
-- **视口裁剪默认包含**: 用户要求即使当前量级不需要也要默认加入。简单 bounds 检查 O(N)，设计面向 1000+ cards per whiteboard
-- **Toolbar 完整复刻**: 用户说"最终需求肯定是 C"，不要让用户做子集选择产生焦虑
-- **cardQueryAll 只返回 kind='card'**: Task/Question 在 DB 中但没有查询 commands，Phase 5b plan Task 1 先补
-- **typedError wrapper**: bindings.ts 所有 commands 返回 `{ status: "ok", data } | { status: "error", error }`，TQ queryFn 需要 unwrap
-- **Phase 5 拆分为 6 个 sub-phases**: 5a(画布) → 5b(实体渲染) → 5c(交互) → 5d(Edge) → 5e(多白板) → 5f(性能)
-- **KEYSIGHT_VAULT_PATH 环境变量**: 启动 `pnpm tauri dev` 需要设置，如 `KEYSIGHT_VAULT_PATH=~/Documents/obsidian_workspace/agent-slipbox-v3 pnpm tauri dev`
+- **Bundle ID 变更**: `com.super-tauri.app` → `co.bunotes.super-tauri`，导致 app_data_dir 路径变了，新 DB 没有 legacy import 的 positions/sections/aliases。已手动用 `sqlite3 ATTACH` 迁移。这是一次性操作，不需要代码层面修复
+- **白板层级结构**: `wb_root` 是根白板，`rust`/`chentian`/`rust-examples` 是子白板（对应 vault 的 `whiteboard/{name}/` 目录）。根白板不直接显示卡片，而是显示子白板预览卡
+- **Sub-whiteboard 预览卡不在 DB 中**: 旧 Obsidian 插件在前端动态计算子白板列表和统计，不存储为实体。Phase 5e 需要新增 Rust command 返回子白板信息
+- **cardQueryAll 是全局查询**: 不按 whiteboard 过滤，返回所有卡片。toolbar 的 "145 cards" 是全局计数，不是当前白板的
+- **Phase 顺序调整**: 用户要求 5e → 5d → 5c → 5f（先做多白板，再做连线，再做拖拽，最后性能）
 - **TanStack Query skills**: 用户要求实现时调用本地 TanStack Query 相关 skills 确保用法正确
-- **app_data_dir 已迁移**: keysight.db 在 `~/Library/Application Support/com.super-tauri.app/keysight.db`
+- **Clean Elevated 视觉风格**: 白底卡片 + 精致投影 + 渐变图标 + pill 标签，已在 Phase 5b 全部节点组件中落地
+- **KEYSIGHT_VAULT_PATH 环境变量**: 启动 `pnpm tauri dev` 需要设置，如 `KEYSIGHT_VAULT_PATH=~/Documents/obsidian_workspace/agent-slipbox-v3 pnpm tauri dev`
+- **app_data_dir 实际路径**: `~/Library/Application Support/co.bunotes.super-tauri/keysight.db`
+- **中文回复**: 用户要求用中文回复
 
 ### 试过但不行的方案
 
-无
+- **把默认白板改为 "rust"**: 错误决策。rust 是子白板不是根，改了之后虽然能看到卡片但破坏了白板层级。根因是 DB 路径不一致，不是白板 ID 错了。已回滚 (`84ae9f2`)
 
 ### 开放问题
 
@@ -77,9 +60,7 @@ stale_check: cd src-tauri && cargo test --lib modules::keysight -- -q 2>&1 | tai
 
 ## Resume 检查清单
 
-- [ ] 读 `docs/progress/keysight.md` 确认 Phase 5a 在 Done，Phase 5b 在 Next
-- [ ] 跑 `stale_check`：Rust 应显示 `138 passed, 1 ignored`；TS 应显示 `9 passed`
+- [ ] 读 `docs/progress/keysight.md` 确认 Phase 5b 在 Done，Phase 5e 在 Next 最前面
+- [ ] 跑 `stale_check`：Rust 应显示 `142 passed, 1 ignored`；TS 应显示 `56 passed`（注意：Rust 从 138 增加到 142 因为 Task 1 新增了 4 个测试）
 - [ ] `git status` 干净
-- [ ] 确认 plan 文件存在：`docs/superpowers/plans/2026-04-12-keysight-phase5b-entity-rendering.md`
-- [ ] 确认 spec 文件存在：`docs/superpowers/specs/2026-04-12-keysight-phase5b-entity-rendering.md`
-- [ ] `pnpm tauri dev` 可启动（需设 KEYSIGHT_VAULT_PATH），GraphView 画布 + pan/zoom 正常
+- [ ] 确认 `~/Library/Application Support/co.bunotes.super-tauri/keysight.db` 有 positions 数据：`sqlite3 ... "SELECT COUNT(*) FROM positions;"` 应为 378
