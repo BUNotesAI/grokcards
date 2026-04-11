@@ -55,11 +55,13 @@ function AppSidebar() {
     <Sidebar collapsible="icon">
       <SidebarHeader className="border-b border-sidebar-border">
         <div className="flex h-8 items-center gap-2.5 px-1">
-          <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground">
-            <Zap className="size-3.5 text-background" />
-          </div>
-          {!collapsed && (
+          {collapsed ? (
+            <SidebarTrigger className="size-6" />
+          ) : (
             <>
+              <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground">
+                <Zap className="size-3.5 text-background" />
+              </div>
               <span className="flex-1 font-heading text-[15px] tracking-tight">
                 Super Tauri
               </span>
