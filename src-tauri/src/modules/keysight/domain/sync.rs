@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use rusqlite::{params, Connection};
 
 use crate::modules::keysight::errors::KeysightError;

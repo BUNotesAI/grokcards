@@ -1,1 +1,118 @@
-// 占位，后续 Task 填充
+#![allow(dead_code)]
+use std::collections::HashMap;
+
+use rusqlite::{params, Connection};
+
+use crate::modules::keysight::errors::KeysightError;
+use crate::modules::keysight::models::Position;
+
+/// 位置管理契约。
+pub(super) trait LayoutStore {
+    fn set_position(&self, whiteboard_id: &str, entity_id: &str, x: f64, y: f64) -> Result<(), KeysightError>;
+    fn query_positions(&self, whiteboard_id: &str) -> Result<HashMap<String, Position>, KeysightError>;
+    fn remove_position(&self, whiteboard_id: &str, entity_id: &str) -> Result<(), KeysightError>;
+}
+
+pub(super) struct SqliteLayoutStore<'a> {
+    conn: &'a Connection,
+}
+
+impl<'a> SqliteLayoutStore<'a> {
+    pub fn new(conn: &'a Connection) -> Self { Self { conn } }
+}
+
+impl LayoutStore for SqliteLayoutStore<'_> {
+    fn set_position(&self, whiteboard_id: &str, entity_id: &str, x: f64, y: f64) -> Result<(), KeysightError> {
+        self.conn.execute(
+            "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
+            params![entity_id, whiteboard_id, x, y],
+        )?;
+        Ok(())
+    }
+
+    fn query_positions(&self, whiteboard_id: &str) -> Result<HashMap<String, Position>, KeysightError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT entity_id, x, y FROM positions WHERE whiteboard_id = ?1"
+        )?;
+        let rows = stmt.query_map([whiteboard_id], |r| {
+            let id: String = r.get(0)?;
+            let x: f64 = r.get(1)?;
+            let y: f64 = r.get(2)?;
+            Ok((id, Position { x, y }))
+        })?;
+        let mut map = HashMap::new();
+        for r in rows {
+            let (id, pos) = r?;
+            map.insert(id, pos);
+        }
+        Ok(map)
+    }
+
+    fn remove_position(&self, whiteboard_id: &str, entity_id: &str) -> Result<(), KeysightError> {
+        self.conn.execute(
+            "DELETE FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
+            params![entity_id, whiteboard_id],
+        )?;
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::modules::keysight::db::init_db;
+
+    fn test_conn() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn
+    }
+
+    #[test]
+    fn test_set_and_query_position() {
+        let conn = test_conn();
+        let store = SqliteLayoutStore::new(&conn);
+        store.set_position("wb_root", "card_aaa", 100.0, 200.0).unwrap();
+
+        let positions = store.query_positions("wb_root").unwrap();
+        assert_eq!(positions.len(), 1);
+        let pos = &positions["card_aaa"];
+        assert!((pos.x - 100.0).abs() < f64::EPSILON);
+        assert!((pos.y - 200.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_set_position_upsert() {
+        let conn = test_conn();
+        let store = SqliteLayoutStore::new(&conn);
+        store.set_position("wb_root", "card_aaa", 100.0, 200.0).unwrap();
+        store.set_position("wb_root", "card_aaa", 300.0, 400.0).unwrap();
+
+        let positions = store.query_positions("wb_root").unwrap();
+        assert_eq!(positions.len(), 1);
+        assert!((positions["card_aaa"].x - 300.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_remove_position() {
+        let conn = test_conn();
+        let store = SqliteLayoutStore::new(&conn);
+        store.set_position("wb_root", "card_aaa", 100.0, 200.0).unwrap();
+        store.remove_position("wb_root", "card_aaa").unwrap();
+
+        let positions = store.query_positions("wb_root").unwrap();
+        assert!(positions.is_empty());
+    }
+
+    #[test]
+    fn test_positions_scoped_by_whiteboard() {
+        let conn = test_conn();
+        let store = SqliteLayoutStore::new(&conn);
+        store.set_position("wb_root", "card_aaa", 10.0, 20.0).unwrap();
+        store.set_position("wb_other", "card_bbb", 30.0, 40.0).unwrap();
+
+        let root = store.query_positions("wb_root").unwrap();
+        assert_eq!(root.len(), 1);
+        assert!(root.contains_key("card_aaa"));
+    }
+}

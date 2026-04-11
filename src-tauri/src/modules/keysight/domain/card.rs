@@ -1,6 +1,8 @@
+#![allow(dead_code)]
+
 use std::collections::HashMap;
 
-use rusqlite::{params, Connection};
+use rusqlite::Connection;
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::models::AtomicCard;
@@ -56,6 +58,7 @@ fn batch_load_tags(conn: &Connection, ids: &[String]) -> Result<HashMap<String, 
 }
 
 /// 从一组 card id 批量加载出边（link_to/related/see_also），返回 id → (link_to, related, see_also)。
+#[allow(clippy::type_complexity)]
 fn batch_load_edges(conn: &Connection, ids: &[String]) -> Result<HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>, KeysightError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
