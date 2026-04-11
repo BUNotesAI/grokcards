@@ -1109,6 +1109,137 @@ mod tests {
         assert_eq!(tag_count, 2);
     }
 
+    // ==================== 补充覆盖测试 ====================
+
+    #[test]
+    fn test_import_cards_see_also_edges() {
+        let old = legacy_conn();
+        // 手动插入带 seeAlso 的 insight（seed_insight 硬编码 seeAlso=[]）
+        old.execute(
+            "INSERT INTO insights (id, filePath, title, content, tags, linkTo, related, understanding, source, seeAlso, mtime)
+             VALUES ('card_aaa11111', 'whiteboard/rust/A.md', 'A', 'body', '[]', '[]', '[]', '', '', '[\"card_bbb22222\"]', 1000.0)",
+            [],
+        ).unwrap();
+        old.execute(
+            "INSERT INTO insights (id, filePath, title, content, tags, linkTo, related, understanding, source, seeAlso, mtime)
+             VALUES ('card_bbb22222', 'whiteboard/rust/B.md', 'B', 'body', '[]', '[]', '[]', '', '', '[]', 1000.0)",
+            [],
+        ).unwrap();
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        let count: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'card_aaa11111' AND to_id = 'card_bbb22222' AND edge_type = 'see_also'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn test_import_multi_whiteboard() {
+        let old = legacy_conn();
+        seed_insight(&old, "card_aaa11111", "Card A", r#"[]"#, r#"[]"#, r#"[]"#);
+        // root + chentian 两个白板
+        seed_meta(&old, "graph_sections", r#"[{"id":"sec_root0001","title":"Root Sec","color":null,"cardIds":[],"linkedSectionIds":[]}]"#);
+        seed_meta(&old, "graph_sections:chentian", r#"[{"id":"sec_chen0001","title":"Chen Sec","color":"blue","cardIds":["card_aaa11111"],"linkedSectionIds":[]}]"#);
+        seed_meta(&old, "graph_positions", r#"{"card_aaa11111":{"x":10.0,"y":20.0}}"#);
+        seed_meta(&old, "graph_positions:chentian", r#"{"sec_chen0001":{"x":30.0,"y":40.0}}"#);
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        let summary = SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        assert_eq!(summary.sections, 2);
+        assert_eq!(summary.positions, 2);
+
+        // root section → wb_root
+        let wb: String = new.query_row(
+            "SELECT whiteboard_id FROM entities WHERE id = 'sec_root0001'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(wb, "wb_root");
+
+        // chentian section → chentian
+        let wb2: String = new.query_row(
+            "SELECT whiteboard_id FROM entities WHERE id = 'sec_chen0001'", [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(wb2, "chentian");
+
+        // positions 也按白板分
+        let (x, y): (f64, f64) = new.query_row(
+            "SELECT x, y FROM positions WHERE entity_id = 'card_aaa11111' AND whiteboard_id = 'wb_root'",
+            [], |r| Ok((r.get(0)?, r.get(1)?)),
+        ).unwrap();
+        assert!((x - 10.0).abs() < 0.01);
+        assert!((y - 20.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn test_import_empty_legacy_db() {
+        let old = legacy_conn();
+        // 完全空的旧 DB，没有 insights，没有 meta
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        let summary = SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        assert_eq!(summary.cards, 0);
+        assert_eq!(summary.sections, 0);
+        assert_eq!(summary.notes, 0);
+        assert_eq!(summary.aliases, 0);
+        assert_eq!(summary.edges, 0);
+        assert_eq!(summary.positions, 0);
+        assert_eq!(summary.skipped.len(), 0);
+    }
+
+    #[test]
+    fn test_import_notes_all_link_types() {
+        let old = legacy_conn();
+        seed_insight(&old, "card_aaa11111", "Card A", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_meta(&old, "graph_sections",
+            r#"[{"id":"sec_aaa11111","title":"Sec","color":null,"cardIds":[],"linkedSectionIds":[]}]"#,
+        );
+        seed_meta(&old, "graph_notes",
+            r#"[{"id":"note_aaa11111","title":"N","content":"body","linkedCardIds":["card_aaa11111"],"linkedNoteIds":["note_bbb22222"],"linkedSectionIds":["sec_aaa11111"]}]"#,
+        );
+        // note_bbb22222 也要存在
+        seed_meta(&old, "graph_notes:extra", "[]"); // 不需要，只是为了 note_bbb22222 作为目标
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        let edge_count: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'note_aaa11111' AND edge_type = 'note_link'",
+            [], |r| r.get(0),
+        ).unwrap();
+        // 3 个 note_link：card + note + section
+        assert_eq!(edge_count, 3);
+    }
+
+    #[test]
+    fn test_import_alias_linked_cards_edges() {
+        let old = legacy_conn();
+        seed_insight(&old, "card_aaa11111", "Card A", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_insight(&old, "card_bbb22222", "Card B", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_meta(&old, "graph_sections", "[]");
+        seed_meta(&old, "graph_aliases",
+            r#"[{"aliasId":"alias_aaa11111","cardId":"card_aaa11111","linkedCardIds":["card_bbb22222"],"linkedSectionIds":[],"incomingCardIds":[]}]"#,
+        );
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        // alias_link edge: alias → card_bbb22222
+        let count: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'alias_aaa11111' AND to_id = 'card_bbb22222' AND edge_type = 'alias_link'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 1);
+    }
+
     // ==================== 真实旧 DB 验证（cargo test -- --ignored） ====================
 
     /// 一次性导入：旧 DB → 磁盘上的新 DB 文件。
