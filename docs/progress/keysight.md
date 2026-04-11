@@ -62,12 +62,12 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 ## Active
 
 ## Next
-- [ ] Phase 4: 文件同步管道（vault 扫描 + mtime diff + ID backfill + 孤儿检测 + notify 文件监听）
 - [ ] Phase 5: GraphView 白板移植（CSS transform 画布 + 拖拽 + zoom/pan + Quadtree + 多白板 + Edge 渲染）
 - [ ] Phase 6: 侧边栏 UI（Follow 模式 + Cards 列表 + Review + 行内编辑 + FilterBar + ExportPanel）
 
 ## Done
 
+- [x] Phase 4: Vault 同步管道 — VaultFs.list_md_files + sync_vault + insert_id_into_frontmatter + 启动同步 + 11 tests (156 total), Code Review passed
 - [x] Phase 3: 一次性旧 DB 导入 — LegacyReader/Importer traits, 23 tests, app_data_dir 迁移, 真实数据验证 (145 cards, 0 skipped)
 - [x] Phase 2: Tauri commands + specta 绑定 — 40 commands, KeysightState, Operation Contracts, 副作用矩阵
 
