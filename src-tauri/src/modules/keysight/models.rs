@@ -338,3 +338,93 @@ pub struct GraphOverviewResponse {
 pub struct VaultInfoResponse {
     pub vault_path: String,
 }
+
+// ============================================================
+// Legacy Import 中间类型
+// ============================================================
+
+/// 旧 DB insights 表的一行（v1 schema）。
+#[derive(Debug, Clone)]
+pub struct LegacyInsight {
+    pub id: String,
+    pub file_path: String,
+    pub title: String,
+    pub content: String,
+    pub tags: Vec<String>,
+    pub link_to: Vec<String>,
+    pub related: Vec<String>,
+    pub see_also: Vec<String>,
+    pub understanding: String,
+    pub source: String,
+    pub mtime: f64,
+}
+
+/// 旧 DB meta 表中 graph_sections JSON 元素。
+#[derive(Debug, Clone)]
+pub struct LegacySection {
+    pub id: String,
+    pub title: String,
+    pub color: Option<String>,
+    pub card_ids: Vec<String>,
+    pub linked_section_ids: Vec<String>,
+}
+
+/// 旧 DB meta 表中 graph_notes JSON 元素。
+#[derive(Debug, Clone)]
+pub struct LegacyNote {
+    pub id: String,
+    pub title: String,
+    pub content: String,
+    pub linked_card_ids: Vec<String>,
+    pub linked_note_ids: Vec<String>,
+    pub linked_section_ids: Vec<String>,
+}
+
+/// 旧 DB meta 表中 graph_aliases JSON 元素。
+#[derive(Debug, Clone)]
+pub struct LegacyAlias {
+    pub alias_id: String,
+    pub card_id: String,
+    pub linked_card_ids: Vec<String>,
+    pub linked_section_ids: Vec<String>,
+    pub incoming_card_ids: Vec<String>,
+}
+
+/// 旧 DB meta 表中 graph_positions JSON 对象的一个 entry。
+#[derive(Debug, Clone)]
+pub struct LegacyPosition {
+    pub entity_id: String,
+    pub x: f64,
+    pub y: f64,
+}
+
+/// meta key 后缀 → 新 whiteboard_id 的映射。
+#[derive(Debug, Clone)]
+pub struct WhiteboardMapping {
+    /// None = root（无后缀的 meta key），Some("chentian") = 子白板
+    pub meta_suffix: Option<String>,
+    /// 新 DB 中的 whiteboard_id："wb_root" 或子白板名
+    pub whiteboard_id: String,
+}
+
+/// 导入汇总报告。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ImportSummary {
+    pub cards: usize,
+    pub sections: usize,
+    pub notes: usize,
+    pub aliases: usize,
+    pub edges: usize,
+    pub positions: usize,
+    pub section_members: usize,
+    pub skipped: Vec<SkippedItem>,
+}
+
+/// 导入时跳过的条目。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SkippedItem {
+    pub entity_id: String,
+    pub reason: String,
+}
