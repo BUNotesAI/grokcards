@@ -64,7 +64,7 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 ## Next
 - [ ] Phase 5c: 交互（拖拽定位 + context menu + containment 检测）
 - [ ] Phase 5d: Edge 渲染（实体间连线 + clipToRect）
-- [ ] Phase 5e: 多白板（白板切换 + Root 画布预览卡 + viewport 持久化）
+- [ ] Phase 5e: 多白板（白板切换 + Root 画布预览卡 + viewport 持久化）— 用户反馈：根白板应显示 sub-whiteboard 预览卡而非直接显示卡片，参照 Obsidian 旧版行为
 - [ ] Phase 5f: 性能（Quadtree 视口裁剪 + LOD 分级）
 - [ ] Phase 6: 侧边栏 UI（Follow 模式 + Cards 列表 + Review + 行内编辑 + FilterBar + ExportPanel）
 
