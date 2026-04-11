@@ -6,7 +6,7 @@ use crate::modules::keysight::models::StatsResponse;
 use crate::modules::keysight::models::{CardSummary, GraphOverviewResponse, WhiteboardOverview};
 
 /// 查询各实体类型的数量统计。
-pub(super) fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
+pub(in crate::modules::keysight) fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
     // 按 kind 分组统计
     let mut stmt = conn.prepare("SELECT kind, COUNT(*) FROM entities GROUP BY kind")?;
     let rows = stmt.query_map([], |r| {
@@ -44,7 +44,7 @@ pub(super) fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
 }
 
 /// 图谱总览 — 按白板聚合统计 + 卡片摘要。
-pub(super) fn graph_overview(conn: &Connection) -> Result<GraphOverviewResponse, KeysightError> {
+pub(in crate::modules::keysight) fn graph_overview(conn: &Connection) -> Result<GraphOverviewResponse, KeysightError> {
     // 1. 所有白板
     let mut wb_stmt =
         conn.prepare("SELECT DISTINCT whiteboard_id FROM entities ORDER BY whiteboard_id")?;

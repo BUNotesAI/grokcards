@@ -17,7 +17,7 @@ use crate::modules::keysight::parser;
 ///
 /// ## 幂等性
 /// 相同内容重复调用 → updated=1, inserted=0
-pub(super) fn sync_file(
+pub(in crate::modules::keysight) fn sync_file(
     conn: &Connection,
     file_path: &str,
     content: &str,
@@ -194,7 +194,7 @@ pub(super) fn derive_whiteboard_id(file_path: &str) -> String {
 }
 
 /// 删除文件对应的实体及 mtime 记录。
-pub(super) fn remove_file(conn: &Connection, file_path: &str) -> Result<(), KeysightError> {
+pub(in crate::modules::keysight) fn remove_file(conn: &Connection, file_path: &str) -> Result<(), KeysightError> {
     // 先查出该文件对应的 entity id，级联清理关联表
     let mut stmt = conn.prepare("SELECT id FROM entities WHERE file_path = ?1")?;
     let ids: Vec<String> = stmt
@@ -218,7 +218,7 @@ pub(super) fn remove_file(conn: &Connection, file_path: &str) -> Result<(), Keys
 }
 
 /// 查询所有文件的 mtime。
-pub(super) fn all_file_mtimes(
+pub(in crate::modules::keysight) fn all_file_mtimes(
     conn: &Connection,
 ) -> Result<Vec<(String, f64)>, KeysightError> {
     let mut stmt = conn.prepare("SELECT filePath, mtime FROM file_mtimes")?;

@@ -1,14 +1,16 @@
+use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
-use tauri_specta::{collect_commands, Builder};
 use specta_typescript::Typescript;
+use tauri_specta::{collect_commands, Builder};
 
 mod app_error;
 mod modules;
 
 fn make_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
+        // todo commands
         modules::todo::commands::list_todos,
         modules::todo::commands::create_todo,
         modules::todo::commands::update_todo,
@@ -16,14 +18,75 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::todo::commands::delete_todo,
         modules::todo::commands::toggle_all,
         modules::todo::commands::clear_completed,
+        // keysight: card
+        modules::keysight::commands::card_get,
+        modules::keysight::commands::card_query_all,
+        modules::keysight::commands::card_query_by_file,
+        modules::keysight::commands::card_query_by_ids,
+        modules::keysight::commands::card_count,
+        modules::keysight::commands::card_search,
+        modules::keysight::commands::card_query_links,
+        modules::keysight::commands::card_edit_title,
+        modules::keysight::commands::card_edit_body,
+        modules::keysight::commands::card_update_understanding,
+        // keysight: section
+        modules::keysight::commands::section_get,
+        modules::keysight::commands::section_query_all,
+        modules::keysight::commands::section_create,
+        modules::keysight::commands::section_delete,
+        modules::keysight::commands::section_update,
+        modules::keysight::commands::section_add_member,
+        modules::keysight::commands::section_remove_member,
+        modules::keysight::commands::section_move_to_whiteboard,
+        // keysight: note
+        modules::keysight::commands::note_get,
+        modules::keysight::commands::note_query_all,
+        modules::keysight::commands::note_create,
+        modules::keysight::commands::note_delete,
+        modules::keysight::commands::note_update,
+        // keysight: alias
+        modules::keysight::commands::alias_get,
+        modules::keysight::commands::alias_query_all,
+        modules::keysight::commands::alias_create,
+        modules::keysight::commands::alias_delete,
+        // keysight: layout
+        modules::keysight::commands::layout_query_positions,
+        modules::keysight::commands::layout_set_position,
+        modules::keysight::commands::layout_remove_position,
+        // keysight: entity graph
+        modules::keysight::commands::entity_edges_from,
+        modules::keysight::commands::entity_edges_to,
+        modules::keysight::commands::entity_connect,
+        modules::keysight::commands::entity_disconnect,
+        // keysight: sync
+        modules::keysight::commands::sync_file,
+        modules::keysight::commands::sync_remove_file,
+        modules::keysight::commands::sync_all_file_mtimes,
+        // keysight: overview
+        modules::keysight::commands::overview_stats,
+        modules::keysight::commands::overview_graph,
+        // keysight: config
+        modules::keysight::commands::get_vault_info,
     ])
 }
 
-/// 初始化 SQLite 连接并建表。
-fn init_database() -> Connection {
+/// 初始化 todo 的 SQLite 连接并建表。
+fn init_todo_database() -> Connection {
     let conn = Connection::open("super_tauri.db").expect("无法打开数据库");
     modules::init_all(&conn).expect("建表失败");
     conn
+}
+
+/// 初始化 KeySight 的独立 SQLite 连接 + vault 路径。
+fn init_keysight_state() -> modules::keysight::state::KeysightState {
+    let vault_path = std::env::var("KEYSIGHT_VAULT_PATH")
+        .expect("环境变量 KEYSIGHT_VAULT_PATH 未设置，请设置为 Obsidian vault 根目录路径");
+    let conn = Connection::open("keysight.db").expect("无法打开 keysight 数据库");
+    modules::keysight::init(&conn).expect("keysight 建表失败");
+    modules::keysight::state::KeysightState {
+        db: Mutex::new(conn),
+        vault_path: PathBuf::from(vault_path),
+    }
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -35,11 +98,13 @@ pub fn run() {
         .export(Typescript::default(), "../src/bindings.ts")
         .expect("Failed to export typescript bindings");
 
-    let conn = init_database();
+    let todo_conn = init_todo_database();
+    let keysight_state = init_keysight_state();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(Mutex::new(conn))
+        .manage(Mutex::new(todo_conn))
+        .manage(keysight_state)
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             builder.mount_events(app);

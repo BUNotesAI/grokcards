@@ -7,13 +7,13 @@ use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::models::Position;
 
 /// 位置管理契约。
-pub(super) trait LayoutStore {
+pub(in crate::modules::keysight) trait LayoutStore {
     fn set_position(&self, whiteboard_id: &str, entity_id: &str, x: f64, y: f64) -> Result<(), KeysightError>;
     fn query_positions(&self, whiteboard_id: &str) -> Result<HashMap<String, Position>, KeysightError>;
     fn remove_position(&self, whiteboard_id: &str, entity_id: &str) -> Result<(), KeysightError>;
 }
 
-pub(super) struct SqliteLayoutStore<'a> {
+pub(in crate::modules::keysight) struct SqliteLayoutStore<'a> {
     conn: &'a Connection,
 }
 

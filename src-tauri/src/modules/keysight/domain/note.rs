@@ -6,7 +6,7 @@ use crate::modules::keysight::id;
 use crate::modules::keysight::models::GraphNote;
 
 /// 笔记存储契约。
-pub(super) trait NoteStore {
+pub(in crate::modules::keysight) trait NoteStore {
     fn create(&self, whiteboard_id: &str, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
@@ -14,7 +14,7 @@ pub(super) trait NoteStore {
     fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphNote>, KeysightError>;
 }
 
-pub(super) struct SqliteNoteStore<'a> {
+pub(in crate::modules::keysight) struct SqliteNoteStore<'a> {
     conn: &'a Connection,
 }
 

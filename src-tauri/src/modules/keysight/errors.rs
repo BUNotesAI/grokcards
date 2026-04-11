@@ -4,7 +4,7 @@ use crate::app_error::AppError;
 
 /// KeySight 模块内部错误类型。
 #[derive(Debug, thiserror::Error)]
-pub(super) enum KeysightError {
+pub(in crate::modules::keysight) enum KeysightError {
     #[error("标题不能为空")]
     EmptyTitle,
 

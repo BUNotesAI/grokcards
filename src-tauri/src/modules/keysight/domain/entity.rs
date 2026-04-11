@@ -5,7 +5,7 @@ use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::models::{Edge, EdgeStyle, EdgeType};
 
 /// 实体图谱边操作契约。
-pub(super) trait EntityGraph {
+pub(in crate::modules::keysight) trait EntityGraph {
     /// 连接两个实体。INSERT OR IGNORE — 重复连接幂等。
     fn connect(
         &self,
@@ -31,7 +31,7 @@ pub(super) trait EntityGraph {
     fn edges_to(&self, entity_id: &str) -> Result<Vec<Edge>, KeysightError>;
 }
 
-pub(super) struct SqliteEntityGraph<'a> {
+pub(in crate::modules::keysight) struct SqliteEntityGraph<'a> {
     conn: &'a Connection,
 }
 

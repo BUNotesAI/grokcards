@@ -199,7 +199,7 @@ pub struct AtomicCard {
     pub understanding: String,
     pub source: String,
     pub see_also: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub mtime: Option<f64>,
 }
 
@@ -210,9 +210,9 @@ pub struct GraphSection {
     pub id: String,
     pub title: String,
     pub card_ids: Vec<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub color: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_section_ids: Option<Vec<String>>,
 }
 
@@ -223,13 +223,13 @@ pub struct GraphNote {
     pub id: String,
     pub title: String,
     pub content: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub color: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_section_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_card_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_note_ids: Option<Vec<String>>,
 }
 
@@ -239,13 +239,13 @@ pub struct GraphNote {
 pub struct CardAlias {
     pub alias_id: String,
     pub card_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_card_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_section_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub linked_note_ids: Option<Vec<String>>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub incoming_card_ids: Option<Vec<String>>,
 }
 
@@ -256,9 +256,9 @@ pub struct Edge {
     pub from_id: String,
     pub to_id: String,
     pub edge_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub style: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default)]
     pub label: Option<String>,
 }
 
@@ -330,4 +330,11 @@ pub struct WhiteboardOverview {
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 pub struct GraphOverviewResponse {
     pub whiteboards: Vec<WhiteboardOverview>,
+}
+
+/// 当前 vault 配置信息。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct VaultInfoResponse {
+    pub vault_path: String,
 }

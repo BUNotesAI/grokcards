@@ -6,7 +6,7 @@ use crate::modules::keysight::id;
 use crate::modules::keysight::models::GraphSection;
 
 /// 分组存储契约。
-pub(super) trait SectionStore {
+pub(in crate::modules::keysight) trait SectionStore {
     fn create(&self, whiteboard_id: &str, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn update(&self, id: &str, title: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
@@ -17,7 +17,7 @@ pub(super) trait SectionStore {
     fn move_to_whiteboard(&self, section_id: &str, target_whiteboard_id: &str) -> Result<(), KeysightError>;
 }
 
-pub(super) struct SqliteSectionStore<'a> {
+pub(in crate::modules::keysight) struct SqliteSectionStore<'a> {
     conn: &'a Connection,
 }
 

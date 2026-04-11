@@ -6,14 +6,14 @@ use crate::modules::keysight::id;
 use crate::modules::keysight::models::CardAlias;
 
 /// 别名存储契约。
-pub(super) trait AliasStore {
+pub(in crate::modules::keysight) trait AliasStore {
     fn create(&self, whiteboard_id: &str, card_id: &str) -> Result<CardAlias, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn get(&self, id: &str) -> Result<CardAlias, KeysightError>;
     fn query_all(&self, whiteboard_id: &str) -> Result<Vec<CardAlias>, KeysightError>;
 }
 
-pub(super) struct SqliteAliasStore<'a> {
+pub(in crate::modules::keysight) struct SqliteAliasStore<'a> {
     conn: &'a Connection,
 }
 

@@ -11,7 +11,7 @@ use crate::modules::keysight::parser;
 use crate::modules::keysight::vault_fs::VaultFs;
 
 /// 卡片存储契约。
-pub(super) trait CardStore {
+pub(in crate::modules::keysight) trait CardStore {
     /// 按 ID 查询单张卡片（含 tags、edges、card_fields）。
     fn get(&self, id: &str) -> Result<AtomicCard, KeysightError>;
     /// 查询所有卡片，按 mtime 降序，支持分页。
@@ -34,7 +34,7 @@ pub(super) trait CardStore {
     fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError>;
 }
 
-pub(super) struct SqliteCardStore<'a> {
+pub(in crate::modules::keysight) struct SqliteCardStore<'a> {
     conn: &'a Connection,
     vault_fs: Option<&'a dyn VaultFs>,
 }
