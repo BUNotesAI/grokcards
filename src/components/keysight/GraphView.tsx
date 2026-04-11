@@ -12,8 +12,8 @@ import { unwrapCommand } from "@/lib/commandResult";
 import { commands } from "@/bindings";
 import { useQueryClient } from "@tanstack/react-query";
 
-/** 默认白板 ID — Phase 5e 会改为动态切换，当前硬编码为已有数据的白板 */
-const ROOT_WHITEBOARD = "rust";
+/** 根白板 ID — rust/chentian 等是子白板，根白板显示子白板预览卡 */
+const ROOT_WHITEBOARD = "wb_root";
 
 /** 默认新实体位置（画布中心附近，带随机偏移防重叠） */
 function randomOffset(): Position {
