@@ -1,5 +1,6 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
+import { GraphView } from "@/components/keysight/GraphView";
 import TodoPage from "@/pages/TodoPage";
 import PlaceholderPage from "@/pages/PlaceholderPage";
 import { FileText, Bookmark, Code2, Settings } from "lucide-react";
@@ -9,6 +10,7 @@ function App() {
     <BrowserRouter>
       <Routes>
         <Route element={<AppShell />}>
+          <Route path="/keysight" element={<GraphView />} />
           <Route path="/todo" element={<TodoPage />} />
           <Route
             path="/notes"
@@ -50,7 +52,7 @@ function App() {
               />
             }
           />
-          <Route path="*" element={<Navigate to="/todo" replace />} />
+          <Route path="*" element={<Navigate to="/keysight" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

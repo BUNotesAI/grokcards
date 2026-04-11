@@ -22,12 +22,14 @@ import {
   FileText,
   Bookmark,
   Code2,
+  Grid3x3,
   Settings,
   Zap,
   Search,
 } from "lucide-react";
 
 const modules = [
+  { label: "KeySight", icon: Grid3x3, path: "/keysight" },
   { label: "Todo", icon: CheckSquare, path: "/todo" },
   { label: "Notes", icon: FileText, path: "/notes" },
   { label: "Bookmarks", icon: Bookmark, path: "/bookmarks" },
@@ -39,6 +41,7 @@ const system = [
 ];
 
 const pageTitles: Record<string, string> = {
+  "/keysight": "KeySight",
   "/todo": "Todo",
   "/notes": "Notes",
   "/bookmarks": "Bookmarks",
@@ -151,16 +154,40 @@ function Topbar() {
   );
 }
 
+/**
+ * 内容区域容器
+ *
+ * GraphView 需要全屏（无 padding、无滚动），其他页面保留常规布局。
+ * 根据当前路径动态切换样式。
+ */
+function ContentArea() {
+  const location = useLocation();
+  // GraphView 需要全屏，不带 padding 和滚动
+  const isFullscreen = location.pathname === "/keysight";
+
+  return (
+    <>
+      <Topbar />
+      <main
+        className={
+          isFullscreen
+            ? "relative flex-1 overflow-hidden"
+            : "flex-1 overflow-y-auto p-6"
+        }
+      >
+        <Outlet />
+      </main>
+    </>
+  );
+}
+
 export default function AppShell() {
   return (
     <TooltipProvider>
       <SidebarProvider>
         <AppSidebar />
         <SidebarInset>
-          <Topbar />
-          <main className="flex-1 overflow-y-auto p-6">
-            <Outlet />
-          </main>
+          <ContentArea />
         </SidebarInset>
       </SidebarProvider>
     </TooltipProvider>
