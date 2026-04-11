@@ -1,0 +1,166 @@
+import { NavLink, Outlet, useLocation } from "react-router-dom";
+import {
+  Sidebar,
+  SidebarContent,
+  SidebarFooter,
+  SidebarGroup,
+  SidebarGroupContent,
+  SidebarGroupLabel,
+  SidebarHeader,
+  SidebarInset,
+  SidebarMenu,
+  SidebarMenuButton,
+  SidebarMenuItem,
+  SidebarProvider,
+  SidebarRail,
+  SidebarTrigger,
+  useSidebar,
+} from "@/components/ui/sidebar";
+import { Separator } from "@/components/ui/separator";
+import { TooltipProvider } from "@/components/ui/tooltip";
+import {
+  CheckSquare,
+  FileText,
+  Bookmark,
+  Code2,
+  Settings,
+  Zap,
+  Search,
+} from "lucide-react";
+
+const modules = [
+  { label: "Todo", icon: CheckSquare, path: "/todo" },
+  { label: "Notes", icon: FileText, path: "/notes" },
+  { label: "Bookmarks", icon: Bookmark, path: "/bookmarks" },
+  { label: "Snippets", icon: Code2, path: "/snippets" },
+];
+
+const system = [
+  { label: "Settings", icon: Settings, path: "/settings" },
+];
+
+const pageTitles: Record<string, string> = {
+  "/todo": "Todo",
+  "/notes": "Notes",
+  "/bookmarks": "Bookmarks",
+  "/snippets": "Snippets",
+  "/settings": "Settings",
+};
+
+function AppSidebar() {
+  const { state } = useSidebar();
+  const collapsed = state === "collapsed";
+  const location = useLocation();
+
+  return (
+    <Sidebar collapsible="icon">
+      <SidebarHeader className="border-b border-sidebar-border">
+        <div className="flex h-8 items-center gap-2.5 px-1">
+          <div className="flex size-6 shrink-0 items-center justify-center rounded-md bg-foreground">
+            <Zap className="size-3.5 text-background" />
+          </div>
+          {!collapsed && (
+            <span className="font-heading text-[15px] tracking-tight">
+              Super Tauri
+            </span>
+          )}
+        </div>
+      </SidebarHeader>
+
+      <SidebarContent>
+        <SidebarGroup>
+          <SidebarGroupLabel>Modules</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {modules.map((item) => (
+                <SidebarMenuItem key={item.path}>
+                  <SidebarMenuButton
+                    tooltip={item.label}
+                    isActive={location.pathname === item.path}
+                    render={<NavLink to={item.path} />}
+                  >
+                    <item.icon className="size-4" />
+                    <span>{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+
+        <SidebarGroup>
+          <SidebarGroupLabel>System</SidebarGroupLabel>
+          <SidebarGroupContent>
+            <SidebarMenu>
+              {system.map((item) => (
+                <SidebarMenuItem key={item.path}>
+                  <SidebarMenuButton
+                    tooltip={item.label}
+                    isActive={location.pathname === item.path}
+                    render={<NavLink to={item.path} />}
+                  >
+                    <item.icon className="size-4" />
+                    <span>{item.label}</span>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
+              ))}
+            </SidebarMenu>
+          </SidebarGroupContent>
+        </SidebarGroup>
+      </SidebarContent>
+
+      <SidebarFooter className="border-t border-sidebar-border">
+        <div className="flex items-center gap-2.5 px-1">
+          <div className="flex size-7 shrink-0 items-center justify-center rounded-full bg-gradient-to-br from-accent to-yellow-600 text-xs font-bold text-white">
+            A
+          </div>
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium">Alex</div>
+              <div className="text-[11px] text-muted-foreground">Local</div>
+            </div>
+          )}
+        </div>
+      </SidebarFooter>
+
+      <SidebarRail />
+    </Sidebar>
+  );
+}
+
+function Topbar() {
+  const location = useLocation();
+  const title = pageTitles[location.pathname] ?? "";
+
+  return (
+    <header className="flex h-[52px] shrink-0 items-center gap-3 border-b bg-card px-4">
+      <SidebarTrigger className="-ml-1" />
+      <Separator orientation="vertical" className="mr-1 h-4" />
+      <h1 className="font-heading text-[17px]">{title}</h1>
+      <div className="flex-1" />
+      <div className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-xs text-muted-foreground">
+        <Search className="size-3.5" />
+        <span>Search...</span>
+        <kbd className="ml-4 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
+          ⌘K
+        </kbd>
+      </div>
+    </header>
+  );
+}
+
+export default function AppShell() {
+  return (
+    <TooltipProvider>
+      <SidebarProvider>
+        <AppSidebar />
+        <SidebarInset>
+          <Topbar />
+          <main className="flex-1 overflow-y-auto p-6">
+            <Outlet />
+          </main>
+        </SidebarInset>
+      </SidebarProvider>
+    </TooltipProvider>
+  );
+}

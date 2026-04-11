@@ -108,7 +108,7 @@ src-tauri/src/
 │   ├── mod.rs                # 只 re-export 各模块的 commands
 │   ├── todo/                 # 一个 Deep Module
 │   │   ├── mod.rs            # 窄接口：pub use commands + models
-│   │   ├── commands.rs       # #[tauri::command] 薄壳 (pub(super))
+│   │   ├── commands.rs       # #[tauri::command] 薄壳 (pub — proc macro 要求)
 │   │   ├── domain.rs         # 业务纯函数 (pub(super))
 │   │   ├── models.rs         # 数据结构 (pub — 跨 IPC 需要)
 │   │   ├── errors.rs         # 模块错误 (pub(super)，impl Into<AppError>)
@@ -121,8 +121,8 @@ src-tauri/src/
 
 | 文件 | 可见性 | 原因 |
 |---|---|---|
-| `mod.rs` | `pub use commands::*; pub use models::*;` | 窄接口 — 只暴露 command 函数和跨 IPC 类型 |
-| `commands.rs` | `pub(super)` | 只被本模块 mod.rs re-export |
+| `mod.rs` | `pub mod commands; pub mod models;` | 窄接口 — 暴露 command 模块和跨 IPC 类型。lib.rs 用完整路径 `modules::todo::commands::*` 引用 |
+| `commands.rs` | `pub` | `#[tauri::command]` + `#[specta::specta]` proc macro 生成的隐藏符号需要和函数同等可见性，`pub(super)` 会导致 `collect_commands![]` 找不到符号。lib.rs 用完整路径引用 |
 | `domain.rs` | `pub(super)` | 内部实现，外部不可见 |
 | `models.rs` | `pub` | 需要跨 IPC 传递，derive `specta::Type` |
 | `errors.rs` | `pub(super)` | 模块内使用，转换为 AppError 后对外 |
