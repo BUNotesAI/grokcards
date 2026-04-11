@@ -273,6 +273,22 @@ pub struct SyncFileResponse {
     pub assigned_id: String,
 }
 
+/// Vault 全量同步结果报告。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct SyncVaultReport {
+    /// 文件系统扫描到的 .md 文件总数
+    pub scanned: u32,
+    /// 实际同步的文件数（new + changed）
+    pub synced: u32,
+    /// 孤儿清理数（DB 有但文件不存在）
+    pub removed: u32,
+    /// mtime 未变跳过数
+    pub skipped: u32,
+    /// ID 回写数
+    pub backfilled: u32,
+}
+
 /// 统计信息。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
