@@ -3,9 +3,9 @@
 KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 
 ## Active
+- [ ] Phase 3: 一次性旧 DB 导入（TDD + Trait-First，LegacyReader/LegacyImporter trait，🔴🟢 关卡）
 
 ## Next
-- [ ] Phase 3: 一次性旧 DB 导入（TDD + Trait-First，LegacyReader/LegacyImporter trait，🔴🟢 关卡）
 - [ ] Phase 4: 文件监听（TDD + Trait-First，FileEventSource/Handler trait，🔴🟢 关卡）
 - [ ] Phase 5: GraphView 移植（TS 测试基础设施 + TDD 组件测试，🔴🟢 关卡）
 - [ ] Phase 6: UI 补全（每个组件 TDD，🔴🟢 关卡）

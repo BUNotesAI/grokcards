@@ -617,6 +617,7 @@ src/
 | `entity_disconnect` | `edges` | DB 写 | domain unit test |
 | `sync_file` | `entities`, `card_fields`, `entity_tags`, `edges`, `entities_fts` | 全量同步 | domain unit test |
 | `sync_remove_file` | `entities`, `entities_fts` | 按文件删除 | domain unit test |
+| `import_legacy_db` | `entities`, `card_fields`, `alias_fields`, `entity_tags`, `edges`, `positions`, `section_members`, `entities_fts` + 旧 DB 文件备份 | DB 批量写 + 文件 copy | domain unit test |
 
 **更新时机**：新增任何 domain 写函数时，同步在此登记。Code Review 时核对矩阵是否与代码一致。
 
