@@ -8,3 +8,4 @@ pub(in crate::modules::keysight) mod question;
 pub(in crate::modules::keysight) mod section;
 pub(in crate::modules::keysight) mod sync;
 pub(in crate::modules::keysight) mod task;
+pub(in crate::modules::keysight) mod legacy_import;
