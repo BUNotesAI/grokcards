@@ -285,3 +285,49 @@ pub struct StatsResponse {
     pub questions: u64,
     pub edges: u64,
 }
+
+/// 单卡片完整链接图谱。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CardLinksResponse {
+    /// 出边 link_to 的目标 id
+    pub link_to: Vec<String>,
+    /// 出边 related 的目标 id
+    pub related: Vec<String>,
+    /// 出边 see_also 的目标 id
+    pub see_also: Vec<String>,
+    /// 入边 link_to（谁 link 到我）
+    pub linked_from: Vec<String>,
+    /// 入边 related（谁和我 related）
+    pub related_from: Vec<String>,
+    /// 入边 see_also（谁 see_also 我）
+    pub see_also_from: Vec<String>,
+}
+
+/// 卡片摘要（用于 overview）。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct CardSummary {
+    pub id: String,
+    pub title: String,
+    pub file_path: String,
+    pub incoming_link_count: u64,
+}
+
+/// 单个白板的概览。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteboardOverview {
+    pub whiteboard_id: String,
+    pub cards: u64,
+    pub sections: u64,
+    pub notes: u64,
+    pub aliases: u64,
+    pub card_summaries: Vec<CardSummary>,
+}
+
+/// 图谱总览。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+pub struct GraphOverviewResponse {
+    pub whiteboards: Vec<WhiteboardOverview>,
+}
