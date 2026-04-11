@@ -1108,4 +1108,60 @@ mod tests {
             .unwrap();
         assert_eq!(tag_count, 2);
     }
+
+    // ==================== 真实旧 DB 验证（cargo test -- --ignored） ====================
+
+    #[test]
+    #[ignore]
+    fn test_real_legacy_db_import() {
+        let old_path = "/Users/alexwang/codes/vibe-coding/obsidian-plugin-keysight/keysight.db";
+        if !std::path::Path::new(old_path).exists() {
+            eprintln!("旧 DB 不存在，跳过: {old_path}");
+            return;
+        }
+
+        let old_conn = Connection::open_with_flags(
+            old_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
+        )
+        .unwrap();
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old_conn);
+        let importer = SqliteLegacyImporter::new(&new);
+        let summary = importer.import(&reader).unwrap();
+
+        eprintln!("=== Import Summary ===");
+        eprintln!("Cards: {}", summary.cards);
+        eprintln!("Sections: {}", summary.sections);
+        eprintln!("Notes: {}", summary.notes);
+        eprintln!("Aliases: {}", summary.aliases);
+        eprintln!("Edges: {}", summary.edges);
+        eprintln!("Positions: {}", summary.positions);
+        eprintln!("Section Members: {}", summary.section_members);
+        eprintln!("Skipped: {}", summary.skipped.len());
+        for s in &summary.skipped {
+            eprintln!("  SKIP: {} — {}", s.entity_id, s.reason);
+        }
+
+        // 基本数量验证
+        assert_eq!(summary.cards, 145);
+        assert!(summary.sections >= 33, "sections: {}", summary.sections);
+        assert!(summary.notes >= 80, "notes: {}", summary.notes);
+        assert!(summary.aliases >= 125, "aliases: {}", summary.aliases);
+
+        // 新 DB 完整性
+        let entity_count: i64 = new
+            .query_row("SELECT COUNT(*) FROM entities", [], |r| r.get(0))
+            .unwrap();
+        eprintln!("Total entities: {entity_count}");
+        assert!(entity_count >= 383, "entities: {entity_count}"); // 145+33+80+125
+
+        let fts_count: i64 = new
+            .query_row("SELECT COUNT(*) FROM entities_fts", [], |r| r.get(0))
+            .unwrap();
+        assert_eq!(fts_count, 145);
+
+        eprintln!("=== ALL CHECKS PASSED ===");
+    }
 }
