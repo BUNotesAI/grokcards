@@ -2,10 +2,13 @@
 
 use std::collections::HashMap;
 
-use rusqlite::Connection;
+use rusqlite::{params, Connection};
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::models::AtomicCard;
+use crate::modules::keysight::models::CardLinksResponse;
+use crate::modules::keysight::parser;
+use crate::modules::keysight::vault_fs::VaultFs;
 
 /// 卡片存储契约。
 pub(super) trait CardStore {
@@ -19,15 +22,30 @@ pub(super) trait CardStore {
     fn query_by_ids(&self, ids: &[String]) -> Result<Vec<AtomicCard>, KeysightError>;
     /// 卡片总数。
     fn count(&self) -> Result<i64, KeysightError>;
+    /// 编辑卡片标题（同时写回文件）。
+    fn edit_title(&self, id: &str, new_title: &str) -> Result<(), KeysightError>;
+    /// 编辑卡片正文（同时写回文件）。
+    fn edit_body(&self, id: &str, new_body: &str) -> Result<(), KeysightError>;
+    /// 更新理解笔记（同时写回文件 frontmatter）。
+    fn update_understanding(&self, id: &str, text: &str) -> Result<(), KeysightError>;
+    /// 全文搜索卡片。
+    fn search(&self, text: &str) -> Result<Vec<AtomicCard>, KeysightError>;
+    /// 查询单卡片完整链接图谱。
+    fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError>;
 }
 
 pub(super) struct SqliteCardStore<'a> {
     conn: &'a Connection,
+    vault_fs: Option<&'a dyn VaultFs>,
 }
 
 impl<'a> SqliteCardStore<'a> {
     pub fn new(conn: &'a Connection) -> Self {
-        Self { conn }
+        Self { conn, vault_fs: None }
+    }
+
+    pub fn with_vault_fs(conn: &'a Connection, vault_fs: &'a dyn VaultFs) -> Self {
+        Self { conn, vault_fs: Some(vault_fs) }
     }
 }
 
@@ -266,6 +284,120 @@ impl CardStore for SqliteCardStore<'_> {
         )?;
         Ok(count)
     }
+
+    fn edit_title(&self, id: &str, new_title: &str) -> Result<(), KeysightError> {
+        let new_title = new_title.trim();
+        if new_title.is_empty() {
+            return Err(KeysightError::EmptyTitle);
+        }
+        let vault_fs = self.vault_fs.ok_or_else(|| {
+            KeysightError::FileError("edit_title 需要 VaultFs".to_string())
+        })?;
+
+        // 查 file_path
+        let file_path: String = self.conn.query_row(
+            "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
+            [id],
+            |r| r.get(0),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            other => KeysightError::Database(other),
+        })?;
+
+        // 读文件，替换 H1
+        let content = vault_fs.read_file(&file_path)?;
+        let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+        let mut found = false;
+        for line in &mut lines {
+            if line.trim().starts_with("# ") {
+                *line = format!("# 【ATC】{new_title}");
+                found = true;
+                break;
+            }
+        }
+        if !found {
+            lines.push(format!("# 【ATC】{new_title}"));
+        }
+        let updated = lines.join("\n") + "\n";
+        vault_fs.write_file(&file_path, &updated)?;
+
+        // 更新 DB
+        self.conn.execute(
+            "UPDATE entities SET title = ?1 WHERE id = ?2",
+            params![new_title, id],
+        )?;
+        Ok(())
+    }
+
+    fn edit_body(&self, id: &str, new_body: &str) -> Result<(), KeysightError> {
+        let vault_fs = self.vault_fs.ok_or_else(|| {
+            KeysightError::FileError("edit_body 需要 VaultFs".to_string())
+        })?;
+
+        let file_path: String = self.conn.query_row(
+            "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
+            [id],
+            |r| r.get(0),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            other => KeysightError::Database(other),
+        })?;
+
+        let content = vault_fs.read_file(&file_path)?;
+        let lines: Vec<&str> = content.lines().collect();
+
+        // 找 H1 行的位置
+        let h1_idx = lines.iter().position(|l| l.trim().starts_with("# "));
+        let prefix = match h1_idx {
+            Some(idx) => lines[..=idx].join("\n"),
+            None => content.clone(),
+        };
+
+        let updated = format!("{prefix}\n\n{new_body}");
+        vault_fs.write_file(&file_path, &updated)?;
+
+        self.conn.execute(
+            "UPDATE entities SET content = ?1 WHERE id = ?2",
+            params![new_body, id],
+        )?;
+        Ok(())
+    }
+
+    fn update_understanding(&self, id: &str, text: &str) -> Result<(), KeysightError> {
+        let vault_fs = self.vault_fs.ok_or_else(|| {
+            KeysightError::FileError("update_understanding 需要 VaultFs".to_string())
+        })?;
+
+        let file_path: String = self.conn.query_row(
+            "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
+            [id],
+            |r| r.get(0),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            other => KeysightError::Database(other),
+        })?;
+
+        let content = vault_fs.read_file(&file_path)?;
+        let updated = parser::write_frontmatter(&content, parser::FrontmatterUpdate {
+            understanding: Some(text.to_string()),
+            ..Default::default()
+        });
+        vault_fs.write_file(&file_path, &updated)?;
+
+        self.conn.execute(
+            "UPDATE card_fields SET understanding = ?1 WHERE entity_id = ?2",
+            params![text, id],
+        )?;
+        Ok(())
+    }
+
+    fn search(&self, _text: &str) -> Result<Vec<AtomicCard>, KeysightError> {
+        todo!()
+    }
+
+    fn query_links(&self, _id: &str) -> Result<CardLinksResponse, KeysightError> {
+        todo!()
+    }
 }
 
 #[cfg(test)]
@@ -273,6 +405,7 @@ mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
     use crate::modules::keysight::domain::sync;
+    use crate::modules::keysight::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -431,5 +564,113 @@ Second body.
         let conn = test_conn();
         let store = SqliteCardStore::new(&conn);
         assert_eq!(store.count().unwrap(), 0);
+    }
+
+    const CARD_FILE_CONTENT: &str = "\
+---
+type: atomic-card
+id: card_test0001
+tags:
+  - rust
+  - ownership
+linkTo:
+  - card_other001
+related:
+  - card_other002
+understanding: 旧理解
+source: https://example.com
+see-also:
+  - card_other003
+---
+
+# 【ATC】Test Card
+
+Body content.
+";
+
+    fn seed_card_with_file(conn: &Connection) -> MockVaultFs {
+        sync::sync_file(conn, "atomic cards/test.md", CARD_FILE_CONTENT, 1000.0).unwrap();
+        MockVaultFs::new().with_file("atomic cards/test.md", CARD_FILE_CONTENT)
+    }
+
+    #[test]
+    fn test_edit_title() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        store.edit_title("card_test0001", "New Title").unwrap();
+
+        // DB 更新
+        let card = store.get("card_test0001").unwrap();
+        assert_eq!(card.title, "New Title");
+
+        // 文件更新 — H1 行应包含新标题
+        let file = vfs.get_file("atomic cards/test.md").unwrap();
+        assert!(file.contains("# 【ATC】New Title"));
+        assert!(!file.contains("# 【ATC】Test Card"));
+    }
+
+    #[test]
+    fn test_edit_title_empty_rejected() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        let result = store.edit_title("card_test0001", "  ");
+        assert!(matches!(result, Err(KeysightError::EmptyTitle)));
+    }
+
+    #[test]
+    fn test_edit_title_not_found() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        let result = store.edit_title("card_nonexist", "X");
+        assert!(matches!(result, Err(KeysightError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_edit_body() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        store.edit_body("card_test0001", "Brand new body.\n").unwrap();
+
+        // DB 更新
+        let card = store.get("card_test0001").unwrap();
+        assert_eq!(card.content, "Brand new body.\n");
+
+        // 文件更新 — frontmatter 和 H1 保留，body 替换
+        let file = vfs.get_file("atomic cards/test.md").unwrap();
+        assert!(file.contains("Brand new body."));
+        assert!(file.contains("# 【ATC】Test Card")); // H1 保留
+        assert!(file.contains("type: atomic-card")); // frontmatter 保留
+        assert!(!file.contains("Body content.")); // 旧 body 消失
+    }
+
+    #[test]
+    fn test_update_understanding() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        store.update_understanding("card_test0001", "新的理解").unwrap();
+
+        // DB 更新
+        let understanding: String = conn
+            .query_row(
+                "SELECT understanding FROM card_fields WHERE entity_id = 'card_test0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(understanding, "新的理解");
+
+        // 文件更新 — frontmatter 中 understanding 已变
+        let file = vfs.get_file("atomic cards/test.md").unwrap();
+        assert!(file.contains("新的理解"));
     }
 }
