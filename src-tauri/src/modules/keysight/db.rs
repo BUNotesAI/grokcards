@@ -71,6 +71,9 @@ CREATE INDEX IF NOT EXISTS idx_task_status ON task_fields(status);
 CREATE INDEX IF NOT EXISTS idx_question_status ON question_fields(status);
 CREATE INDEX IF NOT EXISTS idx_positions_wb ON positions(whiteboard_id);
 CREATE INDEX IF NOT EXISTS idx_section_members_entity ON section_members(entity_id);
+
+-- 全文搜索
+CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(id UNINDEXED, title, content);
 ";
 
 /// 初始化 keysight 模块的数据库表。可重复调用（IF NOT EXISTS）。
@@ -131,5 +134,24 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
         init_db(&conn).unwrap(); // 第二次不 panic
+    }
+
+    #[test]
+    fn test_init_db_creates_fts_table() {
+        let conn = test_conn();
+        // FTS5 虚拟表可以正常 INSERT 和查询
+        conn.execute(
+            "INSERT INTO entities_fts (id, title, content) VALUES ('test', 'hello', 'world')",
+            [],
+        )
+        .unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM entities_fts WHERE entities_fts MATCH 'hello'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
     }
 }
