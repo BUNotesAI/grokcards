@@ -19,6 +19,7 @@ use super::models::{
 use super::state::KeysightState;
 use super::vault_fs::RealVaultFs;
 use crate::app_error::AppError;
+use crate::perf::{lock_db, ScopedTimer};
 
 // ============================================================
 // Card 读操作
@@ -41,7 +42,8 @@ pub fn card_query_all(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<AtomicCard>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:card_query_all");
+    let conn = lock_db(&state.db, "card_query_all");
     let store = SqliteCardStore::new(&conn);
     store.query_all(limit, offset).map_err(Into::into)
 }
@@ -135,7 +137,8 @@ pub fn card_edit_title(
     id: String,
     new_title: String,
 ) -> Result<(), AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:card_edit_title");
+    let conn = lock_db(&state.db, "card_edit_title");
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
     let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
     store.edit_title(&id, &new_title).map_err(Into::into)
@@ -169,7 +172,8 @@ pub fn card_edit_body(
     id: String,
     new_body: String,
 ) -> Result<(), AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:card_edit_body");
+    let conn = lock_db(&state.db, "card_edit_body");
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
     let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
     store.edit_body(&id, &new_body).map_err(Into::into)
@@ -202,7 +206,8 @@ pub fn card_update_understanding(
     id: String,
     text: String,
 ) -> Result<(), AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:card_update_understanding");
+    let conn = lock_db(&state.db, "card_update_understanding");
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
     let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
     store.update_understanding(&id, &text).map_err(Into::into)
@@ -231,7 +236,8 @@ pub fn section_query_all(
     state: State<'_, KeysightState>,
     whiteboard_id: String,
 ) -> Result<Vec<GraphSection>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:section_query_all");
+    let conn = lock_db(&state.db, "section_query_all");
     let store = SqliteSectionStore::new(&conn);
     store.query_all(&whiteboard_id).map_err(Into::into)
 }
@@ -428,7 +434,8 @@ pub fn task_query_all(
     state: State<'_, KeysightState>,
     whiteboard_id: String,
 ) -> Result<Vec<TaskEntity>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:task_query_all");
+    let conn = lock_db(&state.db, "task_query_all");
     task::query_all(&conn, &whiteboard_id).map_err(Into::into)
 }
 
@@ -443,7 +450,8 @@ pub fn question_query_all(
     state: State<'_, KeysightState>,
     whiteboard_id: String,
 ) -> Result<Vec<QuestionEntity>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:question_query_all");
+    let conn = lock_db(&state.db, "question_query_all");
     question::query_all(&conn, &whiteboard_id).map_err(Into::into)
 }
 
@@ -467,7 +475,8 @@ pub fn note_query_all(
     state: State<'_, KeysightState>,
     whiteboard_id: String,
 ) -> Result<Vec<GraphNote>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:note_query_all");
+    let conn = lock_db(&state.db, "note_query_all");
     let store = SqliteNoteStore::new(&conn);
     store.query_all(&whiteboard_id).map_err(Into::into)
 }
@@ -548,7 +557,8 @@ pub fn note_update(
     content: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:note_update");
+    let conn = lock_db(&state.db, "note_update");
     let store = SqliteNoteStore::new(&conn);
     store
         .update(&id, title.as_deref(), content.as_deref(), color.as_deref())
@@ -575,7 +585,8 @@ pub fn alias_query_all(
     state: State<'_, KeysightState>,
     whiteboard_id: String,
 ) -> Result<Vec<CardAlias>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:alias_query_all");
+    let conn = lock_db(&state.db, "alias_query_all");
     let store = SqliteAliasStore::new(&conn);
     store.query_all(&whiteboard_id).map_err(Into::into)
 }
@@ -640,7 +651,8 @@ pub fn layout_query_positions(
     state: State<'_, KeysightState>,
     whiteboard_id: String,
 ) -> Result<HashMap<String, Position>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:layout_query_positions");
+    let conn = lock_db(&state.db, "layout_query_positions");
     let store = SqliteLayoutStore::new(&conn);
     store.query_positions(&whiteboard_id).map_err(Into::into)
 }
@@ -668,7 +680,8 @@ pub fn layout_set_position(
     x: f64,
     y: f64,
 ) -> Result<(), AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:layout_set_position");
+    let conn = lock_db(&state.db, "layout_set_position");
     let store = SqliteLayoutStore::new(&conn);
     store
         .set_position(&whiteboard_id, &entity_id, x, y)
@@ -879,7 +892,8 @@ pub fn sync_all_file_mtimes(
 #[tauri::command]
 #[specta::specta]
 pub fn sync_vault(state: State<'_, KeysightState>) -> Result<SyncVaultReport, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:sync_vault");
+    let conn = lock_db(&state.db, "sync_vault");
     let fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
     sync::sync_vault(&conn, &fs).map_err(Into::into)
 }
@@ -912,7 +926,8 @@ pub fn overview_graph(
 pub fn whiteboard_list(
     state: State<'_, KeysightState>,
 ) -> Result<Vec<WhiteboardSummary>, AppError> {
-    let conn = state.db.lock().unwrap();
+    let _t = ScopedTimer::new("cmd:whiteboard_list");
+    let conn = lock_db(&state.db, "whiteboard_list");
     overview::list_whiteboards(&conn).map_err(Into::into)
 }
 

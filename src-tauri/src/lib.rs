@@ -8,6 +8,9 @@ use tauri_specta::{collect_commands, Builder};
 
 mod app_error;
 mod modules;
+mod perf;
+
+use perf::ScopedTimer;
 
 fn make_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
@@ -89,6 +92,7 @@ fn init_todo_database() -> Connection {
 /// 初始化 KeySight 的独立 SQLite 连接 + vault 路径。
 /// 使用 app_data_dir 存放 keysight.db，确保跨平台路径正确。
 fn init_keysight_state(app: &tauri::App) -> modules::keysight::state::KeysightState {
+    let _t = ScopedTimer::new("init_keysight_state");
     let vault_path = std::env::var("KEYSIGHT_VAULT_PATH")
         .expect("环境变量 KEYSIGHT_VAULT_PATH 未设置，请设置为 Obsidian vault 根目录路径");
 
@@ -96,8 +100,12 @@ fn init_keysight_state(app: &tauri::App) -> modules::keysight::state::KeysightSt
     std::fs::create_dir_all(&data_dir).expect("无法创建 app_data_dir");
     let db_path = data_dir.join("keysight.db");
 
-    let conn = Connection::open(&db_path).expect("无法打开 keysight 数据库");
-    modules::keysight::init(&conn).expect("keysight 建表失败");
+    let conn = {
+        let _t = ScopedTimer::new("init_keysight_state: open + init_db");
+        let conn = Connection::open(&db_path).expect("无法打开 keysight 数据库");
+        modules::keysight::init(&conn).expect("keysight 建表失败");
+        conn
+    };
     modules::keysight::state::KeysightState {
         db: Mutex::new(conn),
         vault_path: PathBuf::from(vault_path),
@@ -121,17 +129,21 @@ pub fn run() {
         .manage(Mutex::new(todo_conn))
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
+            let _t_setup = ScopedTimer::new("setup hook total");
             let keysight_state = init_keysight_state(app);
             app.manage(keysight_state);
 
             // 启动时全量同步 vault → DB
             let ks = app.state::<modules::keysight::state::KeysightState>();
-            match modules::keysight::startup_sync(&ks) {
-                Ok(report) => eprintln!(
-                    "[keysight] startup sync: scanned={}, synced={}, removed={}, skipped={}, backfilled={}",
-                    report.scanned, report.synced, report.removed, report.skipped, report.backfilled
-                ),
-                Err(e) => eprintln!("[keysight] startup sync failed: {e}"),
+            {
+                let _t = ScopedTimer::new("startup_sync");
+                match modules::keysight::startup_sync(&ks) {
+                    Ok(report) => eprintln!(
+                        "[keysight] startup sync: scanned={}, synced={}, removed={}, skipped={}, backfilled={}",
+                        report.scanned, report.synced, report.removed, report.skipped, report.backfilled
+                    ),
+                    Err(e) => eprintln!("[keysight] startup sync failed: {e}"),
+                }
             }
 
             builder.mount_events(app);

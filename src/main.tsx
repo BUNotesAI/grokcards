@@ -2,7 +2,18 @@ import React from "react";
 import ReactDOM from "react-dom/client";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import App from "./App";
+import {
+  perfLog,
+  startHeartbeat,
+  startLongTaskObserver,
+  startErrorCapture,
+} from "@/lib/perf";
 import "./index.css";
+
+perfLog("main.tsx loaded — JS bundle parsed");
+startErrorCapture();
+startHeartbeat();
+startLongTaskObserver();
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -13,6 +24,8 @@ const queryClient = new QueryClient({
     },
   },
 });
+
+perfLog("ReactDOM.createRoot — about to render");
 
 ReactDOM.createRoot(document.getElementById("root") as HTMLElement).render(
   <React.StrictMode>
