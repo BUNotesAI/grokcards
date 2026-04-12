@@ -208,14 +208,28 @@ export function GraphView() {
     });
   }, [visibleEntities, searchQuery]);
 
-  // cardId → AtomicCard 映射（AliasNode 渲染目标卡片完整内容需要）
-  const cardById = useMemo(() => {
+  // cardId → AtomicCard 全局映射（CardNode/AliasNode 渲染 related/linkTo 用）
+  const cardsById = useMemo(() => {
     const map: Record<string, typeof data.cards[number]> = {};
     for (const card of data.cards) {
       map[card.id] = card;
     }
     return map;
   }, [data.cards]);
+
+  // aliases 反向索引：targetCardId → [{ aliasId, 所属 section 标题 }]
+  // 旧 Obsidian 插件的 ALIASES 区域显示的是 "包含此 card 别名的 section 标题"
+  const aliasesByTargetId = useMemo(() => {
+    const map: Record<string, Array<{ aliasId: string; aliasTitle: string }>> = {};
+    for (const alias of data.aliases) {
+      if (!map[alias.cardId]) map[alias.cardId] = [];
+      // 查找包含此 alias 的 section
+      const containingSection = data.sections.find((s) => s.cardIds.includes(alias.aliasId));
+      const title = containingSection?.title ?? alias.aliasId;
+      map[alias.cardId].push({ aliasId: alias.aliasId, aliasTitle: title });
+    }
+    return map;
+  }, [data.aliases, data.sections]);
 
   // 所有位置映射（SectionNode bounds 计算用）
   const allPositions = data.positions;
@@ -297,7 +311,8 @@ export function GraphView() {
               key={e.id}
               entity={e}
               allPositions={allPositions}
-              cardById={cardById}
+              cardsById={cardsById}
+              aliasesByTargetId={aliasesByTargetId}
             />
           ))}
           {whiteboardEntities.map((wb) => {

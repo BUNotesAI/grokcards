@@ -33,12 +33,13 @@ describe("AliasNode", () => {
     expect(screen.getByText("trait")).toBeInTheDocument();
   });
 
-  it("带 data-entity-id 属性（使用 aliasId）", () => {
+  it("委托给 CardNode，使用目标卡片的 data-entity-id", () => {
     const { container } = render(
       <AliasNode alias={mockAlias} targetCard={mockCard} style={{}} />,
     );
+    // AliasNode 现在复用 CardNode variant="alias"，data-entity-id 是目标卡的 id
     const node = container.firstElementChild;
-    expect(node?.getAttribute("data-entity-id")).toBe("alias_test001");
+    expect(node?.getAttribute("data-entity-id")).toBe("card_001");
   });
 
   it("目标卡片不存在时降级显示", () => {
