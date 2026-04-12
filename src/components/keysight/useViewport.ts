@@ -61,6 +61,8 @@ function saveViewport(whiteboardId: string, state: ViewportState): void {
  */
 export function useViewport(whiteboardId: string) {
   const [state, setState] = useState<ViewportState>(() => loadViewport(whiteboardId));
+  // 追踪当前白板是否需要 fit-to-content（在加载前、debounce 写入前判断）
+  const [needsFit, setNeedsFit] = useState(() => !hasSavedViewport(whiteboardId));
 
   // 白板切换时加载对应视口
   const prevWhiteboardIdRef = useRef(whiteboardId);
@@ -69,8 +71,10 @@ export function useViewport(whiteboardId: string) {
       // 保存旧白板视口（立即写入，不等 debounce）
       saveViewport(prevWhiteboardIdRef.current, state);
       prevWhiteboardIdRef.current = whiteboardId;
-      // 加载新白板视口
+      // 在加载前检查是否有保存的视口（debounce 还没写入）
+      const hadSaved = hasSavedViewport(whiteboardId);
       setState(loadViewport(whiteboardId));
+      setNeedsFit(!hadSaved);
     }
   }, [whiteboardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -130,6 +134,7 @@ export function useViewport(whiteboardId: string) {
       const panX = -minX * zoom + (containerWidth - (maxX - minX) * zoom) / 2;
       const panY = -minY * zoom + (containerHeight - (maxY - minY) * zoom) / 2;
       setState({ zoom, panX, panY });
+      setNeedsFit(false);
     },
     [],
   );
@@ -191,6 +196,7 @@ export function useViewport(whiteboardId: string) {
 
   return {
     state,
+    needsFit,
     handlers: { onMouseDown, onMouseMove, onMouseUp, onWheel },
     actions: { zoomIn, zoomOut, resetView, fitToContent },
   };
