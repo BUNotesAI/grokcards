@@ -109,3 +109,14 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     syncVault: syncVaultMutation,
   };
 }
+
+/**
+ * 加载子白板列表（仅在 wb_root 时启用）。
+ */
+export function useWhiteboardList(whiteboardId: string) {
+  return useQuery({
+    queryKey: ["whiteboards"],
+    queryFn: () => unwrapCommand(commands.whiteboardList()),
+    enabled: whiteboardId === "wb_root",
+  });
+}

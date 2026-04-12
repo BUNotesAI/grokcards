@@ -3,9 +3,10 @@ import { GraphCanvas } from "@/components/keysight/GraphCanvas";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
 import { useContainerSize } from "@/components/keysight/hooks/useContainerSize";
-import { useWhiteboardData, type WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
+import { useWhiteboardData, useWhiteboardList, type WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
 import { useVisibleEntities } from "@/components/keysight/hooks/useVisibleEntities";
 import { EntityNode } from "@/components/keysight/nodes/EntityNode";
+import { WhiteboardNode } from "@/components/keysight/nodes/WhiteboardNode";
 import type { EntityWithPosition } from "@/components/keysight/types";
 import type { Position } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
@@ -90,10 +91,11 @@ function mergeEntitiesWithPositions(data: WhiteboardData): EntityWithPosition[] 
  * viewport 由 GraphView 创建，GraphToolbar 和 GraphCanvas 共享。
  */
 export function GraphView() {
-  const viewport = useViewport(ROOT_WHITEBOARD);
+  const [currentWhiteboardId, setCurrentWhiteboardId] = useState(ROOT_WHITEBOARD);
+  const viewport = useViewport(currentWhiteboardId);
   const containerRef = useRef<HTMLDivElement>(null);
   const containerSize = useContainerSize(containerRef);
-  const data = useWhiteboardData(ROOT_WHITEBOARD);
+  const data = useWhiteboardData(currentWhiteboardId);
   const queryClient = useQueryClient();
 
   // 搜索状态
@@ -101,6 +103,21 @@ export function GraphView() {
 
   // 合并实体和位置
   const allEntities = useMemo(() => mergeEntitiesWithPositions(data), [data]);
+
+  // 子白板列表（仅根白板时加载）
+  const whiteboardListQuery = useWhiteboardList(currentWhiteboardId);
+  const whiteboards = whiteboardListQuery.data ?? [];
+
+  // 子白板卡位置（从 positions 表读取 "wb:{id}" 格式的位置）
+  const whiteboardEntities = useMemo(() => {
+    if (currentWhiteboardId !== ROOT_WHITEBOARD) return [];
+    return whiteboards
+      .map((wb) => {
+        const pos = data.positions[`wb:${wb.whiteboardId}`];
+        return pos ? { whiteboardId: wb.whiteboardId, position: pos } : null;
+      })
+      .filter(Boolean) as Array<{ whiteboardId: string; position: { x: number; y: number } }>;
+  }, [whiteboards, data.positions, currentWhiteboardId]);
 
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
@@ -144,33 +161,33 @@ export function GraphView() {
   const handleCreateSection = useCallback(async () => {
     try {
       const result = await unwrapCommand(
-        commands.sectionCreate(ROOT_WHITEBOARD, "New Section", null),
+        commands.sectionCreate(currentWhiteboardId, "New Section", null),
       );
       const pos = randomOffset();
       await unwrapCommand(
-        commands.layoutSetPosition(ROOT_WHITEBOARD, result.id, pos.x, pos.y),
+        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
       queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 section 失败:", e);
     }
-  }, [queryClient]);
+  }, [queryClient, currentWhiteboardId]);
 
   // 创建 Note 回调
   const handleCreateNote = useCallback(async () => {
     try {
       const result = await unwrapCommand(
-        commands.noteCreate(ROOT_WHITEBOARD, "New Note", null, null),
+        commands.noteCreate(currentWhiteboardId, "New Note", null, null),
       );
       const pos = randomOffset();
       await unwrapCommand(
-        commands.layoutSetPosition(ROOT_WHITEBOARD, result.id, pos.x, pos.y),
+        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
       queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 note 失败:", e);
     }
-  }, [queryClient]);
+  }, [queryClient, currentWhiteboardId]);
 
   // Sync 回调
   const handleSync = useCallback(() => {
@@ -196,6 +213,8 @@ export function GraphView() {
         onCreateNote={handleCreateNote}
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
+        currentWhiteboardId={currentWhiteboardId}
+        onNavigateBack={() => setCurrentWhiteboardId(ROOT_WHITEBOARD)}
       />
       <div className="relative flex-1 overflow-hidden">
         <GraphCanvas viewport={viewport}>
@@ -207,6 +226,22 @@ export function GraphView() {
               cardTitles={cardTitles}
             />
           ))}
+          {whiteboardEntities.map((wb) => {
+            const summary = whiteboards.find((s) => s.whiteboardId === wb.whiteboardId);
+            if (!summary) return null;
+            return (
+              <WhiteboardNode
+                key={`wb:${wb.whiteboardId}`}
+                summary={summary}
+                onNavigate={setCurrentWhiteboardId}
+                style={{
+                  position: "absolute",
+                  left: wb.position.x,
+                  top: wb.position.y,
+                }}
+              />
+            );
+          })}
         </GraphCanvas>
       </div>
     </div>

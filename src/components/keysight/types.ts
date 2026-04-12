@@ -9,7 +9,7 @@ import type {
 } from "@/bindings";
 
 /** 实体类型标识 */
-export type EntityKind = "card" | "task" | "question" | "note" | "section" | "alias";
+export type EntityKind = "card" | "task" | "question" | "note" | "section" | "alias" | "whiteboard";
 
 /** 各类型实体的联合 — 带位置信息 */
 export type EntityWithPosition =
@@ -28,4 +28,5 @@ export const ENTITY_DIMENSIONS: Record<EntityKind, { width: number; height: numb
   note: { width: 200, height: 120 },
   section: { width: 400, height: 300 }, // section 的实际尺寸由成员位置动态计算
   alias: { width: 280, height: 100 },
+  whiteboard: { width: 320, height: 130 },
 };
