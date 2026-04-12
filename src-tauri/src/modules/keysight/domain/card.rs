@@ -120,6 +120,23 @@ struct CardRow {
     mtime: Option<f64>,
 }
 
+/// 用新的 title 重写卡片 markdown 的 H1 行。
+fn rewrite_card_title_markdown(content: &str, new_title: &str) -> String {
+    let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
+    let mut found = false;
+    for line in &mut lines {
+        if line.trim().starts_with("# ") {
+            *line = format!("# 【ATC】{new_title}");
+            found = true;
+            break;
+        }
+    }
+    if !found {
+        lines.push(format!("# 【ATC】{new_title}"));
+    }
+    lines.join("\n") + "\n"
+}
+
 /// 基础查询：entities + card_fields + file_mtimes。
 fn query_card_rows(conn: &Connection, where_clause: &str, params: &[&dyn rusqlite::types::ToSql]) -> Result<Vec<CardRow>, KeysightError> {
     let sql = format!(
@@ -177,6 +194,74 @@ fn assemble_cards(conn: &Connection, card_rows: Vec<CardRow>) -> Result<Vec<Atom
         })
         .collect();
     Ok(cards)
+}
+
+/// # 清理卡片标题历史转义
+///
+/// ## 前置条件
+/// - `entities.kind='card'` 的记录必须带有可读取的 `file_path`
+/// - `vault_fs` 指向真实 vault 或测试替身
+///
+/// ## 执行效果
+/// 1. 逐张读取 card markdown 文件
+/// 2. 只针对 H1 title 清理历史遗留的 `\<`、`\>` 等安全标点转义
+/// 3. 如有变化，同步写回 markdown 文件、`entities.title` 和 `entities_fts.title`
+///
+/// ## 不做的事
+/// - 不修改 body/content
+/// - 不修改 note / section / task / question 等其他实体
+/// - 不处理 `\*`、`\\` 等可能有字面含义的序列
+///
+/// ## 幂等性
+/// 干净数据重复调用不会产生额外写入。
+///
+/// ## 关联操作
+/// - [`CardStore::edit_title`] — 用户主动编辑单张卡片标题
+pub(in crate::modules::keysight) fn cleanup_dirty_card_title_escapes(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+) -> Result<usize, KeysightError> {
+    let mut stmt = conn.prepare(
+        "SELECT id, title, file_path FROM entities WHERE kind = 'card' AND COALESCE(file_path, '') <> '' ORDER BY id",
+    )?;
+    let rows: Vec<(String, String, String)> = stmt
+        .query_map([], |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    drop(stmt);
+
+    let mut cleaned = 0usize;
+
+    for (id, db_title, file_path) in rows {
+        let content = vault_fs.read_file(&file_path)?;
+        let parsed = match parser::parse_entity(&content) {
+            Some(parsed) if parsed.entity_type == "atomic-card" => parsed,
+            _ => continue,
+        };
+        let clean_title = parsed.title;
+        let updated_content = rewrite_card_title_markdown(&content, &clean_title);
+        let file_changed = updated_content != content;
+        let db_changed = db_title != clean_title;
+
+        if !file_changed && !db_changed {
+            continue;
+        }
+
+        if file_changed {
+            vault_fs.write_file(&file_path, &updated_content)?;
+        }
+
+        conn.execute(
+            "UPDATE entities SET title = ?1 WHERE id = ?2",
+            params![clean_title, id],
+        )?;
+        conn.execute(
+            "UPDATE entities_fts SET title = ?1 WHERE id = ?2",
+            params![clean_title, id],
+        )?;
+        cleaned += 1;
+    }
+
+    Ok(cleaned)
 }
 
 impl CardStore for SqliteCardStore<'_> {
@@ -306,19 +391,7 @@ impl CardStore for SqliteCardStore<'_> {
 
         // 读文件，替换 H1
         let content = vault_fs.read_file(&file_path)?;
-        let mut lines: Vec<String> = content.lines().map(|l| l.to_string()).collect();
-        let mut found = false;
-        for line in &mut lines {
-            if line.trim().starts_with("# ") {
-                *line = format!("# 【ATC】{new_title}");
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            lines.push(format!("# 【ATC】{new_title}"));
-        }
-        let updated = lines.join("\n") + "\n";
+        let updated = rewrite_card_title_markdown(&content, new_title);
         vault_fs.write_file(&file_path, &updated)?;
 
         // 更新 DB
@@ -677,9 +750,54 @@ see-also:
 Body content.
 ";
 
+    const DIRTY_CARD_FILE_CONTENT: &str = "\
+---
+type: atomic-card
+id: card_dirty0001
+tags:
+  - rust
+understanding: 旧理解
+source: https://example.com
+---
+
+# 【ATC】**Arc\\<T\\>** 原子引用计数 \\[sync\\] \\(send\\) \\| \\#
+
+Dirty body content.
+";
+
     fn seed_card_with_file(conn: &Connection) -> MockVaultFs {
         sync::sync_file(conn, "whiteboard/test.md", CARD_FILE_CONTENT, 1000.0).unwrap();
         MockVaultFs::new().with_file("whiteboard/test.md", CARD_FILE_CONTENT)
+    }
+
+    fn seed_dirty_card_with_file(conn: &Connection) -> MockVaultFs {
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id, file_path, content) \
+             VALUES (?1, 'card', ?2, 'rust', ?3, ?4)",
+            params![
+                "card_dirty0001",
+                "**Arc\\<T\\>** 原子引用计数 \\[sync\\] \\(send\\) \\| \\#",
+                "whiteboard/dirty.md",
+                "Dirty body content.\n"
+            ],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO card_fields (entity_id, understanding, source) VALUES (?1, ?2, ?3)",
+            params!["card_dirty0001", "旧理解", "https://example.com"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO entities_fts (id, title, content) VALUES (?1, ?2, ?3)",
+            params![
+                "card_dirty0001",
+                "**Arc\\<T\\>** 原子引用计数 \\[sync\\] \\(send\\) \\| \\#",
+                "Dirty body content.\n"
+            ],
+        )
+        .unwrap();
+
+        MockVaultFs::new().with_file("whiteboard/dirty.md", DIRTY_CARD_FILE_CONTENT)
     }
 
     #[test]
@@ -701,6 +819,31 @@ Body content.
     }
 
     #[test]
+    fn test_edit_title_preserves_raw_markdown_characters() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        store
+            .edit_title("card_test0001", "**Arc<T>** 原子引用计数 [sync] (send) | #")
+            .unwrap();
+
+        let card = store.get("card_test0001").unwrap();
+        assert_eq!(card.title, "**Arc<T>** 原子引用计数 [sync] (send) | #");
+
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
+        assert!(file.contains("# 【ATC】**Arc<T>** 原子引用计数 [sync] (send) | #"));
+        assert!(!file.contains("\\<"));
+        assert!(!file.contains("\\>"));
+        assert!(!file.contains("\\["));
+        assert!(!file.contains("\\]"));
+        assert!(!file.contains("\\("));
+        assert!(!file.contains("\\)"));
+        assert!(!file.contains("\\|"));
+        assert!(!file.contains("\\#"));
+    }
+
+    #[test]
     fn test_edit_title_empty_rejected() {
         let conn = test_conn();
         let vfs = seed_card_with_file(&conn);
@@ -718,6 +861,45 @@ Body content.
 
         let result = store.edit_title("card_nonexist", "X");
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_cleanup_dirty_card_title_escapes_updates_file_and_db() {
+        let conn = test_conn();
+        let vfs = seed_dirty_card_with_file(&conn);
+
+        let cleaned = cleanup_dirty_card_title_escapes(&conn, &vfs).unwrap();
+        assert_eq!(cleaned, 1);
+
+        let title: String = conn
+            .query_row(
+                "SELECT title FROM entities WHERE id = 'card_dirty0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "**Arc<T>** 原子引用计数 [sync] (send) | #");
+
+        let fts_title: String = conn
+            .query_row(
+                "SELECT title FROM entities_fts WHERE id = 'card_dirty0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(fts_title, "**Arc<T>** 原子引用计数 [sync] (send) | #");
+
+        let file = vfs.get_file("whiteboard/dirty.md").unwrap();
+        assert!(file.contains("# 【ATC】**Arc<T>** 原子引用计数 [sync] (send) | #"));
+        assert!(!file.contains("\\<"));
+        assert!(!file.contains("\\>"));
+        assert!(!file.contains("\\["));
+        assert!(!file.contains("\\]"));
+        assert!(!file.contains("\\("));
+        assert!(!file.contains("\\)"));
+        assert!(!file.contains("\\|"));
+        assert!(!file.contains("\\#"));
+        assert!(file.contains("Dirty body content."));
     }
 
     #[test]

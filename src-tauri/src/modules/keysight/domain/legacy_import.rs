@@ -9,6 +9,7 @@ use super::super::models::{
     ImportSummary, LegacyAlias, LegacyInsight, LegacyNote, LegacyPosition, LegacySection,
     SkippedItem, WhiteboardMapping,
 };
+use super::super::parser;
 use super::sync::derive_whiteboard_id;
 
 /// 旧 DB v1 schema DDL（测试用，不含 triggers）。
@@ -289,7 +290,13 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
             self.conn.execute(
                 "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, file_path, content) \
                  VALUES (?1, 'card', ?2, ?3, ?4, ?5)",
-                params![ins.id, ins.title, wb_id, ins.file_path, ins.content],
+                params![
+                    ins.id,
+                    parser::normalize_title_markdown_escapes(&ins.title),
+                    wb_id,
+                    ins.file_path,
+                    ins.content
+                ],
             )?;
             // card_fields
             self.conn.execute(
@@ -529,7 +536,7 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
         for (id, title, content) in &fts_rows {
             self.conn.execute(
                 "INSERT INTO entities_fts (id, title, content) VALUES (?1, ?2, ?3)",
-                params![id, title, content],
+                params![id, parser::normalize_title_markdown_escapes(title), content],
             )?;
         }
 
@@ -778,9 +785,34 @@ mod tests {
                 "SELECT whiteboard_id FROM entities WHERE id = 'card_aaa11111'",
                 [],
                 |r| r.get(0),
-            )
+        )
             .unwrap();
         assert_eq!(wb, "rust"); // file_path = "whiteboard/rust/Alpha.md"
+    }
+
+    #[test]
+    fn test_import_cards_title_unescapes_dirty_markdown_punctuation() {
+        let old = legacy_conn();
+        old.execute(
+            "INSERT INTO insights (id, filePath, title, content, tags, linkTo, related, understanding, source, seeAlso, mtime)
+             VALUES ('card_escape001', 'whiteboard/rust/Arc.md', '**Arc\\<T\\>** 原子引用计数 \\[sync\\] \\(send\\) \\| \\#', 'body', '[]', '[]', '[]', 'understand', '', '[]', 1000.0)",
+            [],
+        )
+        .unwrap();
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        let importer = SqliteLegacyImporter::new(&new);
+        importer.import(&reader).unwrap();
+
+        let title: String = new
+            .query_row(
+                "SELECT title FROM entities WHERE id = 'card_escape001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(title, "**Arc<T>** 原子引用计数 [sync] (send) | #");
     }
 
     #[test]

@@ -124,6 +124,40 @@ fn extract_title_and_body(text: &str) -> (String, String) {
     }
 }
 
+/// 清理 title 中历史遗留的 markdown 转义。
+///
+/// 规则：
+/// - 仅移除 `\` + 单个 ASCII 标点的转义
+/// - `*` 和 `\` 不处理，避免破坏 `**bold**` 定界符、`\\`、`\\*` 等字面内容
+pub(super) fn normalize_title_markdown_escapes(title: &str) -> String {
+    let mut normalized = String::with_capacity(title.len());
+    let mut chars = title.chars().peekable();
+
+    while let Some(ch) = chars.next() {
+        if ch != '\\' {
+            normalized.push(ch);
+            continue;
+        }
+
+        match chars.peek().copied() {
+            Some('\\') => {
+                normalized.push('\\');
+                normalized.push('\\');
+                chars.next();
+            }
+            Some(next)
+                if next.is_ascii_punctuation() && next != '*' && next != '\\' =>
+            {
+                normalized.push(next);
+                chars.next();
+            }
+            _ => normalized.push('\\'),
+        }
+    }
+
+    normalized
+}
+
 /// 解析 markdown 文件为多类型实体。
 pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
     let fm_str = extract_frontmatter(markdown)?;
@@ -135,7 +169,12 @@ pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
     }
 
     let after_fm = skip_frontmatter(markdown);
-    let (title, content) = extract_title_and_body(after_fm);
+    let (raw_title, content) = extract_title_and_body(after_fm);
+    let title = if entity_type == "atomic-card" {
+        normalize_title_markdown_escapes(&raw_title)
+    } else {
+        raw_title
+    };
 
     // id: 优先用 id 字段，fallback 到 uuid（向后兼容）
     let id = raw.id.or(raw.uuid);
@@ -386,6 +425,39 @@ Question body.
         let parsed = parse_entity(md).expect("应成功解析");
         assert_eq!(parsed.id, None);
         assert_eq!(parsed.title, "No ID Card");
+    }
+
+    #[test]
+    fn test_parse_card_title_unescapes_punctuation() {
+        let md = "\
+---
+type: atomic-card
+id: card_escape001
+---
+
+# 【ATC】**Arc\\<T\\>** 原子引用计数 \\[sync\\] \\(send\\) \\| \\#
+";
+
+        let parsed = parse_entity(md).expect("应成功解析");
+        assert_eq!(
+            parsed.title,
+            "**Arc<T>** 原子引用计数 [sync] (send) | #"
+        );
+    }
+
+    #[test]
+    fn test_parse_card_title_keeps_literal_backslash_star() {
+        let md = "\
+---
+type: atomic-card
+id: card_escape002
+---
+
+# 【ATC】保留字面反斜杠星号 \\\\* 和双反斜杠 \\\\\\\\
+";
+
+        let parsed = parse_entity(md).expect("应成功解析");
+        assert_eq!(parsed.title, "保留字面反斜杠星号 \\\\* 和双反斜杠 \\\\\\\\");
     }
 
     // --- extract_frontmatter ---

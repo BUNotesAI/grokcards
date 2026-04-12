@@ -113,6 +113,16 @@ fn init_keysight_state(app: &tauri::App) -> modules::keysight::state::KeysightSt
     }
 }
 
+/// 供一次性维护脚本调用：清理历史遗留的 card title 转义。
+pub fn cleanup_card_title_escapes(
+    db_path: &std::path::Path,
+    vault_path: &std::path::Path,
+) -> Result<usize, String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    modules::keysight::init(&conn).map_err(|e| e.to_string())?;
+    modules::keysight::cleanup_card_title_escapes(&conn, vault_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = make_builder();

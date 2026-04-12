@@ -24,3 +24,31 @@ pub fn startup_sync(state: &state::KeysightState) -> Result<models::SyncVaultRep
     let fs = vault_fs::RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
     domain::sync::sync_vault(&conn, &fs).map_err(|e| e.to_string())
 }
+
+/// # 清理卡片标题历史转义
+///
+/// ## 前置条件
+/// - `conn` 指向目标 keysight SQLite
+/// - `vault_path` 指向与该 SQLite 对应的 vault 根目录
+///
+/// ## 执行效果
+/// 1. 遍历所有 `kind='card'` 的实体
+/// 2. 只清理 card title 中历史遗留的安全标点转义
+/// 3. 同步写回 markdown 文件、`entities.title` 和 `entities_fts.title`
+///
+/// ## 不做的事
+/// - 不修改正文和其他 frontmatter 字段
+/// - 不修改非 card 实体
+///
+/// ## 幂等性
+/// 干净数据重复调用不会产生额外写入。
+///
+/// ## 关联操作
+/// - [`startup_sync`] — 启动时从 vault 同步到 DB
+pub fn cleanup_card_title_escapes(
+    conn: &rusqlite::Connection,
+    vault_path: &std::path::Path,
+) -> Result<usize, String> {
+    let fs = vault_fs::RealVaultFs::new(vault_path.to_string_lossy().to_string());
+    domain::card::cleanup_dirty_card_title_escapes(conn, &fs).map_err(|e| e.to_string())
+}
