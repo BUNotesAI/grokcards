@@ -33,12 +33,46 @@ function mergeEntitiesWithPositions(data: WhiteboardData): EntityWithPosition[] 
   const result: EntityWithPosition[] = [];
   const positions = data.positions;
 
-  // Sections — 只渲染有 position 的
+  // [DEBUG] 检查 positions 和 entity ID 匹配情况
+  const sampleNoteIds = data.notes.slice(0, 3).map((n) => n.id);
+  const samplePositionKeys = Object.keys(positions).slice(0, 3);
+  const notesWithPositions = data.notes.filter((n) => positions[n.id]).length;
+  const sectionsWithPositions = data.sections.filter((s) => positions[s.id]).length;
+  const aliasesWithPositions = data.aliases.filter((a) => positions[a.aliasId]).length;
+  console.log("[mergeEntitiesWithPositions]", {
+    totalPositions: Object.keys(positions).length,
+    notesCount: data.notes.length,
+    notesWithPositions,
+    sectionsCount: data.sections.length,
+    sectionsWithPositions,
+    aliasesCount: data.aliases.length,
+    aliasesWithPositions,
+    sampleNoteIds,
+    samplePositionKeys,
+  });
+
+  // Sections — 位置从成员动态计算（和旧 Obsidian 插件行为一致）
+  // Section 盒子的 top-left 是 min(member.x, member.y) - PADDING
+  // 如果没有任何成员有位置，section 不渲染
+  const SECTION_PADDING = 40; // 和 SectionNode.PADDING 一致
   for (const section of data.sections) {
-    const pos = positions[section.id];
-    if (pos) {
-      result.push({ kind: "section", id: section.id, entity: section, position: pos });
+    const memberPosList = section.cardIds
+      .map((id) => positions[id])
+      .filter((p): p is { x: number; y: number } => p != null);
+
+    if (memberPosList.length === 0) {
+      // 无成员位置 — 回退到 section 自己的位置（兼容空 section）
+      const ownPos = positions[section.id];
+      if (ownPos) {
+        result.push({ kind: "section", id: section.id, entity: section, position: ownPos });
+      }
+      continue;
     }
+
+    const minX = Math.min(...memberPosList.map((p) => p.x));
+    const minY = Math.min(...memberPosList.map((p) => p.y));
+    const effectivePos = { x: minX - SECTION_PADDING, y: minY - SECTION_PADDING };
+    result.push({ kind: "section", id: section.id, entity: section, position: effectivePos });
   }
 
   // Cards
@@ -156,16 +190,58 @@ export function GraphView() {
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
 
+  // [DEBUG] 每次 render 打印关键状态
+  console.log("[GraphView] render", {
+    whiteboard: currentWhiteboardId,
+    isLoading: data.isLoading,
+    rawData: {
+      cards: data.cards.length,
+      sections: data.sections.length,
+      notes: data.notes.length,
+      aliases: data.aliases.length,
+      tasks: data.tasks.length,
+      questions: data.questions.length,
+      positions: Object.keys(data.positions).length,
+    },
+    allEntities: allEntities.length,
+    visibleEntities: visibleEntities.length,
+    viewport: viewport.state,
+    needsFit: viewport.needsFit,
+    containerSize,
+  });
+
   // 首次进入白板时，如果没有保存视口或所有实体都不在视口内，自适应内容居中
   const fitAttemptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (data.isLoading || allEntities.length === 0 || containerSize.width === 0) return;
-    if (fitAttemptedRef.current.has(currentWhiteboardId)) return;
+    console.log("[GraphView] fit-effect check", {
+      whiteboard: currentWhiteboardId,
+      isLoading: data.isLoading,
+      allEntitiesCount: allEntities.length,
+      visibleCount: visibleEntities.length,
+      containerWidth: containerSize.width,
+      needsFit: viewport.needsFit,
+      alreadyAttempted: fitAttemptedRef.current.has(currentWhiteboardId),
+    });
+    if (data.isLoading || allEntities.length === 0 || containerSize.width === 0) {
+      console.log("[GraphView] fit skipped: not ready");
+      return;
+    }
+    if (fitAttemptedRef.current.has(currentWhiteboardId)) {
+      console.log("[GraphView] fit skipped: already attempted");
+      return;
+    }
 
     const allEntitiesOffscreen = visibleEntities.length === 0;
     const shouldFit = viewport.needsFit || allEntitiesOffscreen;
-    if (!shouldFit) return;
+    if (!shouldFit) {
+      console.log("[GraphView] fit skipped: not needed");
+      return;
+    }
 
+    console.log("[GraphView] fit TRIGGERED", {
+      positionSample: allEntities.slice(0, 3).map((e) => e.position),
+      containerSize,
+    });
     fitAttemptedRef.current.add(currentWhiteboardId);
     viewport.actions.fitToContent(
       allEntities.map((e) => e.position),
@@ -254,17 +330,10 @@ export function GraphView() {
     data.syncVault.mutate();
   }, [data.syncVault]);
 
-  // Loading 状态
-  if (data.isLoading) {
-    return (
-      <div className="flex h-full w-full items-center justify-center">
-        <div className="text-sm text-muted-foreground">Loading whiteboard...</div>
-      </div>
-    );
-  }
-
+  // Loading 状态作为 overlay 渲染，而不是 early return
+  // 原因：early return 会让 containerRef 无法 attach，ResizeObserver 永远收不到尺寸
   return (
-    <div ref={containerRef} className="flex h-full w-full flex-col">
+    <div ref={containerRef} className="relative flex h-full w-full flex-col">
       <GraphToolbar
         viewport={viewport}
         entityCounts={entityCounts}
@@ -276,6 +345,11 @@ export function GraphView() {
         currentWhiteboardId={currentWhiteboardId}
         onNavigateBack={() => setCurrentWhiteboardId(ROOT_WHITEBOARD)}
       />
+      {data.isLoading && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50">
+          <div className="text-sm text-muted-foreground">Loading whiteboard...</div>
+        </div>
+      )}
       <div className="relative flex-1 overflow-hidden">
         <GraphCanvas viewport={viewport}>
           {filteredEntities.map((e) => (
