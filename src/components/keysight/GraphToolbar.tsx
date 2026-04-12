@@ -1,7 +1,7 @@
 import type { UseViewportReturn } from "@/components/keysight/useViewport";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Minus, Plus, RotateCcw, RefreshCw, FolderPlus, StickyNote, Search } from "lucide-react";
+import { Minus, Plus, RotateCcw, RefreshCw, FolderPlus, StickyNote, Search, ArrowLeft } from "lucide-react";
 
 /** 实体计数 */
 export interface EntityCounts {
@@ -21,6 +21,10 @@ interface GraphToolbarProps {
   onCreateNote: () => void;
   searchQuery: string;
   onSearchChange: (query: string) => void;
+  /** 当前白板 id，wb_root 表示根白板 */
+  currentWhiteboardId?: string;
+  /** 返回根白板的回调，仅子白板时使用 */
+  onNavigateBack?: () => void;
 }
 
 /**
@@ -39,6 +43,8 @@ export function GraphToolbar({
   onCreateNote,
   searchQuery,
   onSearchChange,
+  currentWhiteboardId = "wb_root",
+  onNavigateBack,
 }: GraphToolbarProps) {
   const { state, actions } = viewport;
   const zoomPercent = Math.round(state.zoom * 100);
@@ -117,12 +123,16 @@ export function GraphToolbar({
         />
       </div>
 
-      {/* 白板切换占位 */}
-      <div className="border-l border-border pl-3">
-        <Button variant="outline" size="sm" disabled>
-          Root
-        </Button>
-      </div>
+      {/* 白板导航 */}
+      {currentWhiteboardId !== "wb_root" && (
+        <div className="flex items-center gap-2 border-l border-border pl-3">
+          <Button variant="ghost" size="sm" onClick={onNavigateBack} aria-label="Back to root">
+            <ArrowLeft className="mr-1 h-4 w-4" />
+            Root
+          </Button>
+          <span className="text-xs font-medium text-foreground">{currentWhiteboardId}</span>
+        </div>
+      )}
     </div>
   );
 }

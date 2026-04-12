@@ -99,4 +99,42 @@ describe("GraphToolbar", () => {
     fireEvent.click(screen.getByRole("button", { name: /section/i }));
     expect(onCreateSection).toHaveBeenCalledTimes(1);
   });
+
+  it("根白板时不显示返回按钮", () => {
+    const viewport = createTestViewport();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        currentWhiteboardId="wb_root"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /back/i })).not.toBeInTheDocument();
+  });
+
+  it("子白板时显示返回按钮和白板名，点击触发 onNavigateBack", () => {
+    const viewport = createTestViewport();
+    const onNavigateBack = vi.fn();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 50, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        searchQuery=""
+        onSearchChange={vi.fn()}
+        currentWhiteboardId="rust"
+        onNavigateBack={onNavigateBack}
+      />,
+    );
+    expect(screen.getByText("rust")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /back/i }));
+    expect(onNavigateBack).toHaveBeenCalledTimes(1);
+  });
 });
