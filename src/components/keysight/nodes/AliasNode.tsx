@@ -9,6 +9,7 @@ interface AliasNodeProps {
   cardsById?: Record<string, AtomicCard>;
   aliasRefs?: Array<{ aliasId: string; aliasTitle: string }>;
   style: CSSProperties;
+  isExpanded?: boolean;
 }
 
 /**
@@ -22,6 +23,7 @@ export function AliasNode({
   cardsById = {},
   aliasRefs = [],
   style,
+  isExpanded = false,
 }: AliasNodeProps) {
   if (!targetCard) {
     return (
@@ -52,6 +54,7 @@ export function AliasNode({
       aliasRefs={aliasRefs}
       style={style}
       variant="alias"
+      isExpanded={isExpanded}
     />
   );
 }

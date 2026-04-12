@@ -64,7 +64,8 @@ describe("EntityNode", () => {
     };
     const { container } = render(<EntityNode entity={entity} allPositions={{}} />);
     const wrapper = container.firstElementChild as HTMLElement;
-    expect(wrapper.style.left).toBe("150px");
-    expect(wrapper.style.top).toBe("250px");
+    // 现在用 transform 代替 left/top 以获得 GPU 合成的丝滑拖拽
+    expect(wrapper.style.transform).toContain("150");
+    expect(wrapper.style.transform).toContain("250");
   });
 });

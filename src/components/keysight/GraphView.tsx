@@ -138,6 +138,17 @@ export function GraphView() {
   const lastDidDragRef = useRef(false);
   const [localPositions, setLocalPositions] = useState<Record<string, Position>>({});
 
+  // 展开状态 — 同时只有一张卡片展开显示 body / 关联列表
+  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const handleToggleExpand = useCallback((entityId: string) => {
+    // click 之前如果发生了拖拽就不切换
+    if (lastDidDragRef.current) {
+      lastDidDragRef.current = false;
+      return;
+    }
+    setExpandedId((prev) => (prev === entityId ? null : entityId));
+  }, []);
+
   // 有效位置 = 服务器位置 + 本地覆盖（拖拽中的实时位置）
   const effectivePositions = useMemo(
     () => ({ ...data.positions, ...localPositions }),
@@ -202,22 +213,26 @@ export function GraphView() {
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
 
-  // 拖拽：节点 mousedown 触发
-  const handleDragStart = useCallback(
-    (e: ReactMouseEvent, entityId: string) => {
-      const pos = effectivePositions[entityId];
-      if (!pos) return;
-      dragInfoRef.current = {
-        id: entityId,
-        startX: e.clientX,
-        startY: e.clientY,
-        origX: pos.x,
-        origY: pos.y,
-        didDrag: false,
-      };
-    },
-    [effectivePositions],
-  );
+  // 用 ref 跟随 effectivePositions，让 handleDragStart 保持 stable reference
+  // 避免 onDragStart prop 每次渲染都变导致 EntityNode 全量 re-render
+  const effectivePositionsRef = useRef(effectivePositions);
+  useEffect(() => {
+    effectivePositionsRef.current = effectivePositions;
+  }, [effectivePositions]);
+
+  // 拖拽：节点 mousedown 触发（stable reference）
+  const handleDragStart = useCallback((e: ReactMouseEvent, entityId: string) => {
+    const pos = effectivePositionsRef.current[entityId];
+    if (!pos) return;
+    dragInfoRef.current = {
+      id: entityId,
+      startX: e.clientX,
+      startY: e.clientY,
+      origX: pos.x,
+      origY: pos.y,
+      didDrag: false,
+    };
+  }, []);
 
   // 全局 mousemove / mouseup — 拖拽中实时更新位置，释放时持久化
   useEffect(() => {
@@ -436,6 +451,8 @@ export function GraphView() {
               cardsById={cardsById}
               aliasesByTargetId={aliasesByTargetId}
               onDragStart={handleDragStart}
+              isExpanded={expandedId === e.id}
+              onToggleExpand={handleToggleExpand}
             />
           ))}
           {whiteboardEntities.map((wb) => {
@@ -447,8 +464,10 @@ export function GraphView() {
                 key={dragId}
                 style={{
                   position: "absolute",
-                  left: wb.position.x,
-                  top: wb.position.y,
+                  left: 0,
+                  top: 0,
+                  transform: `translate3d(${wb.position.x}px, ${wb.position.y}px, 0)`,
+                  willChange: "transform",
                 }}
                 onMouseDown={(e) => {
                   if (e.button !== 0) return;

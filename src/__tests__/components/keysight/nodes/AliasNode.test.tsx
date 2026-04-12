@@ -26,8 +26,8 @@ describe("AliasNode", () => {
     expect(screen.getByText("目标卡片标题")).toBeInTheDocument();
   });
 
-  it("渲染目标卡片的正文和 tags", () => {
-    render(<AliasNode alias={mockAlias} targetCard={mockCard} style={{}} />);
+  it("展开时渲染目标卡片的正文和 tags", () => {
+    render(<AliasNode alias={mockAlias} targetCard={mockCard} style={{}} isExpanded />);
     expect(screen.getByText(/目标卡片的正文内容/)).toBeInTheDocument();
     expect(screen.getByText("rust")).toBeInTheDocument();
     expect(screen.getByText("trait")).toBeInTheDocument();

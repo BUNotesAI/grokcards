@@ -11,6 +11,8 @@ interface CardNodeProps {
   style: CSSProperties;
   /** 外观变体：normal card vs alias ghost */
   variant?: "card" | "alias";
+  /** 是否展开 — 折叠时只显示 title + understanding；展开后显示 content + 关联列表 */
+  isExpanded?: boolean;
 }
 
 /** 区域标题（LINKED / RELATED / ALIASES / SEE ALSO） */
@@ -75,6 +77,7 @@ export const CardNode = memo(function CardNode({
   aliasRefs = [],
   style,
   variant = "card",
+  isExpanded = false,
 }: CardNodeProps) {
   const isAlias = variant === "alias";
 
@@ -151,15 +154,14 @@ export const CardNode = memo(function CardNode({
         </div>
       )}
 
-      {/* Content 字段 — 卡片正文（代码块等） */}
-      {card.content && (
+      {/* 以下内容仅在展开状态下显示：content / tags / 关联 */}
+      {isExpanded && card.content && (
         <div style={{ padding: "10px 14px" }}>
           <RenderedMarkdown markdown={card.content} variant="body" />
         </div>
       )}
 
-      {/* Tags */}
-      {card.tags.length > 0 && (
+      {isExpanded && card.tags.length > 0 && (
         <div style={{ display: "flex", flexWrap: "wrap", gap: 4, padding: "0 14px 8px 14px" }}>
           {card.tags.slice(0, 8).map((tag) => (
             <span
@@ -178,8 +180,8 @@ export const CardNode = memo(function CardNode({
         </div>
       )}
 
-      {/* LINKED / RELATED / ALIASES / SEE ALSO */}
-      <div style={{ padding: "0 14px 12px 14px" }}>
+      {/* LINKED / RELATED / ALIASES / SEE ALSO — 仅展开时显示 */}
+      <div style={{ padding: "0 14px 12px 14px", display: isExpanded ? "block" : "none" }}>
         {linkedCards.length > 0 && (
           <>
             <SectionHeading label="LINKED" count={linkedCards.length} />
