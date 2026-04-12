@@ -14,6 +14,7 @@ import { perfLog } from "@/lib/perf";
 import type {
   EntityKind,
   EntityWithPosition,
+  GraphSelection,
 } from "@/components/keysight/types";
 import type { Position } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
@@ -24,14 +25,34 @@ import { useQueryClient } from "@tanstack/react-query";
 const DRAG_THRESHOLD = 4;
 
 /** 根白板 ID — rust/chentian 等是子白板，根白板显示子白板预览卡 */
-const ROOT_WHITEBOARD = "wb_root";
+export const ROOT_WHITEBOARD = "wb_root";
 
-/** 默认新实体位置（画布中心附近，带随机偏移防重叠） */
-function randomOffset(): Position {
+/** 把屏幕中心转成世界坐标 — 给"在视口中央创建新实体"用 */
+function viewportCenterWorld(
+  zoom: number,
+  panX: number,
+  panY: number,
+  containerWidth: number,
+  containerHeight: number,
+): { x: number; y: number } {
   return {
-    x: 200 + Math.random() * 400,
-    y: 200 + Math.random() * 300,
+    x: (-panX + containerWidth / 2) / zoom,
+    y: (-panY + containerHeight / 2) / zoom,
   };
+}
+
+export interface GraphFocusTarget {
+  id: string;
+  nonce: number;
+}
+
+interface GraphViewProps {
+  currentWhiteboardId: string;
+  onWhiteboardChange: (whiteboardId: string) => void;
+  selectedEntityId?: string | null;
+  onSelectEntity?: (selection: GraphSelection | null) => void;
+  highlightedEntityIds?: Set<string>;
+  focusTarget?: GraphFocusTarget | null;
 }
 
 /**
@@ -118,8 +139,14 @@ function mergeEntitiesWithPositions(
  * 数据流: useWhiteboardData → mergeEntitiesWithPositions → useVisibleEntities → EntityNode 渲染
  * viewport 由 GraphView 创建，GraphToolbar 和 GraphCanvas 共享。
  */
-export function GraphView() {
-  const [currentWhiteboardId, setCurrentWhiteboardId] = useState(ROOT_WHITEBOARD);
+export function GraphView({
+  currentWhiteboardId,
+  onWhiteboardChange,
+  selectedEntityId = null,
+  onSelectEntity,
+  highlightedEntityIds,
+  focusTarget = null,
+}: GraphViewProps) {
   const viewport = useViewport(currentWhiteboardId);
   const containerRef = useRef<HTMLDivElement>(null);
   const containerSize = useContainerSize(containerRef);
@@ -256,8 +283,8 @@ export function GraphView() {
   // section 用 computeSectionBounds 算真实尺寸（SectionNode.PADDING=40 对齐），
   // 否则视口偏离 section 左上角后，section 的 placeholder 400×300 会被错误 cull
   const allDimensions = useMemo(
-    () => buildEntityDimensions(allKinds, data.sections, data.positions, 40),
-    [allKinds, data.sections, data.positions],
+    () => buildEntityDimensions(allKinds, data.sections, effectivePositions, 40),
+    [allKinds, data.sections, effectivePositions],
   );
 
   // 子白板列表（仅根白板时加载）
@@ -269,11 +296,11 @@ export function GraphView() {
     if (currentWhiteboardId !== ROOT_WHITEBOARD) return [];
     return whiteboards
       .map((wb) => {
-        const pos = data.positions[`wb:${wb.whiteboardId}`];
+        const pos = effectivePositions[`wb:${wb.whiteboardId}`];
         return pos ? { whiteboardId: wb.whiteboardId, position: pos } : null;
       })
       .filter(Boolean) as Array<{ whiteboardId: string; position: { x: number; y: number } }>;
-  }, [whiteboards, data.positions, currentWhiteboardId]);
+  }, [whiteboards, effectivePositions, currentWhiteboardId]);
 
   // 无位置的子白板卡：自动计算初始坐标并写入 DB
   const initializedRef = useRef<Set<string>>(new Set());
@@ -310,11 +337,20 @@ export function GraphView() {
   }, [whiteboards, data.positions, currentWhiteboardId, allEntities, queryClient]);
 
   // 视口裁剪 — 传入 allDimensions 让 section 用真实 bounds 而非 placeholder
+  const forceVisibleIds = useMemo(() => {
+    const ids = new Set<string>();
+    if (expandedId) ids.add(expandedId);
+    if (editing?.id) ids.add(editing.id);
+    if (selectedEntityId) ids.add(selectedEntityId);
+    return ids;
+  }, [editing, expandedId, selectedEntityId]);
+
   const visibleEntities = useVisibleEntities(
     allEntities,
     viewport.state,
     containerSize,
     allDimensions,
+    forceVisibleIds,
   );
 
   // 启动性能：第一次有 visible entities
@@ -492,7 +528,7 @@ export function GraphView() {
   }, [data.aliases, data.sections]);
 
   // 所有位置映射（SectionNode bounds 计算用）
-  const allPositions = data.positions;
+  const allPositions = effectivePositions;
 
   // 当前白板的可渲染 edge 列表（从 cards/notes/aliases 数据派生）
   // 仅包含 from 和 to 都在当前白板内的 edge，避免渲染断头连线
@@ -514,13 +550,41 @@ export function GraphView() {
     [data],
   );
 
+  // 把新实体放在当前视口中心 — 避免 random offset 把卡丢到视口外
+  // section 用 400×300 placeholder，note 用 520×180（NoteNode 真实尺寸）
+  // 加 ±60 / ±40 抖动避免连续创建堆叠
+  const newEntityPositionAtCenter = useCallback(
+    (width: number, height: number) => {
+      const center = viewportCenterWorld(
+        viewport.state.zoom,
+        viewport.state.panX,
+        viewport.state.panY,
+        containerSize.width,
+        containerSize.height,
+      );
+      const jitterX = (Math.random() - 0.5) * 120;
+      const jitterY = (Math.random() - 0.5) * 80;
+      return {
+        x: center.x - width / 2 + jitterX,
+        y: center.y - height / 2 + jitterY,
+      };
+    },
+    [
+      viewport.state.zoom,
+      viewport.state.panX,
+      viewport.state.panY,
+      containerSize.width,
+      containerSize.height,
+    ],
+  );
+
   // 创建 Section 回调
   const handleCreateSection = useCallback(async () => {
     try {
       const result = await unwrapCommand(
         commands.sectionCreate(currentWhiteboardId, "New Section", null),
       );
-      const pos = randomOffset();
+      const pos = newEntityPositionAtCenter(400, 300);
       await unwrapCommand(
         commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
@@ -528,7 +592,7 @@ export function GraphView() {
     } catch (e) {
       console.error("创建 section 失败:", e);
     }
-  }, [queryClient, currentWhiteboardId]);
+  }, [queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   // 创建 Note 回调
   const handleCreateNote = useCallback(async () => {
@@ -536,7 +600,7 @@ export function GraphView() {
       const result = await unwrapCommand(
         commands.noteCreate(currentWhiteboardId, "New Note", null, null),
       );
-      const pos = randomOffset();
+      const pos = newEntityPositionAtCenter(520, 180);
       await unwrapCommand(
         commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
@@ -544,12 +608,89 @@ export function GraphView() {
     } catch (e) {
       console.error("创建 note 失败:", e);
     }
-  }, [queryClient, currentWhiteboardId]);
+  }, [queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   // Sync 回调
+  // 跳转到指定 section — 用 allDimensions 算出真实尺寸后调 viewport.centerOn
+  const handleJumpToSection = useCallback(
+    (sectionId: string) => {
+      const sectionEntity = allEntities.find(
+        (e) => e.kind === "section" && e.id === sectionId,
+      );
+      if (!sectionEntity) return;
+      const dim = allDimensions[sectionId];
+      if (!dim) return;
+      viewport.actions.centerOn(
+        sectionEntity.position.x,
+        sectionEntity.position.y,
+        containerSize.width,
+        containerSize.height,
+        dim.width,
+        dim.height,
+      );
+    },
+    [allEntities, allDimensions, containerSize, viewport.actions],
+  );
+
+  // 跳转到指定白板 — 直接切 currentWhiteboardId
+  const handleJumpToBoard = useCallback(
+    (whiteboardId: string) => {
+      onWhiteboardChange(whiteboardId);
+    },
+    [onWhiteboardChange],
+  );
+
   const handleSync = useCallback(() => {
     data.syncVault.mutate();
   }, [data.syncVault]);
+
+  const handleSelectEntity = useCallback((selection: GraphSelection) => {
+    if (lastDidDragRef.current) {
+      lastDidDragRef.current = false;
+      return;
+    }
+    onSelectEntity?.(selection);
+  }, [onSelectEntity]);
+
+  useEffect(() => {
+    if (!focusTarget || containerSize.width === 0 || containerSize.height === 0) return;
+
+    const entity = allEntities.find((candidate) => candidate.id === focusTarget.id);
+    if (entity) {
+      const dim = allDimensions[entity.id];
+    viewport.actions.centerOn(
+        entity.position.x,
+        entity.position.y,
+        containerSize.width,
+        containerSize.height,
+        dim?.width ?? 320,
+        dim?.height ?? 160,
+      );
+      onSelectEntity?.({ id: entity.id, kind: entity.kind });
+      return;
+    }
+
+    const whiteboard = whiteboardEntities.find((candidate) => `wb:${candidate.whiteboardId}` === focusTarget.id);
+    if (whiteboard) {
+    viewport.actions.centerOn(
+        whiteboard.position.x,
+        whiteboard.position.y,
+        containerSize.width,
+        containerSize.height,
+        320,
+        130,
+      );
+    }
+  }, [
+    allDimensions,
+    allEntities,
+    containerSize.height,
+    containerSize.width,
+    focusTarget,
+    onSelectEntity,
+    viewport.actions.centerOn,
+    whiteboardEntities,
+  ]);
 
   // Loading 状态作为 overlay 渲染，而不是 early return
   // 原因：early return 会让 containerRef 无法 attach，ResizeObserver 永远收不到尺寸
@@ -564,7 +705,11 @@ export function GraphView() {
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         currentWhiteboardId={currentWhiteboardId}
-        onNavigateBack={() => setCurrentWhiteboardId(ROOT_WHITEBOARD)}
+        onNavigateBack={() => onWhiteboardChange(ROOT_WHITEBOARD)}
+        sections={data.sections}
+        whiteboards={whiteboards}
+        onJumpToSection={handleJumpToSection}
+        onJumpToBoard={handleJumpToBoard}
       />
       {data.isLoading && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-background/50">
@@ -587,7 +732,12 @@ export function GraphView() {
               allKinds={allKinds}
               cardsById={cardsById}
               aliasesByTargetId={aliasesByTargetId}
+              lodLevel={viewport.lodLevel}
+              selected={selectedEntityId === e.id}
+              highlighted={highlightedEntityIds?.has(e.id) ?? false}
+              dimmed={Boolean(highlightedEntityIds && highlightedEntityIds.size > 0 && !highlightedEntityIds.has(e.id) && selectedEntityId !== e.id)}
               onDragStart={handleDragStart}
+              onSelect={handleSelectEntity}
               isExpanded={expandedId === e.id}
               onToggleExpand={handleToggleExpand}
               editing={editing && editing.id === e.id ? editing.field : null}
@@ -621,7 +771,7 @@ export function GraphView() {
                     return;
                   }
                   e.stopPropagation();
-                  setCurrentWhiteboardId(wb.whiteboardId);
+                  onWhiteboardChange(wb.whiteboardId);
                 }}
               >
                 <WhiteboardNode
