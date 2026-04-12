@@ -1,7 +1,7 @@
 import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { GraphCanvas } from "@/components/keysight/GraphCanvas";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
-import { useViewport } from "@/components/keysight/useViewport";
+import { useViewport, hasSavedViewport } from "@/components/keysight/useViewport";
 import { useContainerSize } from "@/components/keysight/hooks/useContainerSize";
 import { useWhiteboardData, useWhiteboardList, type WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
 import { useVisibleEntities } from "@/components/keysight/hooks/useVisibleEntities";
@@ -103,6 +103,25 @@ export function GraphView() {
 
   // 合并实体和位置
   const allEntities = useMemo(() => mergeEntitiesWithPositions(data), [data]);
+
+  // 首次进入没有保存视口的白板时，自适应内容居中
+  const fitDoneRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (
+      !data.isLoading &&
+      allEntities.length > 0 &&
+      !hasSavedViewport(currentWhiteboardId) &&
+      !fitDoneRef.current.has(currentWhiteboardId) &&
+      containerSize.width > 0
+    ) {
+      fitDoneRef.current.add(currentWhiteboardId);
+      viewport.actions.fitToContent(
+        allEntities.map((e) => e.position),
+        containerSize.width,
+        containerSize.height,
+      );
+    }
+  }, [data.isLoading, allEntities, currentWhiteboardId, containerSize, viewport.actions]);
 
   // 子白板列表（仅根白板时加载）
   const whiteboardListQuery = useWhiteboardList(currentWhiteboardId);

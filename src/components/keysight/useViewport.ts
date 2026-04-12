@@ -19,6 +19,11 @@ const DEFAULT_VIEWPORT: ViewportState = { zoom: 1, panX: 0, panY: 0 };
 const STORAGE_PREFIX = "keysight:viewport:";
 const SAVE_DEBOUNCE_MS = 500;
 
+/** 检查白板是否有已保存的视口 */
+export function hasSavedViewport(whiteboardId: string): boolean {
+  return localStorage.getItem(STORAGE_PREFIX + whiteboardId) !== null;
+}
+
 /** 从 localStorage 读取白板视口 */
 function loadViewport(whiteboardId: string): ViewportState {
   try {
@@ -107,6 +112,28 @@ export function useViewport(whiteboardId: string) {
     setState({ ...DEFAULT_VIEWPORT });
   }, []);
 
+  /** 自适应内容 — 计算 bounding box 居中显示所有实体 */
+  const fitToContent = useCallback(
+    (positions: Array<{ x: number; y: number }>, containerWidth: number, containerHeight: number) => {
+      if (positions.length === 0) return;
+      const padding = 100;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      for (const p of positions) {
+        if (p.x < minX) minX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.x + 320 > maxX) maxX = p.x + 320; // 估算节点宽度
+        if (p.y + 160 > maxY) maxY = p.y + 160; // 估算节点高度
+      }
+      const contentW = maxX - minX + padding * 2;
+      const contentH = maxY - minY + padding * 2;
+      const zoom = clampZoom(Math.min(containerWidth / contentW, containerHeight / contentH, 1));
+      const panX = -minX * zoom + (containerWidth - (maxX - minX) * zoom) / 2;
+      const panY = -minY * zoom + (containerHeight - (maxY - minY) * zoom) / 2;
+      setState({ zoom, panX, panY });
+    },
+    [],
+  );
+
   // Pan: 鼠标拖拽
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -165,7 +192,7 @@ export function useViewport(whiteboardId: string) {
   return {
     state,
     handlers: { onMouseDown, onMouseMove, onMouseUp, onWheel },
-    actions: { zoomIn, zoomOut, resetView },
+    actions: { zoomIn, zoomOut, resetView, fitToContent },
   };
 }
 
