@@ -33,24 +33,6 @@ function mergeEntitiesWithPositions(data: WhiteboardData): EntityWithPosition[] 
   const result: EntityWithPosition[] = [];
   const positions = data.positions;
 
-  // [DEBUG] 检查 positions 和 entity ID 匹配情况
-  const sampleNoteIds = data.notes.slice(0, 3).map((n) => n.id);
-  const samplePositionKeys = Object.keys(positions).slice(0, 3);
-  const notesWithPositions = data.notes.filter((n) => positions[n.id]).length;
-  const sectionsWithPositions = data.sections.filter((s) => positions[s.id]).length;
-  const aliasesWithPositions = data.aliases.filter((a) => positions[a.aliasId]).length;
-  console.log("[mergeEntitiesWithPositions]", {
-    totalPositions: Object.keys(positions).length,
-    notesCount: data.notes.length,
-    notesWithPositions,
-    sectionsCount: data.sections.length,
-    sectionsWithPositions,
-    aliasesCount: data.aliases.length,
-    aliasesWithPositions,
-    sampleNoteIds,
-    samplePositionKeys,
-  });
-
   // Sections — 位置从成员动态计算（和旧 Obsidian 插件行为一致）
   // Section 盒子的 top-left 是 min(member.x, member.y) - PADDING
   // 如果没有任何成员有位置，section 不渲染
@@ -190,58 +172,17 @@ export function GraphView() {
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
 
-  // [DEBUG] 每次 render 打印关键状态
-  console.log("[GraphView] render", {
-    whiteboard: currentWhiteboardId,
-    isLoading: data.isLoading,
-    rawData: {
-      cards: data.cards.length,
-      sections: data.sections.length,
-      notes: data.notes.length,
-      aliases: data.aliases.length,
-      tasks: data.tasks.length,
-      questions: data.questions.length,
-      positions: Object.keys(data.positions).length,
-    },
-    allEntities: allEntities.length,
-    visibleEntities: visibleEntities.length,
-    viewport: viewport.state,
-    needsFit: viewport.needsFit,
-    containerSize,
-  });
-
-  // 首次进入白板时，如果没有保存视口或所有实体都不在视口内，自适应内容居中
+  // 首次进入白板时自动居中到实体的中位数位置
+  // 每个白板在 session 内只尝试一次，已保存的视口由 useViewport 恢复
   const fitAttemptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    console.log("[GraphView] fit-effect check", {
-      whiteboard: currentWhiteboardId,
-      isLoading: data.isLoading,
-      allEntitiesCount: allEntities.length,
-      visibleCount: visibleEntities.length,
-      containerWidth: containerSize.width,
-      needsFit: viewport.needsFit,
-      alreadyAttempted: fitAttemptedRef.current.has(currentWhiteboardId),
-    });
-    if (data.isLoading || allEntities.length === 0 || containerSize.width === 0) {
-      console.log("[GraphView] fit skipped: not ready");
+    if (data.isLoading || allEntities.length === 0 || containerSize.width === 0) return;
+    if (fitAttemptedRef.current.has(currentWhiteboardId)) return;
+    if (!viewport.needsFit) {
+      // 有保存的视口 — 不强制 fit，但仍然标记已尝试避免后续触发
+      fitAttemptedRef.current.add(currentWhiteboardId);
       return;
     }
-    if (fitAttemptedRef.current.has(currentWhiteboardId)) {
-      console.log("[GraphView] fit skipped: already attempted");
-      return;
-    }
-
-    const allEntitiesOffscreen = visibleEntities.length === 0;
-    const shouldFit = viewport.needsFit || allEntitiesOffscreen;
-    if (!shouldFit) {
-      console.log("[GraphView] fit skipped: not needed");
-      return;
-    }
-
-    console.log("[GraphView] fit TRIGGERED", {
-      positionSample: allEntities.slice(0, 3).map((e) => e.position),
-      containerSize,
-    });
     fitAttemptedRef.current.add(currentWhiteboardId);
     viewport.actions.fitToContent(
       allEntities.map((e) => e.position),
@@ -251,7 +192,6 @@ export function GraphView() {
   }, [
     data.isLoading,
     allEntities,
-    visibleEntities.length,
     viewport.needsFit,
     viewport.actions,
     containerSize,
@@ -268,11 +208,11 @@ export function GraphView() {
     });
   }, [visibleEntities, searchQuery]);
 
-  // 卡片标题映射（AliasNode 需要）
-  const cardTitles = useMemo(() => {
-    const map: Record<string, string> = {};
+  // cardId → AtomicCard 映射（AliasNode 渲染目标卡片完整内容需要）
+  const cardById = useMemo(() => {
+    const map: Record<string, typeof data.cards[number]> = {};
     for (const card of data.cards) {
-      map[card.id] = card.title;
+      map[card.id] = card;
     }
     return map;
   }, [data.cards]);
@@ -357,7 +297,7 @@ export function GraphView() {
               key={e.id}
               entity={e}
               allPositions={allPositions}
-              cardTitles={cardTitles}
+              cardById={cardById}
             />
           ))}
           {whiteboardEntities.map((wb) => {

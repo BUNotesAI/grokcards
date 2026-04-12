@@ -19,9 +19,17 @@ const DEFAULT_VIEWPORT: ViewportState = { zoom: 1, panX: 0, panY: 0 };
 const STORAGE_PREFIX = "keysight:viewport:";
 const SAVE_DEBOUNCE_MS = 500;
 
-/** 检查白板是否有已保存的视口 */
+/** 检查白板是否有已保存的视口（默认值 0,0,1 视为未保存，避免 buggy 写入阻塞 fit-to-content） */
 export function hasSavedViewport(whiteboardId: string): boolean {
-  return localStorage.getItem(STORAGE_PREFIX + whiteboardId) !== null;
+  const raw = localStorage.getItem(STORAGE_PREFIX + whiteboardId);
+  if (!raw) return false;
+  try {
+    const parsed = JSON.parse(raw);
+    if (parsed.zoom === 1 && parsed.panX === 0 && parsed.panY === 0) return false;
+    return typeof parsed.zoom === "number" && typeof parsed.panX === "number" && typeof parsed.panY === "number";
+  } catch {
+    return false;
+  }
 }
 
 /** 从 localStorage 读取白板视口 */

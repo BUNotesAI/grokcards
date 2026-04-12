@@ -1,6 +1,6 @@
 import type { CSSProperties } from "react";
 import type { EntityWithPosition } from "@/components/keysight/types";
-import type { Position } from "@/bindings";
+import type { AtomicCard, Position } from "@/bindings";
 import { CardNode } from "./CardNode";
 import { TaskNode } from "./TaskNode";
 import { QuestionNode } from "./QuestionNode";
@@ -11,15 +11,15 @@ import { AliasNode } from "./AliasNode";
 interface EntityNodeProps {
   entity: EntityWithPosition;
   allPositions: Record<string, Position>;
-  /** 原卡片标题映射，用于 AliasNode 显示原标题（cardId → title） */
-  cardTitles?: Record<string, string>;
+  /** cardId → AtomicCard 映射，AliasNode 用来渲染目标卡片完整内容 */
+  cardById?: Record<string, AtomicCard>;
 }
 
 /**
  * 实体节点分发器 — 根据 kind 路由到对应节点组件。
  * 负责绝对定位和分发，不含业务逻辑。
  */
-export function EntityNode({ entity, allPositions, cardTitles = {} }: EntityNodeProps) {
+export function EntityNode({ entity, allPositions, cardById = {} }: EntityNodeProps) {
   const posStyle: CSSProperties = {
     position: "absolute",
     left: entity.position.x,
@@ -43,7 +43,7 @@ export function EntityNode({ entity, allPositions, cardTitles = {} }: EntityNode
       return (
         <AliasNode
           alias={entity.entity}
-          originalTitle={cardTitles[entity.entity.cardId] ?? entity.entity.cardId}
+          targetCard={cardById[entity.entity.cardId] ?? null}
           style={posStyle}
         />
       );
