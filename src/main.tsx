@@ -6,6 +6,8 @@ import {
   perfLog,
   startHeartbeat,
   startLongTaskObserver,
+  startLongAnimationFrameObserver,
+  startVisibilityTracking,
   startErrorCapture,
 } from "@/lib/perf";
 import "./index.css";
@@ -14,6 +16,8 @@ perfLog("main.tsx loaded — JS bundle parsed");
 startErrorCapture();
 startHeartbeat();
 startLongTaskObserver();
+startLongAnimationFrameObserver();
+startVisibilityTracking();
 
 const queryClient = new QueryClient({
   defaultOptions: {

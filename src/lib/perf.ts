@@ -143,6 +143,73 @@ export function startLongTaskObserver(): void {
   }
 }
 
+/** Long Animation Frame observer — 比 longtask 更全面，捕获 paint + layout + GC + script
+ *  WebKit Tech Preview / Chrome 123+ 支持。捕获不到 JS 但仍有阻塞的情况（比如 GC 大暂停）。
+ *  报告 entry.duration（总耗时）+ blockingDuration（实际阻塞主线程）+ scripts 列表。 */
+let loafStarted = false;
+export function startLongAnimationFrameObserver(): void {
+  if (loafStarted) return;
+  loafStarted = true;
+  if (typeof PerformanceObserver === "undefined") return;
+  const supported = PerformanceObserver.supportedEntryTypes;
+  if (!supported || !supported.includes("long-animation-frame")) {
+    perfLog("LoAF observer 不支持 (浏览器太旧)");
+    return;
+  }
+  try {
+    const observer = new PerformanceObserver((list) => {
+      for (const entry of list.getEntries()) {
+        const e = entry as PerformanceEntry & {
+          duration: number;
+          blockingDuration?: number;
+          renderStart?: number;
+          styleAndLayoutStart?: number;
+          scripts?: Array<{
+            duration: number;
+            name?: string;
+            sourceURL?: string;
+            sourceFunctionName?: string;
+            invoker?: string;
+          }>;
+        };
+        if (e.duration < 100) continue;
+        const scripts = e.scripts ?? [];
+        const top = scripts
+          .slice()
+          .sort((a, b) => b.duration - a.duration)
+          .slice(0, 3)
+          .map((s) => {
+            const fn = s.sourceFunctionName || s.invoker || s.name || "?";
+            return `${s.duration.toFixed(0)}ms ${fn}`;
+          })
+          .join(" | ");
+        const blocking = e.blockingDuration?.toFixed(0) ?? "?";
+        perfLog(
+          `🐌 LoAF total=${e.duration.toFixed(0)}ms blocking=${blocking}ms scripts=${scripts.length} top=[${top || "(none)"}]`,
+        );
+      }
+    });
+    observer.observe({ type: "long-animation-frame", buffered: true });
+    perfLog("LoAF observer 启动 (warn > 100ms)");
+  } catch (err) {
+    perfLog(`LoAF observer 启动失败: ${(err as Error).message}`);
+  }
+}
+
+/** 窗口可见性 / 焦点变化 — 用于检测 macOS App Nap 之类的暂停-恢复抖动 */
+let visibilityStarted = false;
+export function startVisibilityTracking(): void {
+  if (visibilityStarted) return;
+  visibilityStarted = true;
+  if (typeof document === "undefined" || typeof window === "undefined") return;
+  document.addEventListener("visibilitychange", () => {
+    perfLog(`👁️ visibility: ${document.visibilityState}`);
+  });
+  window.addEventListener("focus", () => perfLog("👁️ window focus"));
+  window.addEventListener("blur", () => perfLog("👁️ window blur"));
+  perfLog("visibility tracking 启动");
+}
+
 /** 全局错误捕获 — unhandled rejection / window error 都记下来 */
 let errorCaptureStarted = false;
 export function startErrorCapture(): void {
