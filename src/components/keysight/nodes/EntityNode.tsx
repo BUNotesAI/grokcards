@@ -55,9 +55,9 @@ function EntityNodeImpl({
       }
     : undefined;
 
-  const handleClick = onToggleExpand
+  // 仅点击 toggle 箭头时触发 — 从 CardNode/AliasNode 内部按钮回调
+  const handleToggle = onToggleExpand
     ? (e: ReactMouseEvent) => {
-        if (entity.kind === "section") return;
         e.stopPropagation();
         onToggleExpand(entity.id);
       }
@@ -69,31 +69,32 @@ function EntityNodeImpl({
   switch (entity.kind) {
     case "card":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
           <CardNode
             card={entity.entity}
             cardsById={cardsById}
             aliasRefs={aliasesByTargetId[entity.entity.id]}
             isExpanded={isExpanded}
+            onToggleExpand={handleToggle}
             style={innerStyle}
           />
         </div>
       );
     case "task":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
           <TaskNode task={entity.entity} style={innerStyle} />
         </div>
       );
     case "question":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
           <QuestionNode question={entity.entity} style={innerStyle} />
         </div>
       );
     case "note":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
           <NoteNode note={entity.entity} style={innerStyle} />
         </div>
       );
@@ -104,13 +105,14 @@ function EntityNodeImpl({
     case "alias": {
       const target = cardsById[entity.entity.cardId] ?? null;
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
           <AliasNode
             alias={entity.entity}
             targetCard={target}
             cardsById={cardsById}
             aliasRefs={target ? aliasesByTargetId[target.id] : []}
             isExpanded={isExpanded}
+            onToggleExpand={handleToggle}
             style={innerStyle}
           />
         </div>

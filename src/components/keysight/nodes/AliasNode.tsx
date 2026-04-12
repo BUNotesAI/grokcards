@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import type { AtomicCard, CardAlias } from "@/bindings";
 import { CardNode } from "./CardNode";
 
@@ -10,6 +10,7 @@ interface AliasNodeProps {
   aliasRefs?: Array<{ aliasId: string; aliasTitle: string }>;
   style: CSSProperties;
   isExpanded?: boolean;
+  onToggleExpand?: (e: ReactMouseEvent) => void;
 }
 
 /**
@@ -24,6 +25,7 @@ export function AliasNode({
   aliasRefs = [],
   style,
   isExpanded = false,
+  onToggleExpand,
 }: AliasNodeProps) {
   if (!targetCard) {
     return (
@@ -55,6 +57,7 @@ export function AliasNode({
       style={style}
       variant="alias"
       isExpanded={isExpanded}
+      onToggleExpand={onToggleExpand}
     />
   );
 }

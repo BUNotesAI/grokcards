@@ -1,4 +1,4 @@
-import { memo, type CSSProperties } from "react";
+import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type { AtomicCard } from "@/bindings";
 import { RenderedMarkdown } from "./RenderedMarkdown";
 
@@ -13,6 +13,8 @@ interface CardNodeProps {
   variant?: "card" | "alias";
   /** 是否展开 — 折叠时只显示 title + understanding；展开后显示 content + 关联列表 */
   isExpanded?: boolean;
+  /** 点击 toggle 箭头时的回调 */
+  onToggleExpand?: (e: ReactMouseEvent) => void;
 }
 
 /** 区域标题（LINKED / RELATED / ALIASES / SEE ALSO） */
@@ -78,6 +80,7 @@ export const CardNode = memo(function CardNode({
   style,
   variant = "card",
   isExpanded = false,
+  onToggleExpand,
 }: CardNodeProps) {
   const isAlias = variant === "alias";
 
@@ -104,16 +107,54 @@ export const CardNode = memo(function CardNode({
         cursor: "grab",
       }}
     >
-      {/* 标题栏 */}
+      {/* 标题栏：toggle 箭头 + kind badge + 标题 */}
       <div
         style={{
           display: "flex",
-          alignItems: "flex-start",
-          gap: 10,
-          padding: "12px 14px 8px 14px",
-          borderBottom: "1px solid #e8e7e3",
+          alignItems: "center",
+          gap: 6,
+          padding: "11px 12px 11px 10px",
+          borderBottom: isExpanded ? "1px solid #e8e7e3" : "none",
         }}
       >
+        {/* Toggle 箭头按钮 — 点击展开/折叠 */}
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onToggleExpand?.(e);
+          }}
+          title={isExpanded ? "Collapse" : "Expand"}
+          style={{
+            flexShrink: 0,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 20,
+            height: 20,
+            padding: 0,
+            border: "none",
+            borderRadius: 5,
+            background: "transparent",
+            color: "rgba(0, 0, 0, 0.35)",
+            fontSize: 14,
+            lineHeight: 1,
+            cursor: "pointer",
+            transition: "color 0.15s, background 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.color = "#111214";
+            (e.currentTarget as HTMLButtonElement).style.background = "rgba(0, 0, 0, 0.06)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.color = "rgba(0, 0, 0, 0.35)";
+            (e.currentTarget as HTMLButtonElement).style.background = "transparent";
+          }}
+        >
+          {isExpanded ? "▾" : "›"}
+        </button>
+
         <span
           title={isAlias ? "Alias" : "Card"}
           style={{
