@@ -104,22 +104,6 @@ export function GraphView() {
   // 合并实体和位置
   const allEntities = useMemo(() => mergeEntitiesWithPositions(data), [data]);
 
-  // 首次进入没有保存视口的白板时，自适应内容居中
-  useEffect(() => {
-    if (
-      !data.isLoading &&
-      allEntities.length > 0 &&
-      viewport.needsFit &&
-      containerSize.width > 0
-    ) {
-      viewport.actions.fitToContent(
-        allEntities.map((e) => e.position),
-        containerSize.width,
-        containerSize.height,
-      );
-    }
-  }, [data.isLoading, allEntities, viewport.needsFit, containerSize, viewport.actions]);
-
   // 子白板列表（仅根白板时加载）
   const whiteboardListQuery = useWhiteboardList(currentWhiteboardId);
   const whiteboards = whiteboardListQuery.data ?? [];
@@ -171,6 +155,32 @@ export function GraphView() {
 
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
+
+  // 首次进入白板时，如果没有保存视口或所有实体都不在视口内，自适应内容居中
+  const fitAttemptedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (data.isLoading || allEntities.length === 0 || containerSize.width === 0) return;
+    if (fitAttemptedRef.current.has(currentWhiteboardId)) return;
+
+    const allEntitiesOffscreen = visibleEntities.length === 0;
+    const shouldFit = viewport.needsFit || allEntitiesOffscreen;
+    if (!shouldFit) return;
+
+    fitAttemptedRef.current.add(currentWhiteboardId);
+    viewport.actions.fitToContent(
+      allEntities.map((e) => e.position),
+      containerSize.width,
+      containerSize.height,
+    );
+  }, [
+    data.isLoading,
+    allEntities,
+    visibleEntities.length,
+    viewport.needsFit,
+    viewport.actions,
+    containerSize,
+    currentWhiteboardId,
+  ]);
 
   // 搜索过滤（简单 title 匹配）
   const filteredEntities = useMemo(() => {
