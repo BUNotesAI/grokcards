@@ -62,14 +62,15 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 ## Active
 
 ## Next
-- [ ] Phase 5e: 多白板（白板切换 + Root 画布预览卡 + viewport 持久化）— 根白板显示 sub-whiteboard 预览卡，参照旧 Obsidian 行为
-- [ ] Phase 5d: Edge 渲染（实体间连线 + clipToRect）
-- [ ] Phase 5c: 交互（拖拽定位 + context menu + containment 检测）
-- [ ] Phase 5f: 性能（Quadtree 视口裁剪 + LOD 分级）
-- [ ] Phase 6: 侧边栏 UI（Follow 模式 + Cards 列表 + Review + 行内编辑 + FilterBar + ExportPanel）
+- [ ] Phase 5d + 5f + 6 合并推进（用户要求一气呵成）：
+  - Phase 5d: Edge 渲染（实体间连线 + clipToRect，SVG overlay 方案）
+  - Phase 5f: 性能（Quadtree 视口裁剪 + LOD 分级 lod1/lod2）
+  - Phase 6: 侧边栏 UI（Follow / Cards 列表 / Review / 行内编辑 / FilterBar / ExportPanel / InsightCard / ContextPanel）
 
 ## Done
 
+- [x] Phase 5e: 多白板 — WhiteboardSummary + list_whiteboards + per-whiteboard viewport persist + WhiteboardNode + GraphToolbar 导航 + 自动布局，9 tasks 全部落地，16 commits（含手动验证阶段的卡片样式/拖拽/折叠/箭头等收敛 fix）
+- [x] Phase 5c: 交互（拖拽定位）— EntityNode wrapper + dragInfoRef + memo 比较器 + CSS transform3d，后续追加 imperative DOM transform fast path 解决 React render 延迟（session 7eb1770c）
 - [x] Phase 5b: 实体渲染 — 6 种实体节点 + GraphToolbar + TanStack Query + 视口裁剪, 47 新 TS tests (56 total), 4 新 Rust tests (160 total), 8 commits
 - [x] Phase 5a: 画布基础设施 — useViewport hook + GraphCanvas CSS transform + pan/zoom + 键盘快捷键 + 9 TS tests, 手动验证通过
 - [x] Phase 4: Vault 同步管道 — VaultFs.list_md_files + sync_vault + insert_id_into_frontmatter + 启动同步 + 11 tests (156 total), Code Review passed
