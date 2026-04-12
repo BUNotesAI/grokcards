@@ -1,5 +1,5 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
-import type { EntityWithPosition } from "@/components/keysight/types";
+import type { EntityKind, EntityWithPosition } from "@/components/keysight/types";
 import type { AtomicCard, Position } from "@/bindings";
 import { CardNode } from "./CardNode";
 import { TaskNode } from "./TaskNode";
@@ -11,6 +11,8 @@ import { AliasNode } from "./AliasNode";
 interface EntityNodeProps {
   entity: EntityWithPosition;
   allPositions: Record<string, Position>;
+  /** 所有实体 id → kind 映射，SectionNode bounds 计算用 */
+  allKinds: Record<string, EntityKind>;
   cardsById?: Record<string, AtomicCard>;
   aliasesByTargetId?: Record<string, Array<{ aliasId: string; aliasTitle: string }>>;
   /** 拖拽起始回调 — 按下鼠标左键时触发 */
@@ -30,6 +32,7 @@ interface EntityNodeProps {
 function EntityNodeImpl({
   entity,
   allPositions,
+  allKinds,
   cardsById = {},
   aliasesByTargetId = {},
   onDragStart,
@@ -100,7 +103,12 @@ function EntityNodeImpl({
       );
     case "section":
       return (
-        <SectionNode section={entity.entity} memberPositions={allPositions} style={wrapperStyle} />
+        <SectionNode
+          section={entity.entity}
+          memberPositions={allPositions}
+          memberKinds={allKinds}
+          style={wrapperStyle}
+        />
       );
     case "alias": {
       const target = cardsById[entity.entity.cardId] ?? null;
@@ -134,6 +142,7 @@ export const EntityNode = memo(EntityNodeImpl, (prev, next) => {
   if (prev.entity.position.y !== next.entity.position.y) return false;
   if (prev.entity.entity !== next.entity.entity) return false;
   if (prev.allPositions !== next.allPositions) return false;
+  if (prev.allKinds !== next.allKinds) return false;
   if (prev.cardsById !== next.cardsById) return false;
   if (prev.aliasesByTargetId !== next.aliasesByTargetId) return false;
   if (prev.onDragStart !== next.onDragStart) return false;

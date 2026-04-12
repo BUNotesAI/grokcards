@@ -1,10 +1,19 @@
 import { useMemo, type CSSProperties } from "react";
 import type { GraphSection, Position } from "@/bindings";
-import { ENTITY_DIMENSIONS } from "@/components/keysight/types";
+import {
+  ENTITY_DIMENSIONS,
+  type EntityKind,
+} from "@/components/keysight/types";
+import {
+  computeSectionBounds,
+  type SectionMember,
+} from "@/components/keysight/lib/sectionBounds";
 
 interface SectionNodeProps {
   section: GraphSection;
   memberPositions: Record<string, Position>;
+  /** member id → kind 映射，用于查询每个 member 的真实渲染尺寸 */
+  memberKinds: Record<string, EntityKind>;
   style: CSSProperties;
 }
 
@@ -55,39 +64,29 @@ const PADDING = 40;
 
 /**
  * 分组容器节点 — 半透明背景矩形
- * 大小由成员卡片位置动态计算（min/max + padding）。
+ * 大小由成员位置 + 每个成员的真实 kind 尺寸动态计算。
  * 无成员时使用最小尺寸。7 色配色。
  */
 export function SectionNode({
   section,
   memberPositions,
+  memberKinds,
   style,
 }: SectionNodeProps) {
   const colors =
     SECTION_COLORS[section.color ?? "default"] ?? SECTION_COLORS.default;
 
   const bounds = useMemo(() => {
-    const memberPos = section.cardIds
-      .map((id) => memberPositions[id])
-      .filter((p): p is Position => p != null);
-
-    if (memberPos.length === 0) {
-      return { width: 200, height: 100 };
+    const members: SectionMember[] = [];
+    for (const id of section.cardIds) {
+      const pos = memberPositions[id];
+      if (!pos) continue;
+      const kind = memberKinds[id] ?? "card";
+      const dim = ENTITY_DIMENSIONS[kind];
+      members.push({ position: pos, width: dim.width, height: dim.height });
     }
-
-    const cardDim = ENTITY_DIMENSIONS.card;
-    const xs = memberPos.map((p) => p.x);
-    const ys = memberPos.map((p) => p.y);
-    const minX = Math.min(...xs);
-    const minY = Math.min(...ys);
-    const maxX = Math.max(...xs) + cardDim.width;
-    const maxY = Math.max(...ys) + cardDim.height;
-
-    return {
-      width: maxX - minX + PADDING * 2,
-      height: maxY - minY + PADDING * 2,
-    };
-  }, [section.cardIds, memberPositions]);
+    return computeSectionBounds(members, PADDING);
+  }, [section.cardIds, memberPositions, memberKinds]);
 
   return (
     <div

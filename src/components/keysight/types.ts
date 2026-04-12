@@ -20,13 +20,21 @@ export type EntityWithPosition =
   | { kind: "section"; entity: GraphSection; position: Position; id: string }
   | { kind: "alias"; entity: CardAlias; position: Position; id: string };
 
-/** 各类型实体的预设宽高（世界坐标像素），视口裁剪和 section bounds 计算用 */
+/** 各类型实体的预设宽高（世界坐标像素）
+ *
+ * 宽度必须和节点组件里硬编码的 CSS `width` 保持一致（SectionNode bounds 计算依赖这个）：
+ * - CardNode/NoteNode/AliasNode: 520（对齐旧 Obsidian）
+ * - TaskNode/QuestionNode/WhiteboardNode: 320
+ *
+ * 高度是折叠状态下的典型值 + 适度富余（content-driven，常量只作为估计）。
+ * 视口裁剪和 section bounds 计算用。
+ */
 export const ENTITY_DIMENSIONS: Record<EntityKind, { width: number; height: number }> = {
-  card: { width: 320, height: 160 },
+  card: { width: 520, height: 220 },
   task: { width: 320, height: 140 },
   question: { width: 320, height: 140 },
-  note: { width: 200, height: 120 },
-  section: { width: 400, height: 300 }, // section 的实际尺寸由成员位置动态计算
-  alias: { width: 280, height: 100 },
+  note: { width: 520, height: 180 },
+  section: { width: 400, height: 300 }, // section 的实际尺寸由 computeSectionBounds 动态计算
+  alias: { width: 520, height: 220 },
   whiteboard: { width: 320, height: 130 },
 };

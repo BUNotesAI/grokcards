@@ -7,7 +7,7 @@ import { useWhiteboardData, useWhiteboardList, type WhiteboardData } from "@/com
 import { useVisibleEntities } from "@/components/keysight/hooks/useVisibleEntities";
 import { EntityNode } from "@/components/keysight/nodes/EntityNode";
 import { WhiteboardNode } from "@/components/keysight/nodes/WhiteboardNode";
-import type { EntityWithPosition } from "@/components/keysight/types";
+import type { EntityKind, EntityWithPosition } from "@/components/keysight/types";
 import type { Position } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { commands } from "@/bindings";
@@ -122,11 +122,14 @@ export function GraphView() {
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState("");
 
-  // 拖拽状态：ref 存储启动时的位置/屏幕坐标；state 存储拖拽中的本地位置覆盖
+  // 拖拽状态：ref 存储启动时的位置/屏幕坐标 + 被拖拽节点的 DOM 引用
+  // mousemove 时直接 imperative 更新 el.style.transform，绕过 React 重渲染延迟
+  // 同时也调用 setLocalPositions 让 React state 跟上（保持单向数据流一致性）
   const dragInfoRef = useRef<
     | null
     | {
         id: string;
+        el: HTMLElement;
         startX: number;
         startY: number;
         origX: number;
@@ -221,11 +224,13 @@ export function GraphView() {
   }, [effectivePositions]);
 
   // 拖拽：节点 mousedown 触发（stable reference）
+  // 捕获被拖动节点的 wrapper DOM（e.currentTarget），mousemove 时直接更新它的 transform
   const handleDragStart = useCallback((e: ReactMouseEvent, entityId: string) => {
     const pos = effectivePositionsRef.current[entityId];
     if (!pos) return;
     dragInfoRef.current = {
       id: entityId,
+      el: e.currentTarget as HTMLElement,
       startX: e.clientX,
       startY: e.clientY,
       origX: pos.x,
@@ -249,9 +254,15 @@ export function GraphView() {
       const zoom = viewport.state.zoom;
       const dx = rawDx / zoom;
       const dy = rawDy / zoom;
+      const newX = info.origX + dx;
+      const newY = info.origY + dy;
+      // Fast path：直接更新 DOM transform，每帧都立即响应
+      // 不依赖 React 的 render 调度，避免任何 batching/scheduling 延迟导致视觉滞后
+      info.el.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
+      // Slow path：同步更新 React state 让其他依赖（section bounds 等）跟上
       setLocalPositions((prev) => ({
         ...prev,
-        [info.id]: { x: info.origX + dx, y: info.origY + dy },
+        [info.id]: { x: newX, y: newY },
       }));
     };
 
@@ -371,6 +382,18 @@ export function GraphView() {
   // 所有位置映射（SectionNode bounds 计算用）
   const allPositions = data.positions;
 
+  // 所有实体 id → kind 映射（SectionNode 按 kind 查询真实尺寸算 bounds 用）
+  const allKinds = useMemo(() => {
+    const kinds: Record<string, EntityKind> = {};
+    for (const c of data.cards) kinds[c.id] = "card";
+    for (const n of data.notes) kinds[n.id] = "note";
+    for (const t of data.tasks) kinds[t.id] = "task";
+    for (const q of data.questions) kinds[q.id] = "question";
+    for (const s of data.sections) kinds[s.id] = "section";
+    for (const a of data.aliases) kinds[a.aliasId] = "alias";
+    return kinds;
+  }, [data.cards, data.notes, data.tasks, data.questions, data.sections, data.aliases]);
+
   // 实体计数
   const entityCounts: EntityCounts = useMemo(
     () => ({
@@ -448,6 +471,7 @@ export function GraphView() {
               key={e.id}
               entity={e}
               allPositions={allPositions}
+              allKinds={allKinds}
               cardsById={cardsById}
               aliasesByTargetId={aliasesByTargetId}
               onDragStart={handleDragStart}

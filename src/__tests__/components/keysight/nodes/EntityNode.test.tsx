@@ -21,7 +21,7 @@ describe("EntityNode", () => {
       },
       position: { x: 0, y: 0 },
     };
-    render(<EntityNode entity={entity} allPositions={{}} />);
+    render(<EntityNode entity={entity} allPositions={{}} allKinds={{}} />);
     expect(screen.getByText("Test Card")).toBeInTheDocument();
   });
   it("kind=note 时渲染 NoteNode", () => {
@@ -31,7 +31,7 @@ describe("EntityNode", () => {
       entity: { id: "note_001", title: "Test Note", content: "note body" },
       position: { x: 0, y: 0 },
     };
-    render(<EntityNode entity={entity} allPositions={{}} />);
+    render(<EntityNode entity={entity} allPositions={{}} allKinds={{}} />);
     expect(screen.getByText("Test Note")).toBeInTheDocument();
   });
   it("kind=section 时渲染 SectionNode", () => {
@@ -41,7 +41,7 @@ describe("EntityNode", () => {
       entity: { id: "sec_001", title: "Test Section", cardIds: [] },
       position: { x: 0, y: 0 },
     };
-    render(<EntityNode entity={entity} allPositions={{}} />);
+    render(<EntityNode entity={entity} allPositions={{}} allKinds={{}} />);
     expect(screen.getByText("Test Section")).toBeInTheDocument();
   });
   it("绝对定位到 position 坐标", () => {
@@ -62,7 +62,7 @@ describe("EntityNode", () => {
       },
       position: { x: 150, y: 250 },
     };
-    const { container } = render(<EntityNode entity={entity} allPositions={{}} />);
+    const { container } = render(<EntityNode entity={entity} allPositions={{}} allKinds={{}} />);
     const wrapper = container.firstElementChild as HTMLElement;
     // 现在用 transform 代替 left/top 以获得 GPU 合成的丝滑拖拽
     expect(wrapper.style.transform).toContain("150");
