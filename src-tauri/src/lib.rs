@@ -71,6 +71,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         // keysight: overview
         modules::keysight::commands::overview_stats,
         modules::keysight::commands::overview_graph,
+        modules::keysight::commands::whiteboard_list,
         // keysight: config
         modules::keysight::commands::get_vault_info,
         // keysight: legacy import

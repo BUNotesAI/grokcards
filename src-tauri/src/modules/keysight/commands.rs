@@ -14,7 +14,7 @@ use super::domain::{overview, question, sync, task};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, Edge, EdgeStyle, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, Position, QuestionEntity, StatsResponse,
-    SyncFileResponse, SyncVaultReport, TaskEntity, VaultInfoResponse,
+    SyncFileResponse, SyncVaultReport, TaskEntity, VaultInfoResponse, WhiteboardSummary,
 };
 use super::state::KeysightState;
 use super::vault_fs::RealVaultFs;
@@ -904,6 +904,16 @@ pub fn overview_graph(
 ) -> Result<GraphOverviewResponse, AppError> {
     let conn = state.db.lock().unwrap();
     overview::graph_overview(&conn).map_err(Into::into)
+}
+
+/// 查询所有子白板的轻量统计。
+#[tauri::command]
+#[specta::specta]
+pub fn whiteboard_list(
+    state: State<'_, KeysightState>,
+) -> Result<Vec<WhiteboardSummary>, AppError> {
+    let conn = state.db.lock().unwrap();
+    overview::list_whiteboards(&conn).map_err(Into::into)
 }
 
 // ============================================================
