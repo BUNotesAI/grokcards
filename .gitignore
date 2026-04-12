@@ -33,3 +33,6 @@ mock-*.html
 *.sw?
 keysight-imported.db
 .superpowers/
+
+# Codex 自动生成的 CLAUDE.md 副本
+Agents.md

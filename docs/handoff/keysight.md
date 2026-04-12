@@ -1,122 +1,197 @@
 ---
 area: keysight
-last_updated: 2026-04-12T16:45:00+08:00
-session_id: 37ca3a27
+last_updated: 2026-04-12T16:50:00+08:00
+session_id: 8ec03324
 status: ready-to-resume
-stale_check: cd src-tauri && cargo test --lib modules::keysight -- -q 2>&1 | tail -3 && cd .. && pnpm test 2>&1 | tail -3
+stale_check: cd src-tauri && cargo test --lib modules::keysight 2>&1 | tail -1 && cd .. && pnpm test 2>&1 | tail -3
 ---
 
 # Handoff: keysight
 
 ## 正在做的 Task
 
-Phase 5e（多白板）+ Phase 5c（拖拽）已全部实现并 commit，进入 Phase 5d/5f/6 的合并推进 — 对应 `docs/progress/keysight.md` > Next > "Phase 5d Edge 渲染 + 5f 性能 + 6 侧边栏 UI"
+为 Card / Note / Alias 三种节点实现右上角的 `⋯` 三点上下文菜单 — 对应 `docs/progress/keysight.md` > Next > "Phase 6 行内菜单（Card/Note/Alias 三点菜单）"
+
+**这个任务我自己做，不交给 codex**。参考旧 obsidian 插件的菜单实现，每种节点的菜单项见用户提供的三张截图（item 列表见下面"下一步"段）。CardNode/NoteNode/AliasNode 已有 `editing` 行内编辑能力，⋯ 菜单是它们的下一个 UI 增量。
 
 ## 已完成步骤（本 task 内部）
 
-### Phase 5e 多白板（spec/plan 规划的 9 个 task）
+⋯ 菜单本身在本 session 还**没动**。本 session 时间花在以下三件事，结果都没 commit：
 
-- [x] Task 1 — WhiteboardSummary 模型 + list_whiteboards domain fn (`b68519b`)
-- [x] Task 2 — whiteboard_list command + bindings.ts 更新 (`28cca7e`)
-- [x] Task 3 — useViewport localStorage 持久化 per whiteboard (`3b57e43`)
-- [x] Task 4 — WhiteboardNode 组件 + 3 个测试 (`cf4eecc`)
-- [x] Task 5 — GraphToolbar 导航按钮（← Root + 白板名）(`c309ba1`)
-- [x] Task 6 — useWhiteboardList hook + GraphView 白板切换集成 (`fac4082`)
-- [x] Task 7 — 无位置子白板卡自动布局 effect (`c3514ff`)
-- [x] Task 8 — 手动验证（多轮）+ 修复
+### 上一段：codex 完成 Phase 5f + 6 第一轮（uncommitted）
 
-### 手动验证阶段追加的 12 个 fix commit
+由 codex 在前一 session 落地，本 session 没碰：
 
-- [x] Phase 5c 拖拽 — EntityNode wrapper + dragInfoRef + 持久化到 layoutSetPosition (`64b3a0c`)
-- [x] 拖拽丝滑 — 自定义 memo 比较器 + CSS `transform: translate3d` + stable handleDragStart (`5632784`)
-- [x] Toggle 箭头按钮 — 对齐旧 Obsidian `.ks-graph-card-toggle`，点击 `›/▾` 切换展开 (`053c8de`)
-- [x] Note 样式对齐旧 Obsidian — 520px 宽 + `#ecf7f2` 淡绿底 + `NOTE` badge + pen icon (`053c8de`)
-- [x] CardNode 严格对齐旧 Obsidian 样式 — 白底 520px + 橙色加粗 `rgb(229,84,3)` + 奶油绿 understanding (`64b3a0c`)
-- [x] 默认折叠 — CardNode/AliasNode 只显示 title + understanding，展开后才显示 content / LINKED / RELATED / ALIASES (`5632784`)
-- [x] AliasNode 复用 CardNode — variant="alias" 渲染完整目标卡内容，虚线边框区分 (`237c1fb`)
-- [x] Section 从成员 bounding box 计算 top-left — 对齐旧 Obsidian 行为 (`5e8c89a`)
-- [x] containerSize 永远 0 修复 — loading 改 overlay 让 ResizeObserver 能 attach (`5e8c89a`)
-- [x] fit-to-content 中位数居中 — 避免 bounding box 把 zoom 压到极小 (`3f646a5`)
-- [x] 窗口默认尺寸 1600×1000 居中 (`0a3d1c2`)
-- [x] Markdown 渲染 — react-markdown + remark-gfm + 自定义 RenderedMarkdown 组件 (`237c1fb`)
+- [x] 新增 `src/components/keysight/lib/quadtree.ts`（Phase 5f-1）
+- [x] `src/components/keysight/hooks/useVisibleEntities.ts` 切到 Quadtree 查询 + 保留 force-visible id
+- [x] `src/components/keysight/useViewport.ts` 新增 `lodLevel` 推导 + `centerOn(x, y, w, h, ew?, eh?)`（Phase 5f-2）
+- [x] `src/components/keysight/nodes/{Card,Note,Alias,Task,Question}Node.tsx` 接入 lod0/lod1/lod2 三级渲染分支
+- [x] 节点接入 selected / highlighted / dimmed 视觉态
+- [x] `GraphView.tsx` 改受控：whiteboard / selection / focus target / highlighted ids 由外层驱动
+- [x] 新建 `src/components/keysight/KeysightView.tsx`：Sidebar + GraphView 双栏布局，sidebar 宽度/折叠/tab 持久化
+- [x] 新建 `src/components/keysight/sidebar/`：Sidebar / SidebarTabs / CardsList / ReviewView / FilterBar / ExportPanel / FollowView / InsightCardDetail / ContextPanel / NoteEditor 共 10 个文件
+- [x] `src/App.tsx` 路由切换到 `KeysightView`
+- [x] `pnpm build` 通过
 
-### 待用户确认
+### 本 session（8ec03324）追加的 5 个小修
 
-- [ ] **卡在这里**：用户报告完"Phase 5e 完成了吗"后就只反馈 UI 问题；最新 `053c8de` 的 Note 样式 + toggle 箭头用户还没验证过。Phase 5e + Phase 5c 代码全部 landed，但 progress/devlog/changelog 还没更新标记 Done
-- 用户最新指示："开始 5d, 5f, 6 不分"— 想把这三个阶段合并推进
+- [x] **GraphToolbar 加 Sections / Boards 两个 dropdown**（`src/components/keysight/GraphToolbar.tsx:60+`）— 用 base-ui DropdownMenu + render prop（**不是 asChild**，base-ui Menu 不支持），右侧显示 member count / cards count，当前白板加粗
+- [x] **`useWhiteboardList` 移除 wb_root 限制**（`src/components/keysight/hooks/useWhiteboardData.ts:166+`）— 所有白板都加载 + 套 `timedQuery` 加 perf 日志。原因：Boards dropdown 在子白板也要显示
+- [x] **GraphView 新增 `handleJumpToSection / handleJumpToBoard`**（`src/components/keysight/GraphView.tsx:597+`）— Section 用 `allDimensions[id]` 算真实尺寸 + `viewport.actions.centerOn(...)` 居中；Board 调 `onWhiteboardChange`
+- [x] **新建 Section/Note 改为视口中心**（`src/components/keysight/GraphView.tsx:31+, 569+`）— 之前用 `randomOffset()` 丢到 (200-600, 200-500)，rust 白板视口在 (-1500, -800) 看不到。新增 `viewportCenterWorld` 纯函数 + `newEntityPositionAtCenter(width, height)` callback，加 ±60/±40 抖动避免堆叠。删除了未使用的 `randomOffset`
+- [x] **perf.ts 加 Long Animation Frame Observer + visibility tracking**（`src/lib/perf.ts:148+, 215+`）— LoAF 捕获 paint/GC/script 完整 frame；visibility 检测 macOS App Nap 暂停-恢复
+- [x] **main.tsx 启用 LoAF + visibility 探针**（`src/main.tsx:6-15`）
+
+### 测试 + 构建状态
+
+- Rust: `153 passed; 0 failed; 1 ignored`
+- TS: `122 passed`
+- pnpm build: clean
+- cargo clippy: clean
+
+### 已捕获的诊断数据点
+
+- [x] **冻结日志捕获 #1**：用户提供了 `16:31:20.676 ⚠️ HEARTBEAT GAP 950ms`，但**无 LONGTASK** + **无 LoAF**（当时 LoAF 还没装）+ 用户描述"啥也没做就是第一次启动"。结论暂定：可能是 V8 GC pause / WKWebView 合成器抖动，**不是用户报的"几分钟卡死"**。装了 LoAF + visibility 之后等下次复现
+
+### 当前 working tree 状态
+
+```
+Modified (17): docs/devlog/2026-04-12.md docs/handoff/keysight.md docs/progress/keysight.md
+               src/App.tsx src/components/keysight/GraphToolbar.tsx
+               src/components/keysight/GraphView.tsx
+               src/components/keysight/hooks/useVisibleEntities.ts
+               src/components/keysight/hooks/useWhiteboardData.ts
+               src/components/keysight/nodes/{AliasNode,CardNode,EntityNode,NoteNode,QuestionNode,TaskNode}.tsx
+               src/components/keysight/types.ts
+               src/components/keysight/useViewport.ts
+               src/lib/perf.ts src/main.tsx
+
+Untracked: Agents.md (codex auto-gen, 822 行 = CLAUDE.md 副本)
+           docs/collaboration/2026-04-12-phase-5f-and-6.md (本 session 写的 codex brief)
+           src/components/keysight/KeysightView.tsx
+           src/components/keysight/lib/quadtree.ts
+           src/components/keysight/sidebar/{Sidebar,SidebarTabs,CardsList,ReviewView,FilterBar,ExportPanel,FollowView,InsightCardDetail,ContextPanel,NoteEditor}.tsx
+```
+
+- [ ] **卡在这里**：本 session 没动 ⋯ 菜单。下一 session 第一件事是把 working tree 拆 commit 清干净，然后从零实现三个节点的 ⋯ 菜单
 
 ## 下一步具体动作
 
-### 立即：收尾 5e/5c 的记账工作
+### 第一步：commit 拆分（必须先做，不要直接动新功能）
 
-1. **更新 `docs/progress/keysight.md`** — 把 "Phase 5e 多白板" 和 "Phase 5c 交互（拖拽）" 从 Next 移到 Done，记录 16 个 commits（`b68519b` 到 `053c8de`）
-2. **追加 `docs/devlog/2026-04-12.md`** — 本 session 时间线：5e 实现 → 用户多轮反馈 → 卡片样式/拖拽/折叠/箭头收敛
-3. **写 changelog** — 执行 `CLAUDE.md` 里的一行 bash 追加到 `~/Documents/obsidian_workspace/agent-slipbox-v3/logs/changelog/2026-04-12.md`
-4. **功能域完成 Code Review** — 跑 `/harness-check-tests` 语义自查测试缺口，然后 5 项检查（测试覆盖 / 逻辑正确性 / 回归风险 / I/O 正确性 / IPC 类型安全）
+1. **commit A — `feat(keysight): Phase 5f Quadtree + LOD`**
+   - `git add src/components/keysight/lib/quadtree.ts`
+   - `git add src/components/keysight/hooks/useVisibleEntities.ts`
+   - `git add src/components/keysight/useViewport.ts`
+   - `git add src/components/keysight/types.ts`
+   - `git add src/components/keysight/nodes/{Card,Note,Alias,Task,Question}Node.tsx`
+   - `git add src/components/keysight/nodes/EntityNode.tsx` *(注意：本 commit 只取 lodLevel 部分；本 session 没动 EntityNode，所以这里直接 add 整个文件即可)*
 
-### Phase 5d — Edge 渲染（卡片间连线/箭头）
+2. **commit B — `feat(keysight): Phase 6 Sidebar + KeysightView 双栏布局`**
+   - `git add src/components/keysight/KeysightView.tsx`
+   - `git add src/components/keysight/sidebar/`
+   - `git add src/components/keysight/GraphView.tsx` *(包含 GraphView 受控化 + 本 session 的 toolbar 跳转 handlers — 一起 commit 比 -p 拆分省事)*
+   - `git add src/App.tsx`
 
-5. **写 Phase 5d spec** — 输出到 `docs/superpowers/specs/2026-04-12-keysight-phase5d-edge-rendering.md`，覆盖：
-   - 4 种 edge 类型渲染：`link_to` / `related` / `alias_link` / `note_link`
-   - SVG overlay vs Canvas 渲染方式选型（旧插件用 SVG）
-   - clipToRect 矩形裁剪 — 让连线不穿过卡片
-   - 跨白板 edge 替换（drag 到其他 section 时的 edge 迁移）
-   - 根白板子白板卡之间无 edge
-6. **参考旧 Obsidian 的 edge 渲染实现** — 读 `~/codes/vibe-coding/obsidian-plugin-keysight/src/components/GraphView.tsx` 中 `renderEdges` / `ks-graph-edge` / `computeEdgePath` 相关代码
-7. **Rust 侧可能需要新 command** — 检查 `entity_edges_from` / `entity_edges_to` 是否够用，可能要加 `edge_query_all(whiteboardId)` 返回当前白板所有 edge
-8. **实现 `GraphEdges` 组件** — 新建 `src/components/keysight/GraphEdges.tsx`，接收 entities 和 edges，渲染 SVG path，集成到 GraphView
+3. **commit C — `feat(keysight): Toolbar Sections/Boards 跳转下拉`**
+   - `git add src/components/keysight/GraphToolbar.tsx`
+   - `git add src/components/keysight/hooks/useWhiteboardData.ts` *(移除 wb_root 限制 + timedQuery 包装)*
 
-### Phase 5f — 性能（Quadtree + LOD）
+4. **commit D — `chore(perf): LoAF observer + visibility tracking + 视口中心创建`**
+   - `git add src/lib/perf.ts`
+   - `git add src/main.tsx`
+   - 注：viewportCenterWorld + newEntityPositionAtCenter 已经在 commit B 的 GraphView 里一起 commit 掉了
 
-9. **Quadtree 视口裁剪** — 替换当前 O(N) 的 `useVisibleEntities`，新建 `src/components/keysight/lib/quadtree.ts`
-10. **LOD 分级** — zoom >0.4 完整 / 0.1-0.4 精简（仅标题）/ <0.1 最小色块
-11. **参考旧插件 `ks-graph-card--lod1` / `ks-graph-card--lod2` 样式**
+5. **commit E — `docs(keysight): progress + devlog + handoff + collaboration brief`**
+   - `git add docs/`
 
-### Phase 6 — 侧边栏 UI
+6. **决定 `Agents.md` 的命运**：codex 自动生成的 822 行副本（= CLAUDE.md 内容）。倾向 gitignore（追加到 `.gitignore`），但需要快速确认一下用户意图。
 
-12. **拆分 Phase 6 为独立子任务** — Follow 模式 / Cards 列表 / Review / FilterBar / ExportPanel / InsightCard 详情 / 行内编辑 / ContextPanel 各自独立，按需求优先级推进
+### 第二步：实现 ⋯ 三点菜单
+
+7. **加 menu state 到 GraphView 或 KeysightView**：
+   ```ts
+   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+   const handleOpenMenu = useCallback((id: string) => setOpenMenuId(id), []);
+   const handleCloseMenu = useCallback(() => setOpenMenuId(null), []);
+   ```
+   传给 EntityNode → CardNode/NoteNode/AliasNode
+
+8. **CardNode / NoteNode / AliasNode 各加一个 `⋯` 按钮** 在右上角（旧 plugin 的 `ks-graph-card-menu`）。
+   - 按钮 onMouseDown stopPropagation 防止触发拖拽
+   - 按钮 onClick 触发 `onOpenMenu(entity.id)`
+   - 当 `openMenuId === entity.id` 时渲染菜单 popover
+
+9. **菜单 UI**：用 base-ui DropdownMenu（参考 `GraphToolbar.tsx` 已有的 render prop 写法）。或者用 absolute positioned div + click outside detection。倾向前者，已有现成模式。
+
+10. **菜单项**（**默认不要 "原文 / Jump to source"**）：
+
+| Menu | Items |
+|---|---|
+| **Card** | Copy title · Draw connection · Related · Create alias · Move to Section · Remove from group |
+| **Note** | Copy UUID + title · Draw connection · Edit title · Move to Section · Remove from group · Delete · 7 色块（背景色） |
+| **Alias** | Remove from group · → 原卡（jump to source card）· Draw connection · Move to Section · Delete alias |
+
+11. **Handler 对应 Rust commands**（绝大多数已存在，bindings.ts 都生成好了）：
+    - **Copy title** / **Copy UUID + title** → `navigator.clipboard.writeText(...)` (无 Rust)
+    - **Draw connection** → 进入 "draw mode" state（旧 plugin `drawingFrom` ref）+ 下次点击 target → `commands.entityConnect(from, to, "linkTo", null, null)`
+    - **Related** → `commands.entityConnect(from, to, "related", null, null)`
+    - **Create alias** → `commands.aliasCreate(currentWhiteboardId, cardId)` + `commands.layoutSetPosition(wb, aliasId, cardX + 540, cardY)` 放原卡右侧
+    - **Move to Section** → 弹 Section picker → `commands.sectionAddMember(sectionId, entityId)`
+    - **Remove from group** → 找到 entity 所在 section（遍历 `data.sections.find(s => s.cardIds.includes(id))`） → `commands.sectionRemoveMember(sectionId, entityId)`
+    - **Edit title** (Note) → `setEditing({ id, field: 'note-title' })`（已有的 inline edit）
+    - **Delete** (Note) → `commands.noteDelete(id)` + `queryClient.invalidateQueries({ queryKey: ['notes', wb] })`
+    - **Delete alias** → `commands.aliasDelete(id)` + invalidate
+    - **Note 颜色块** → `commands.noteUpdate(id, null, null, color)` + invalidate
+    - **→ 原卡** → 用 `viewport.actions.centerOn(cardPos.x, cardPos.y, containerSize.width, containerSize.height, allDimensions[cardId].width, allDimensions[cardId].height)` 跳过去（cardPos 来自 `data.positions[cardId]`）
+
+12. **参考旧 plugin 实现**（⚠️ **必读**）：`~/codes/vibe-coding/obsidian-plugin-keysight/src/components/GraphView.tsx` 搜：
+    - `menuCardId` / `setMenuCardId` (~line 2470+) — Card 菜单的 state + JSX
+    - `menuAliasId` (~line 2750+) — Alias 菜单
+    - 编辑 note 那段 — Note 菜单
+    - `cardToAliasConnect` / `relatedPickerCardId` / `drawingFrom` 相关 ref state — Draw connection / Related 的状态机
+    - `ks-graph-card-menu-dropdown` CSS class
+
+13. **新增组件**：
+    - `src/components/keysight/SectionPicker.tsx`（Move to Section 弹出选择器） — 或者复用 toolbar 的 Sections dropdown 样式新建一个
+    - 颜色块用 7 个 button 横排，色板：`["#fff8b3","#ffd6a5","#ffadad","#caffbf","#a0c4ff","#bdb2ff","#ffc6ff"]`（旧 plugin 色板）
+
+14. **测试**（每个节点至少 3 个 RTL 测试）：
+    - 点 ⋯ 按钮 → 菜单出现 (`screen.getByText("Copy title")`)
+    - 点菜单 item → mock 的 command handler 被调
+    - 点 outside / Escape → 菜单关闭
 
 ## 关键上下文（/new 之后会丢的东西）
 
 ### 本次会话的假设与决策
 
-- **CARD_W = 520px** — 旧插件常量，硬编码在 CardNode/NoteNode 中，不做动态
-- **拖拽 threshold 4px** — 区分 click 和 drag，小于此视为 click
-- **CSS transform 而非 left/top** — 拖拽走 GPU 合成避免 reflow，是拖拽丝滑的关键
-- **自定义 memo 比较器** — EntityNode 用 entity.id / position.x/y / entity.entity 引用的五元组比较，解决 mergeEntitiesWithPositions 每次创建新对象引用的问题
-- **Toggle 通过按钮，不是卡片整体 click** — 对齐旧 Obsidian，防止误触发展开
-- **Card/Alias 默认折叠** — 只显示 title + understanding，展开后显示 content / LINKED / RELATED / ALIASES / SEE ALSO
-- **fit-to-content 用中位数** — 不用 bounding box，因为 chentian 等旧数据 Y 跨度 30000+px，bounding box fit 会把 zoom 压到 MIN_ZOOM 且居中点可能是空白区
-- **Alias 复用 CardNode variant="alias"** — 视觉上几乎完全等于 CardNode，仅虚线边框 + 灰色 A icon 区分
-- **Section 位置从成员动态计算** — `min(member.x/y) - PADDING`，section 自己的 position 只作为无成员时的 fallback
-- **用 localPositions + effectivePositionsRef** — 拖拽的本地覆盖，释放后持久化到 DB，服务器位置回来后自动清理
-- **react-markdown 用 inline style** — 没装 `@tailwindcss/typography`，所有样式写在 components prop 里
-- **橙色加粗 `rgb(229, 84, 3)`** — 旧 Obsidian 的 `.ks-graph-card-title .markdown-rendered strong` 和 `.ks-graph-card-understanding-view strong` 都是这个色
-- **Understanding 块** — `#F9F8F5` 底 + `3px solid #1D9E75` 绿色左边框，色值来自 `.ks-graph-card-understanding-view`
+- **base-ui Menu 不支持 `asChild`**：`DropdownMenuTrigger` 用 `render={(props) => <Button {...props} />}` 而不是 `<DropdownMenuTrigger asChild><Button>...</Button></DropdownMenuTrigger>`。codex 的 dropdown-menu.tsx 用的是 `@base-ui/react/menu` 不是 Radix。这个写法在 GraphToolbar.tsx 里有现成例子可以抄
+- **新建实体位置改用视口中心**：之前 randomOffset (200-600) 在 rust 白板（视口偏移到负坐标）下不可见。viewportCenterWorld 是新增的 helper 纯函数
+- **useWhiteboardList 不再限定 wb_root**：所有白板都加载（数据小，summary 表 < 10 行）。否则 Boards 跳转 dropdown 在子白板里没数据
+- **Sections dropdown 的 onJumpToSection 用 allDimensions[id]**：因为 section 真实尺寸是 computeSectionBounds 算出来的，不是 ENTITY_DIMENSIONS.section placeholder。viewport.actions.centerOn 接受 width/height 参数计算屏幕中心
+- **冻结调查方向**：950ms heartbeat gap + 0 longtask + 0 LoAF（当时未装）= 强烈怀疑 GC pause / 合成器抖动 / macOS App Nap。LoAF observer 装好后等下次复现给出 script breakdown
+- **Note 色块面板**：旧 plugin 的颜色面板是 7 个固定色 + click → noteUpdate(id, null, null, color)。Rust 侧 noteUpdate 已支持 color 字段
+- **Alias 的 → 原卡**：alias.cardId 字段就是父卡片 id。viewport.centerOn 跳过去，需要 allDimensions[cardId]
+- **Codex Phase 5f+6 全部没 commit**：虽然 codex 跑了 pnpm build clean，但没 commit。本 session 又在上面叠了 5 个小改动。**下一 session 第一件事是拆 commit 而不是动新功能**
 
 ### 试过但不行的方案
 
-- **bounding box fit-to-content** — chentian 实体 Y 跨度 30000+px，fit 会把 zoom 压到 0.05 且居中在空白区。改用中位数居中 + zoom=1
-- **loading 状态 early return** — 导致 `containerRef` 从未 attach，`ResizeObserver` 永远拿不到尺寸，`containerSize.width` 永远 0，fit-to-content 不触发。改为 loading overlay
-- **hasSavedViewport 严格检查** — 旧 buggy 代码写入过默认 (0,0,1) 到 localStorage，导致 `needsFit=false` 阻塞 fit。改为默认值视为"未保存"
-- **click 整卡切换展开** — 和用户预期不符。改为按钮 toggle
-- **React.memo 默认浅比较** — entity 每次 render 是新对象引用，memo 完全失效。改为自定义比较器
-- **react-markdown 的 `prose` class** — 没装 typography 插件是 no-op。改为 inline style per component
-- **codex:rescue 两次** — 都卡在 sandbox 不能 apply_patch，第一次 3 分钟直接放弃，第二次跑了 1h+ 还没出结果，手动 cancel 掉了
-- **WebFetch 查 TanStack Query 版本** — 小模型幻觉数据，改用 `gh api` / `cargo search` / `npm view`
+- **DropdownMenuTrigger asChild** — TypeScript 报错，base-ui 的 Trigger 不是 Radix，没有 asChild prop。改成 `render={(props) => <Button {...props} />}` 后通过
+- **冻结诊断尝试 #1**：靠 longtask observer。结果：950ms 阻塞但 longtask 没报。说明阻塞不是单个 JS task。改加 LoAF + visibility tracking（更全面的探针）
 
 ### 开放问题
 
-- 用户还没验证 `053c8de` 的 Note 样式 + toggle 箭头 + 默认折叠是否符合预期
-- Phase 5d Edge 渲染方案（SVG overlay vs Canvas）未和用户确认
-- Phase 5f Quadtree 和 5f LOD 是否在 Edge 之前做（影响 Edge 的渲染路径）未决定
-- Phase 6 侧边栏 UI 的具体优先级（Follow? Cards 列表? Review?）未排
+- **`Agents.md` 怎么处理**：codex 自动生成的副本（822 行 = CLAUDE.md 内容）。要 commit 还是 gitignore？倾向 gitignore，需要快速确认
+- **Move to Section 的交互**：是弹 Section picker dropdown 还是直接进入"点击 section 选择"模式？旧 plugin 用 picker（看 `relatedPickerCardId` 那一段），但新项目可以更简单 — 用 base-ui DropdownMenu 嵌套或用一个独立 popover 都行
+- **Note 颜色块 UI**：放在菜单里横排还是单独一个面板？旧 plugin 是菜单底部横排 7 个圆点。倾向同样
+- **冻结的"几分钟级"复现**：用户报告过几次几分钟卡死，但本 session 只捕到一次 950ms。LoAF + visibility 探针装好了，等下次复现
 
 ## Resume 检查清单
 
-- [ ] 读 `docs/progress/keysight.md` 确认 Phase 5e 和 5c 的状态
-- [ ] 读 `docs/handoff/keysight.md`（本文件）了解完整上下文
-- [ ] 跑 `stale_check`：Rust 应显示 `145 passed, 1 ignored`（Phase 5e 新增 3 个 list_whiteboards 测试）；TS 应显示 `61 passed`
-- [ ] `git status` 干净，HEAD = `053c8de`
-- [ ] 确认用户是否已验证 `053c8de` — 如果没验证，先问用户体验如何再决定是否进 Phase 5d
-- [ ] 如要开始 Phase 5d，先读 `~/codes/vibe-coding/obsidian-plugin-keysight/src/components/GraphView.tsx` 中 edge 渲染相关代码作为参考
+- [ ] 读 `docs/progress/keysight.md` 确认 Active task 没变
+- [ ] 读 `docs/collaboration/2026-04-12-phase-5f-and-6.md` 了解 codex 完成的 Phase 5f + 6 上下文
+- [ ] 跑 `stale_check` — 期望：Rust `153 passed`, TS `122 passed`
+- [ ] `git status` — 期望：17 modified + 5 untracked，**未 commit**
+- [ ] `git log --oneline -3` — HEAD 应是 `bbbefca fix(keysight): strip backslash escapes from card titles (codex rescue)`
+- [ ] **先决定 commit 拆分策略**（见上面"第一步" 5 个 commit），**动 ⋯ 菜单之前必须先把 working tree 清干净**
+- [ ] 读旧 plugin GraphView.tsx 中 `menuCardId` / `menuAliasId` / `drawingFrom` / `relatedPickerCardId` 附近的代码作为菜单实现参考
