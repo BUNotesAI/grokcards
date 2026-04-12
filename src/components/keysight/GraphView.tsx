@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect } from "react";
 import { GraphCanvas } from "@/components/keysight/GraphCanvas";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
@@ -118,6 +118,40 @@ export function GraphView() {
       })
       .filter(Boolean) as Array<{ whiteboardId: string; position: { x: number; y: number } }>;
   }, [whiteboards, data.positions, currentWhiteboardId]);
+
+  // 无位置的子白板卡：自动计算初始坐标并写入 DB
+  const initializedRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
+    const unpositioned = whiteboards.filter(
+      (wb) =>
+        !data.positions[`wb:${wb.whiteboardId}`] &&
+        !initializedRef.current.has(wb.whiteboardId),
+    );
+    if (unpositioned.length === 0) return;
+
+    // 找现有实体的 bounding box 最大 y 值
+    const maxY = allEntities.reduce((max, e) => Math.max(max, e.position.y + 200), 0);
+    const startY = Math.max(maxY + 60, 100);
+    const colWidth = 360; // 320px 卡 + 40px 间距
+    const rowHeight = 170; // 130px 卡 + 40px 间距
+    const cols = 2;
+
+    const writes = unpositioned.map(async (wb, i) => {
+      const col = i % cols;
+      const row = Math.floor(i / cols);
+      const x = 100 + col * colWidth;
+      const y = startY + row * rowHeight;
+      initializedRef.current.add(wb.whiteboardId);
+      await unwrapCommand(
+        commands.layoutSetPosition(currentWhiteboardId, `wb:${wb.whiteboardId}`, x, y),
+      );
+    });
+
+    Promise.all(writes).then(() => {
+      queryClient.invalidateQueries({ queryKey: ["positions", ROOT_WHITEBOARD] });
+    });
+  }, [whiteboards, data.positions, currentWhiteboardId, allEntities, queryClient]);
 
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
