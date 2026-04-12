@@ -3,7 +3,7 @@ use rusqlite::Connection;
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::models::StatsResponse;
-use crate::modules::keysight::models::{CardSummary, GraphOverviewResponse, WhiteboardOverview};
+use crate::modules::keysight::models::{CardSummary, GraphOverviewResponse, WhiteboardOverview, WhiteboardSummary};
 
 /// 查询各实体类型的数量统计。
 pub(in crate::modules::keysight) fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
@@ -123,6 +123,39 @@ pub(in crate::modules::keysight) fn graph_overview(conn: &Connection) -> Result<
     Ok(GraphOverviewResponse { whiteboards })
 }
 
+/// 查询所有子白板的轻量统计（排除 wb_root）。
+pub(in crate::modules::keysight) fn list_whiteboards(
+    conn: &Connection,
+) -> Result<Vec<WhiteboardSummary>, KeysightError> {
+    let mut stmt = conn.prepare(
+        "SELECT whiteboard_id,
+                SUM(CASE WHEN kind = 'card' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN kind = 'note' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN kind = 'section' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN kind = 'alias' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN kind = 'task' THEN 1 ELSE 0 END),
+                SUM(CASE WHEN kind = 'question' THEN 1 ELSE 0 END)
+         FROM entities
+         WHERE whiteboard_id != 'wb_root'
+         GROUP BY whiteboard_id
+         ORDER BY whiteboard_id",
+    )?;
+    let rows = stmt
+        .query_map([], |r| {
+            Ok(WhiteboardSummary {
+                whiteboard_id: r.get(0)?,
+                cards: r.get(1)?,
+                notes: r.get(2)?,
+                sections: r.get(3)?,
+                aliases: r.get(4)?,
+                tasks: r.get(5)?,
+                questions: r.get(6)?,
+            })
+        })?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    Ok(rows)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,5 +232,55 @@ mod tests {
         // 找 myboard
         let myboard = resp.whiteboards.iter().find(|w| w.whiteboard_id == "myboard").unwrap();
         assert_eq!(myboard.cards, 0); // task 不是 card
+    }
+
+    // --- list_whiteboards ---
+
+    #[test]
+    fn test_list_whiteboards_empty() {
+        let conn = test_conn();
+        let result = list_whiteboards(&conn).unwrap();
+        assert!(result.is_empty());
+    }
+
+    #[test]
+    fn test_list_whiteboards_excludes_wb_root() {
+        let conn = test_conn();
+        let card_md = "---\ntype: atomic-card\nid: card_wb_r001\n---\n\n# 【ATC】Root Card\n\nBody.\n";
+        sync::sync_file(&conn, "whiteboard/root_card.md", card_md, 100.0).unwrap();
+
+        let result = list_whiteboards(&conn).unwrap();
+        assert!(result.is_empty(), "wb_root 的实体不应出现在子白板列表中");
+    }
+
+    #[test]
+    fn test_list_whiteboards_counts_by_kind() {
+        let conn = test_conn();
+        let card1 = "---\ntype: atomic-card\nid: card_wbl_001\n---\n\n# 【ATC】Card 1\n\nBody.\n";
+        sync::sync_file(&conn, "whiteboard/rust/c1.md", card1, 100.0).unwrap();
+        let card2 = "---\ntype: atomic-card\nid: card_wbl_002\n---\n\n# 【ATC】Card 2\n\nBody.\n";
+        sync::sync_file(&conn, "whiteboard/rust/c2.md", card2, 200.0).unwrap();
+
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES ('note_wbl_001', 'note', 'Note 1', 'rust')",
+            [],
+        ).unwrap();
+
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES ('alias_wbl_001', 'alias', 'Alias 1', 'chentian')",
+            [],
+        ).unwrap();
+
+        let result = list_whiteboards(&conn).unwrap();
+        assert_eq!(result.len(), 2);
+
+        let rust_wb = result.iter().find(|w| w.whiteboard_id == "rust").unwrap();
+        assert_eq!(rust_wb.cards, 2);
+        assert_eq!(rust_wb.notes, 1);
+        assert_eq!(rust_wb.sections, 0);
+
+        let ct_wb = result.iter().find(|w| w.whiteboard_id == "chentian").unwrap();
+        assert_eq!(ct_wb.aliases, 1);
+        assert_eq!(ct_wb.cards, 0);
     }
 }

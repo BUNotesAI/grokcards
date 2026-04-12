@@ -374,6 +374,19 @@ pub struct GraphOverviewResponse {
     pub whiteboards: Vec<WhiteboardOverview>,
 }
 
+/// 子白板摘要 — 轻量级，不含卡片列表。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct WhiteboardSummary {
+    pub whiteboard_id: String,
+    pub cards: i64,
+    pub notes: i64,
+    pub sections: i64,
+    pub aliases: i64,
+    pub tasks: i64,
+    pub questions: i64,
+}
+
 /// 当前 vault 配置信息。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
