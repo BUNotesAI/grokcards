@@ -116,23 +116,26 @@ export function useViewport(whiteboardId: string) {
     setState({ ...DEFAULT_VIEWPORT });
   }, []);
 
-  /** 自适应内容 — 计算 bounding box 居中显示所有实体 */
+  /**
+   * 定位到实体中心 — 以中位数位置为中心，zoom=1 显示
+   *
+   * 为什么用中位数而不是 bounding box fit：
+   * - 旧数据实体分布不均（有的 whiteboard Y 跨度 30000+px）
+   * - bounding box fit 会把 zoom 压到极小，看不清任何内容
+   * - 中位数居中 + 默认 zoom 让用户能立即看清中心区域的卡片
+   * - 用户可以从中心手动 pan/zoom 探索其他区域
+   */
   const fitToContent = useCallback(
     (positions: Array<{ x: number; y: number }>, containerWidth: number, containerHeight: number) => {
       if (positions.length === 0) return;
-      const padding = 100;
-      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-      for (const p of positions) {
-        if (p.x < minX) minX = p.x;
-        if (p.y < minY) minY = p.y;
-        if (p.x + 320 > maxX) maxX = p.x + 320; // 估算节点宽度
-        if (p.y + 160 > maxY) maxY = p.y + 160; // 估算节点高度
-      }
-      const contentW = maxX - minX + padding * 2;
-      const contentH = maxY - minY + padding * 2;
-      const zoom = clampZoom(Math.min(containerWidth / contentW, containerHeight / contentH, 1));
-      const panX = -minX * zoom + (containerWidth - (maxX - minX) * zoom) / 2;
-      const panY = -minY * zoom + (containerHeight - (maxY - minY) * zoom) / 2;
+      const sortedX = positions.map((p) => p.x).sort((a, b) => a - b);
+      const sortedY = positions.map((p) => p.y).sort((a, b) => a - b);
+      const medianX = sortedX[Math.floor(sortedX.length / 2)];
+      const medianY = sortedY[Math.floor(sortedY.length / 2)];
+      // 把中位数实体的中心放在屏幕中心（考虑估算的节点尺寸 320x160）
+      const zoom = 1;
+      const panX = containerWidth / 2 - (medianX + 160) * zoom;
+      const panY = containerHeight / 2 - (medianY + 80) * zoom;
       setState({ zoom, panX, panY });
       setNeedsFit(false);
     },
