@@ -164,12 +164,19 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
 }
 
 /**
- * 加载子白板列表（仅在 wb_root 时启用）。
+ * 加载所有白板列表（含每个白板的实体计数）。
+ *
+ * 之前限定只在 wb_root 启用，但工具栏的 Boards 下拉需要在任何白板都能跳转，
+ * 因此现在所有白板都加载（数据量小：仅 summary，per board 一行）。
  */
-export function useWhiteboardList(whiteboardId: string) {
+export function useWhiteboardList(_whiteboardId: string) {
   return useQuery({
     queryKey: ["whiteboards"],
-    queryFn: () => unwrapCommand(commands.whiteboardList()),
-    enabled: whiteboardId === "wb_root",
+    queryFn: () =>
+      timedQuery(
+        "whiteboards",
+        () => unwrapCommand(commands.whiteboardList()),
+        (r) => r.length,
+      ),
   });
 }

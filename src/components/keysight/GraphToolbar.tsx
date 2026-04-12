@@ -1,7 +1,24 @@
 import type { UseViewportReturn } from "@/components/keysight/useViewport";
+import type { GraphSection, WhiteboardSummary } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Minus, Plus, RotateCcw, RefreshCw, FolderPlus, StickyNote, Search, ArrowLeft } from "lucide-react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import {
+  Minus,
+  Plus,
+  RotateCcw,
+  RefreshCw,
+  FolderPlus,
+  StickyNote,
+  Search,
+  ArrowLeft,
+  Menu,
+} from "lucide-react";
 
 /** 实体计数 */
 export interface EntityCounts {
@@ -25,6 +42,14 @@ interface GraphToolbarProps {
   currentWhiteboardId?: string;
   /** 返回根白板的回调，仅子白板时使用 */
   onNavigateBack?: () => void;
+  /** 当前白板的 sections，给 Sections 下拉菜单用 */
+  sections?: GraphSection[];
+  /** 所有子白板列表，给 Boards 下拉菜单用 */
+  whiteboards?: WhiteboardSummary[];
+  /** 跳转到某 section 的回调（在 graph 中居中显示） */
+  onJumpToSection?: (sectionId: string) => void;
+  /** 跳转到某白板的回调（切换 currentWhiteboardId） */
+  onJumpToBoard?: (whiteboardId: string) => void;
 }
 
 /**
@@ -45,6 +70,10 @@ export function GraphToolbar({
   onSearchChange,
   currentWhiteboardId = "wb_root",
   onNavigateBack,
+  sections = [],
+  whiteboards = [],
+  onJumpToSection,
+  onJumpToBoard,
 }: GraphToolbarProps) {
   const { state, actions } = viewport;
   const zoomPercent = Math.round(state.zoom * 100);
@@ -95,6 +124,83 @@ export function GraphToolbar({
         <StickyNote className="mr-1 h-4 w-4" />
         Note
       </Button>
+
+      {/* 跳转区 — Sections / Boards 下拉 */}
+      {sections.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={(props) => (
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-label="Jump to section"
+                {...(props as React.ComponentProps<typeof Button>)}
+              >
+                <Menu className="mr-1 h-4 w-4" />
+                Sections
+              </Button>
+            )}
+          />
+          <DropdownMenuContent align="start" className="max-h-96 w-64 overflow-y-auto">
+            {sections.map((s) => (
+              <DropdownMenuItem
+                key={s.id}
+                onClick={() => onJumpToSection?.(s.id)}
+                className="flex items-center justify-between gap-3"
+              >
+                <span className="truncate text-sm">{s.title || "(untitled)"}</span>
+                <span className="shrink-0 text-xs text-muted-foreground">
+                  {s.cardIds.length}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
+
+      {whiteboards.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={(props) => (
+              <Button
+                variant="secondary"
+                size="sm"
+                aria-label="Jump to whiteboard"
+                title="Jump to whiteboard"
+                {...(props as React.ComponentProps<typeof Button>)}
+              >
+                <Menu className="mr-1 h-4 w-4" />
+                Boards
+              </Button>
+            )}
+          />
+          <DropdownMenuContent align="start" className="max-h-96 w-64 overflow-y-auto">
+            {whiteboards.map((wb) => {
+              const isCurrent = wb.whiteboardId === currentWhiteboardId;
+              return (
+                <DropdownMenuItem
+                  key={wb.whiteboardId}
+                  onClick={() => onJumpToBoard?.(wb.whiteboardId)}
+                  className="flex items-center justify-between gap-3"
+                >
+                  <span
+                    className={
+                      isCurrent
+                        ? "truncate text-sm font-semibold"
+                        : "truncate text-sm"
+                    }
+                  >
+                    {wb.whiteboardId}
+                  </span>
+                  <span className="shrink-0 text-xs text-muted-foreground">
+                    {wb.cards}
+                  </span>
+                </DropdownMenuItem>
+              );
+            })}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {/* 操作区 */}
       <div className="flex items-center gap-1 border-l border-border pl-3">
