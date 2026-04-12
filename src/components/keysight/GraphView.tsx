@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, useCallback, useEffect } from "react";
+import { useMemo, useRef, useState, useCallback, useEffect, type MouseEvent as ReactMouseEvent } from "react";
 import { GraphCanvas } from "@/components/keysight/GraphCanvas";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
@@ -12,6 +12,9 @@ import type { Position } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { commands } from "@/bindings";
 import { useQueryClient } from "@tanstack/react-query";
+
+/** 拖拽阈值 — 小于此距离视为 click 而非 drag（屏幕像素） */
+const DRAG_THRESHOLD = 4;
 
 /** 根白板 ID — rust/chentian 等是子白板，根白板显示子白板预览卡 */
 const ROOT_WHITEBOARD = "wb_root";
@@ -29,9 +32,11 @@ function randomOffset(): Position {
  *
  * 只有有位置数据的实体才会被渲染（没位置的卡片不在画布上显示）。
  */
-function mergeEntitiesWithPositions(data: WhiteboardData): EntityWithPosition[] {
+function mergeEntitiesWithPositions(
+  data: WhiteboardData,
+  positions: Record<string, Position>,
+): EntityWithPosition[] {
   const result: EntityWithPosition[] = [];
-  const positions = data.positions;
 
   // Sections — 位置从成员动态计算（和旧 Obsidian 插件行为一致）
   // Section 盒子的 top-left 是 min(member.x, member.y) - PADDING
@@ -117,8 +122,33 @@ export function GraphView() {
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState("");
 
-  // 合并实体和位置
-  const allEntities = useMemo(() => mergeEntitiesWithPositions(data), [data]);
+  // 拖拽状态：ref 存储启动时的位置/屏幕坐标；state 存储拖拽中的本地位置覆盖
+  const dragInfoRef = useRef<
+    | null
+    | {
+        id: string;
+        startX: number;
+        startY: number;
+        origX: number;
+        origY: number;
+        didDrag: boolean;
+      }
+  >(null);
+  // 记录上一次 mouseup 时是否发生了拖拽 — 给 onClick 用来判断是否跳转
+  const lastDidDragRef = useRef(false);
+  const [localPositions, setLocalPositions] = useState<Record<string, Position>>({});
+
+  // 有效位置 = 服务器位置 + 本地覆盖（拖拽中的实时位置）
+  const effectivePositions = useMemo(
+    () => ({ ...data.positions, ...localPositions }),
+    [data.positions, localPositions],
+  );
+
+  // 合并实体和位置（用 effectivePositions 支持拖拽实时更新）
+  const allEntities = useMemo(
+    () => mergeEntitiesWithPositions(data, effectivePositions),
+    [data, effectivePositions],
+  );
 
   // 子白板列表（仅根白板时加载）
   const whiteboardListQuery = useWhiteboardList(currentWhiteboardId);
@@ -171,6 +201,98 @@ export function GraphView() {
 
   // 视口裁剪
   const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
+
+  // 拖拽：节点 mousedown 触发
+  const handleDragStart = useCallback(
+    (e: ReactMouseEvent, entityId: string) => {
+      const pos = effectivePositions[entityId];
+      if (!pos) return;
+      dragInfoRef.current = {
+        id: entityId,
+        startX: e.clientX,
+        startY: e.clientY,
+        origX: pos.x,
+        origY: pos.y,
+        didDrag: false,
+      };
+    },
+    [effectivePositions],
+  );
+
+  // 全局 mousemove / mouseup — 拖拽中实时更新位置，释放时持久化
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      const info = dragInfoRef.current;
+      if (!info) return;
+      const rawDx = e.clientX - info.startX;
+      const rawDy = e.clientY - info.startY;
+      if (!info.didDrag) {
+        if (rawDx * rawDx + rawDy * rawDy < DRAG_THRESHOLD * DRAG_THRESHOLD) return;
+        info.didDrag = true;
+      }
+      // 按当前 zoom 缩放屏幕坐标差 → 世界坐标差
+      const zoom = viewport.state.zoom;
+      const dx = rawDx / zoom;
+      const dy = rawDy / zoom;
+      setLocalPositions((prev) => ({
+        ...prev,
+        [info.id]: { x: info.origX + dx, y: info.origY + dy },
+      }));
+    };
+
+    const onUp = () => {
+      const info = dragInfoRef.current;
+      if (!info) return;
+      dragInfoRef.current = null;
+      lastDidDragRef.current = info.didDrag; // 给 onClick 用
+      if (!info.didDrag) return; // 没移动足够距离 — click 不持久化
+      // 持久化到 DB — 使用 setLocalPositions 的回调拿到最新值
+      setLocalPositions((prev) => {
+        const pos = prev[info.id];
+        if (pos) {
+          unwrapCommand(
+            commands.layoutSetPosition(currentWhiteboardId, info.id, pos.x, pos.y),
+          )
+            .then(() => {
+              queryClient.invalidateQueries({
+                queryKey: ["positions", currentWhiteboardId],
+              });
+            })
+            .catch((err) => console.error("拖拽持久化失败:", err));
+        }
+        return prev;
+      });
+    };
+
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+  }, [viewport.state.zoom, currentWhiteboardId, queryClient]);
+
+  // 服务器位置回来后，清理本地覆盖（避免 stale override）
+  useEffect(() => {
+    const toDelete: string[] = [];
+    for (const [id, localPos] of Object.entries(localPositions)) {
+      const serverPos = data.positions[id];
+      if (
+        serverPos &&
+        Math.abs(serverPos.x - localPos.x) < 0.5 &&
+        Math.abs(serverPos.y - localPos.y) < 0.5
+      ) {
+        toDelete.push(id);
+      }
+    }
+    if (toDelete.length > 0) {
+      setLocalPositions((prev) => {
+        const next = { ...prev };
+        for (const id of toDelete) delete next[id];
+        return next;
+      });
+    }
+  }, [data.positions, localPositions]);
 
   // 首次进入白板时自动居中到实体的中位数位置
   // 每个白板在 session 内只尝试一次，已保存的视口由 useViewport 恢复
@@ -313,22 +435,41 @@ export function GraphView() {
               allPositions={allPositions}
               cardsById={cardsById}
               aliasesByTargetId={aliasesByTargetId}
+              onDragStart={handleDragStart}
             />
           ))}
           {whiteboardEntities.map((wb) => {
             const summary = whiteboards.find((s) => s.whiteboardId === wb.whiteboardId);
             if (!summary) return null;
+            const dragId = `wb:${wb.whiteboardId}`;
             return (
-              <WhiteboardNode
-                key={`wb:${wb.whiteboardId}`}
-                summary={summary}
-                onNavigate={setCurrentWhiteboardId}
+              <div
+                key={dragId}
                 style={{
                   position: "absolute",
                   left: wb.position.x,
                   top: wb.position.y,
                 }}
-              />
+                onMouseDown={(e) => {
+                  if (e.button !== 0) return;
+                  e.stopPropagation();
+                  handleDragStart(e, dragId);
+                }}
+                onClick={(e) => {
+                  if (lastDidDragRef.current) {
+                    lastDidDragRef.current = false;
+                    return;
+                  }
+                  e.stopPropagation();
+                  setCurrentWhiteboardId(wb.whiteboardId);
+                }}
+              >
+                <WhiteboardNode
+                  summary={summary}
+                  onNavigate={() => {}}
+                  style={{}}
+                />
+              </div>
             );
           })}
         </GraphCanvas>

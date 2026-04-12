@@ -1,4 +1,4 @@
-import { memo, type CSSProperties } from "react";
+import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type { EntityWithPosition } from "@/components/keysight/types";
 import type { AtomicCard, Position } from "@/bindings";
 import { CardNode } from "./CardNode";
@@ -11,60 +11,90 @@ import { AliasNode } from "./AliasNode";
 interface EntityNodeProps {
   entity: EntityWithPosition;
   allPositions: Record<string, Position>;
-  /** cardId → AtomicCard 映射，CardNode/AliasNode 用来查 related/linkTo */
   cardsById?: Record<string, AtomicCard>;
-  /** targetCardId → aliases 反向索引 */
   aliasesByTargetId?: Record<string, Array<{ aliasId: string; aliasTitle: string }>>;
+  /** 拖拽起始回调 — 按下鼠标左键时触发 */
+  onDragStart?: (e: ReactMouseEvent, entityId: string) => void;
 }
 
 /**
  * 实体节点分发器 — 根据 kind 路由到对应节点组件。
- * 负责绝对定位和分发，不含业务逻辑。
  *
- * memo 化：每个 entity 独立渲染，props 不变时跳过 re-render，避免 200 个节点同时 re-render。
+ * 所有节点共享一个 absolute positioned wrapper div，wrapper 处理 onMouseDown 实现拖拽。
+ * 内部节点 style 不含 position，由 wrapper 承担。
  */
 export const EntityNode = memo(function EntityNode({
   entity,
   allPositions,
   cardsById = {},
   aliasesByTargetId = {},
+  onDragStart,
 }: EntityNodeProps) {
-  const posStyle: CSSProperties = {
+  const wrapperStyle: CSSProperties = {
     position: "absolute",
     left: entity.position.x,
     top: entity.position.y,
   };
 
+  const handleMouseDown = onDragStart
+    ? (e: ReactMouseEvent) => {
+        if (e.button !== 0) return;
+        // 对于 section，不允许通过它拖动（它是背景层）
+        if (entity.kind === "section") return;
+        e.stopPropagation();
+        onDragStart(e, entity.id);
+      }
+    : undefined;
+
+  // 内部节点使用空 style — wrapper 负责定位
+  const innerStyle: CSSProperties = {};
+
   switch (entity.kind) {
     case "card":
       return (
-        <CardNode
-          card={entity.entity}
-          cardsById={cardsById}
-          aliasRefs={aliasesByTargetId[entity.entity.id]}
-          style={posStyle}
-        />
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+          <CardNode
+            card={entity.entity}
+            cardsById={cardsById}
+            aliasRefs={aliasesByTargetId[entity.entity.id]}
+            style={innerStyle}
+          />
+        </div>
       );
     case "task":
-      return <TaskNode task={entity.entity} style={posStyle} />;
+      return (
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+          <TaskNode task={entity.entity} style={innerStyle} />
+        </div>
+      );
     case "question":
-      return <QuestionNode question={entity.entity} style={posStyle} />;
+      return (
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+          <QuestionNode question={entity.entity} style={innerStyle} />
+        </div>
+      );
     case "note":
-      return <NoteNode note={entity.entity} style={posStyle} />;
+      return (
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+          <NoteNode note={entity.entity} style={innerStyle} />
+        </div>
+      );
     case "section":
       return (
-        <SectionNode section={entity.entity} memberPositions={allPositions} style={posStyle} />
+        <SectionNode section={entity.entity} memberPositions={allPositions} style={wrapperStyle} />
       );
     case "alias": {
       const target = cardsById[entity.entity.cardId] ?? null;
       return (
-        <AliasNode
-          alias={entity.entity}
-          targetCard={target}
-          cardsById={cardsById}
-          aliasRefs={target ? aliasesByTargetId[target.id] : []}
-          style={posStyle}
-        />
+        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+          <AliasNode
+            alias={entity.entity}
+            targetCard={target}
+            cardsById={cardsById}
+            aliasRefs={target ? aliasesByTargetId[target.id] : []}
+            style={innerStyle}
+          />
+        </div>
       );
     }
   }
