@@ -461,13 +461,8 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
                 )?;
                 summary.aliases += 1;
 
-                // alias_link edge（alias → 原 card）
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                     VALUES (?1, ?2, 'alias_link')",
-                    params![alias.alias_id, alias.card_id],
-                )?;
-                summary.edges += 1;
+                // alias_link edges — 仅来自用户显式建立的 linked_card_ids / linked_section_ids
+                // alias.card_id 是元数据（"这是哪张卡的别名"），不应渲染为 edge
 
                 // alias_link edge（alias → linked_card_ids）
                 for target in &alias.linked_card_ids {
@@ -487,13 +482,20 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
                     summary.edges += 1;
                 }
 
-                // card_to_alias edge（原 card → alias）
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                     VALUES (?1, ?2, 'card_to_alias')",
-                    params![alias.card_id, alias.alias_id],
-                )?;
-                summary.edges += 1;
+                // card_to_alias edges — 来自 alias.incoming_card_ids
+                // 这些是用户**显式**建立的 card → alias 连接（不是父卡片元数据）。
+                // alias.card_id 表示"这个 alias 是哪张卡的别名"，是元数据，不应渲染为 edge。
+                for source in &alias.incoming_card_ids {
+                    if source.is_empty() {
+                        continue;
+                    }
+                    self.conn.execute(
+                        "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) \
+                         VALUES (?1, ?2, 'card_to_alias')",
+                        params![source, alias.alias_id],
+                    )?;
+                    summary.edges += 1;
+                }
             }
 
             // ── positions ──
@@ -974,7 +976,8 @@ mod tests {
             .unwrap();
         assert_eq!(card_id, "card_bbb22222");
 
-        // alias_link edge (alias → 原 card)
+        // 空 linked_card_ids + 空 incoming_card_ids → 0 alias_link / 0 card_to_alias edges
+        // 父卡片关系（alias.cardId）只是元数据，不应自动产生 edge
         let alias_link: i64 = new
             .query_row(
                 "SELECT COUNT(*) FROM edges WHERE edge_type = 'alias_link' AND from_id = 'alias_aaa11111'",
@@ -982,17 +985,16 @@ mod tests {
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(alias_link, 1);
+        assert_eq!(alias_link, 0);
 
-        // card_to_alias edge (原 card → alias)
         let c2a: i64 = new
             .query_row(
-                "SELECT COUNT(*) FROM edges WHERE edge_type = 'card_to_alias' AND from_id = 'card_bbb22222' AND to_id = 'alias_aaa11111'",
+                "SELECT COUNT(*) FROM edges WHERE edge_type = 'card_to_alias' AND to_id = 'alias_aaa11111'",
                 [],
                 |r| r.get(0),
             )
             .unwrap();
-        assert_eq!(c2a, 1);
+        assert_eq!(c2a, 0);
     }
 
     #[test]
@@ -1238,6 +1240,109 @@ mod tests {
             [], |r| r.get(0),
         ).unwrap();
         assert_eq!(count, 1);
+    }
+
+    /// card_to_alias edges 必须来自 incoming_card_ids，**不是** alias.card_id（父卡片）。
+    /// 父卡片只是元数据（"这个 alias 是哪张卡的别名"），不是用户显式建立的连接。
+    #[test]
+    fn test_import_card_to_alias_edges_from_incoming_only() {
+        let old = legacy_conn();
+        seed_insight(&old, "card_owner111", "Owner", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_insight(&old, "card_user1111", "User1", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_insight(&old, "card_user2222", "User2", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_meta(&old, "graph_sections", "[]");
+        // alias 的 cardId=card_owner（父卡片），incomingCardIds=[card_user1, card_user2]（显式连接）
+        seed_meta(&old, "graph_aliases",
+            r#"[{"aliasId":"alias_aaa11111","cardId":"card_owner111","linkedCardIds":[],"linkedSectionIds":[],"incomingCardIds":["card_user1111","card_user2222"]}]"#,
+        );
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        // 期望：2 条 card_to_alias edges，from = card_user1 / card_user2
+        let total: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE to_id = 'alias_aaa11111' AND edge_type = 'card_to_alias'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(total, 2, "应只为 incomingCardIds 中的每个 card 创建一条 card_to_alias edge");
+
+        // 不应有 from = card_owner 的 edge
+        let bogus: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'card_owner111' AND to_id = 'alias_aaa11111' AND edge_type = 'card_to_alias'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(bogus, 0, "alias.cardId（父卡片）不应被当作 card_to_alias edge 写入");
+
+        // 验证两条来自 user 的 edges 存在
+        for user_id in ["card_user1111", "card_user2222"] {
+            let count: i64 = new.query_row(
+                "SELECT COUNT(*) FROM edges WHERE from_id = ?1 AND to_id = 'alias_aaa11111' AND edge_type = 'card_to_alias'",
+                [user_id], |r| r.get(0),
+            ).unwrap();
+            assert_eq!(count, 1, "应有 {user_id} → alias 的 edge");
+        }
+    }
+
+    /// alias_link edges 必须来自 linked_card_ids / linked_section_ids，**不是** alias.card_id。
+    /// 父卡片关系是元数据，不是用户显式建立的链接，不能自动产生 alias_link edge。
+    /// 回归测试：避免重新引入"alias_link from alias → parent card"的 auto-edge bug。
+    #[test]
+    fn test_import_alias_link_edges_only_from_linked_fields() {
+        let old = legacy_conn();
+        seed_insight(&old, "card_parent111", "Parent", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_insight(&old, "card_target111", "Target", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_meta(&old, "graph_sections", "[]");
+        // alias 的 cardId=card_parent（元数据），linkedCardIds=[card_target]（用户显式连接）
+        seed_meta(&old, "graph_aliases",
+            r#"[{"aliasId":"alias_aaa11111","cardId":"card_parent111","linkedCardIds":["card_target111"],"linkedSectionIds":[],"incomingCardIds":[]}]"#,
+        );
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        // 期望：1 条 alias_link edge → card_target
+        let to_target: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'alias_aaa11111' AND to_id = 'card_target111' AND edge_type = 'alias_link'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(to_target, 1, "应有 alias → linked target 的 edge");
+
+        // 不应有 alias → parent card 的 edge
+        let to_parent: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'alias_aaa11111' AND to_id = 'card_parent111' AND edge_type = 'alias_link'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(to_parent, 0, "alias.cardId（父卡片）不应被当作 alias_link edge 写入");
+
+        // 总数：仅 1 条 alias_link，不含父卡片自动边
+        let total: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE from_id = 'alias_aaa11111' AND edge_type = 'alias_link'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(total, 1);
+    }
+
+    /// 空 incomingCardIds → 不应创建任何 card_to_alias edge。
+    #[test]
+    fn test_import_card_to_alias_edges_empty_incoming() {
+        let old = legacy_conn();
+        seed_insight(&old, "card_owner111", "Owner", r#"[]"#, r#"[]"#, r#"[]"#);
+        seed_meta(&old, "graph_sections", "[]");
+        seed_meta(&old, "graph_aliases",
+            r#"[{"aliasId":"alias_aaa11111","cardId":"card_owner111","linkedCardIds":[],"linkedSectionIds":[],"incomingCardIds":[]}]"#,
+        );
+
+        let new = new_conn();
+        let reader = SqliteLegacyReader::new(&old);
+        SqliteLegacyImporter::new(&new).import(&reader).unwrap();
+
+        let count: i64 = new.query_row(
+            "SELECT COUNT(*) FROM edges WHERE edge_type = 'card_to_alias'",
+            [], |r| r.get(0),
+        ).unwrap();
+        assert_eq!(count, 0, "空 incomingCardIds 不应产生任何 card_to_alias edge");
     }
 
     // ==================== 真实旧 DB 验证（cargo test -- --ignored） ====================
