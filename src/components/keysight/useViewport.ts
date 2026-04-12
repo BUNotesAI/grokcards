@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import type { LodLevel } from "@/components/keysight/types";
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 3.0;
@@ -8,6 +9,12 @@ export interface ViewportState {
   zoom: number;
   panX: number;
   panY: number;
+}
+
+export function getLodLevel(zoom: number): LodLevel {
+  if (zoom <= 0.1) return 2;
+  if (zoom <= 0.4) return 1;
+  return 0;
 }
 
 /** 将 zoom 值限制在 [MIN_ZOOM, MAX_ZOOM] 范围内 */
@@ -150,6 +157,24 @@ export function useViewport(whiteboardId: string) {
     [],
   );
 
+  const centerOn = useCallback(
+    (
+      x: number,
+      y: number,
+      containerWidth: number,
+      containerHeight: number,
+      width = 320,
+      height = 160,
+    ) => {
+      setState((s) => ({
+        ...s,
+        panX: containerWidth / 2 - (x + width / 2) * s.zoom,
+        panY: containerHeight / 2 - (y + height / 2) * s.zoom,
+      }));
+    },
+    [],
+  );
+
   // Pan: 鼠标拖拽
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -207,9 +232,10 @@ export function useViewport(whiteboardId: string) {
 
   return {
     state,
+    lodLevel: getLodLevel(state.zoom),
     needsFit,
     handlers: { onMouseDown, onMouseMove, onMouseUp, onWheel },
-    actions: { zoomIn, zoomOut, resetView, fitToContent },
+    actions: { zoomIn, zoomOut, resetView, fitToContent, centerOn },
   };
 }
 

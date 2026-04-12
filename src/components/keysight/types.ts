@@ -10,6 +10,13 @@ import type {
 
 /** 实体类型标识 */
 export type EntityKind = "card" | "task" | "question" | "note" | "section" | "alias" | "whiteboard";
+export type LodLevel = 0 | 1 | 2;
+export type GraphSelectableKind = Exclude<EntityKind, "whiteboard">;
+
+export interface GraphSelection {
+  id: string;
+  kind: GraphSelectableKind;
+}
 
 /** 各类型实体的联合 — 带位置信息 */
 export type EntityWithPosition =

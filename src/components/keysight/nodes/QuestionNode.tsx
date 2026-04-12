@@ -1,9 +1,14 @@
 import type { CSSProperties } from "react";
 import type { QuestionEntity } from "@/bindings";
+import type { LodLevel } from "@/components/keysight/types";
 
 interface QuestionNodeProps {
   question: QuestionEntity;
   style: CSSProperties;
+  lodLevel?: LodLevel;
+  selected?: boolean;
+  highlighted?: boolean;
+  dimmed?: boolean;
 }
 
 /** 问题状态 badge 样式映射 */
@@ -18,13 +23,37 @@ const STATUS_STYLES: Record<string, string> = {
  * 问题节点 — 卡片变体 + status badge。
  * 宽度 320px，和 CardNode 同族但带问题状态标记。
  */
-export function QuestionNode({ question, style }: QuestionNodeProps) {
+export function QuestionNode({
+  question,
+  style,
+  lodLevel = 0,
+  selected = false,
+  highlighted = false,
+  dimmed = false,
+}: QuestionNodeProps) {
   const badgeClass = STATUS_STYLES[question.status] ?? STATUS_STYLES.pending;
+  const ring = selected
+    ? "0 0 0 2px rgba(245, 158, 11, 0.8)"
+    : highlighted
+      ? "0 0 0 2px rgba(16, 185, 129, 0.7)"
+      : undefined;
+  const opacity = dimmed ? 0.35 : 1;
+
+  if (lodLevel === 2) {
+    return (
+      <div
+        data-entity-id={question.id}
+        className="select-none rounded-md border border-amber-200 bg-amber-200/70"
+        style={{ ...style, width: 320, height: 18, opacity: dimmed ? 0.2 : 0.7, boxShadow: ring }}
+      />
+    );
+  }
+
   return (
     <div
       data-entity-id={question.id}
       className="select-none rounded-xl border border-border/50 bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04)]"
-      style={{ ...style, width: 320 }}
+      style={{ ...style, width: 320, opacity, boxShadow: ring }}
     >
       <div className="flex items-center gap-2 px-4 pt-3 pb-1">
         <span className="flex h-5 w-5 items-center justify-center rounded bg-gradient-to-br from-amber-400 to-orange-500 text-[10px] font-bold text-white">
@@ -35,7 +64,7 @@ export function QuestionNode({ question, style }: QuestionNodeProps) {
           {question.status}
         </span>
       </div>
-      {question.content && (
+      {lodLevel === 0 && question.content && (
         <p className="px-4 pb-3 text-xs leading-relaxed text-muted-foreground">
           {question.content.length > 100
             ? question.content.slice(0, 100) + "..."

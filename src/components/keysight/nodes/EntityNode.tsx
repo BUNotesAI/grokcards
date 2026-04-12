@@ -1,5 +1,10 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
-import type { EntityKind, EntityWithPosition } from "@/components/keysight/types";
+import type {
+  EntityKind,
+  EntityWithPosition,
+  GraphSelectableKind,
+  LodLevel,
+} from "@/components/keysight/types";
 import type { AtomicCard, Position } from "@/bindings";
 import { CardNode } from "./CardNode";
 import { TaskNode } from "./TaskNode";
@@ -23,8 +28,14 @@ interface EntityNodeProps {
   allKinds: Record<string, EntityKind>;
   cardsById?: Record<string, AtomicCard>;
   aliasesByTargetId?: Record<string, Array<{ aliasId: string; aliasTitle: string }>>;
+  lodLevel?: LodLevel;
+  selected?: boolean;
+  highlighted?: boolean;
+  dimmed?: boolean;
   /** 拖拽起始回调 — 按下鼠标左键时触发 */
   onDragStart?: (e: ReactMouseEvent, entityId: string) => void;
+  /** 单击选中实体 */
+  onSelect?: (selection: { id: string; kind: GraphSelectableKind }) => void;
   /** 是否处于展开状态（展开后显示 body 内容） */
   isExpanded?: boolean;
   /** 切换展开状态的回调（click 且未发生拖拽时触发） */
@@ -55,7 +66,12 @@ function EntityNodeImpl({
   allKinds,
   cardsById = {},
   aliasesByTargetId = {},
+  lodLevel = 0,
+  selected = false,
+  highlighted = false,
+  dimmed = false,
   onDragStart,
+  onSelect,
   isExpanded = false,
   onToggleExpand,
   editing = null,
@@ -82,6 +98,13 @@ function EntityNodeImpl({
       }
     : undefined;
 
+  const handleClick = onSelect
+    ? (e: ReactMouseEvent) => {
+        e.stopPropagation();
+        onSelect({ id: entity.id, kind: entity.kind });
+      }
+    : undefined;
+
   // 仅点击 toggle 箭头时触发 — 从 CardNode/AliasNode 内部按钮回调
   const handleToggle = onToggleExpand
     ? (e: ReactMouseEvent) => {
@@ -102,11 +125,15 @@ function EntityNodeImpl({
   switch (entity.kind) {
     case "card":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
           <CardNode
             card={entity.entity}
             cardsById={cardsById}
             aliasRefs={aliasesByTargetId[entity.entity.id]}
+            lodLevel={lodLevel}
+            selected={selected}
+            highlighted={highlighted}
+            dimmed={dimmed}
             isExpanded={isExpanded}
             onToggleExpand={handleToggle}
             editingField={cardEditingField}
@@ -119,21 +146,39 @@ function EntityNodeImpl({
       );
     case "task":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
-          <TaskNode task={entity.entity} style={innerStyle} />
+        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+          <TaskNode
+            task={entity.entity}
+            style={innerStyle}
+            lodLevel={lodLevel}
+            selected={selected}
+            highlighted={highlighted}
+            dimmed={dimmed}
+          />
         </div>
       );
     case "question":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
-          <QuestionNode question={entity.entity} style={innerStyle} />
+        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
+          <QuestionNode
+            question={entity.entity}
+            style={innerStyle}
+            lodLevel={lodLevel}
+            selected={selected}
+            highlighted={highlighted}
+            dimmed={dimmed}
+          />
         </div>
       );
     case "note":
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
           <NoteNode
             note={entity.entity}
+            lodLevel={lodLevel}
+            selected={selected}
+            highlighted={highlighted}
+            dimmed={dimmed}
             editingField={noteEditingField}
             onStartEdit={onStartEdit}
             onCommitEdit={onCommitEdit}
@@ -154,12 +199,16 @@ function EntityNodeImpl({
     case "alias": {
       const target = cardsById[entity.entity.cardId] ?? null;
       return (
-        <div style={wrapperStyle} onMouseDown={handleMouseDown}>
+        <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
           <AliasNode
             alias={entity.entity}
             targetCard={target}
             cardsById={cardsById}
             aliasRefs={target ? aliasesByTargetId[target.id] : []}
+            lodLevel={lodLevel}
+            selected={selected}
+            highlighted={highlighted}
+            dimmed={dimmed}
             isExpanded={isExpanded}
             onToggleExpand={handleToggle}
             style={innerStyle}
@@ -186,7 +235,12 @@ export const EntityNode = memo(EntityNodeImpl, (prev, next) => {
   if (prev.allKinds !== next.allKinds) return false;
   if (prev.cardsById !== next.cardsById) return false;
   if (prev.aliasesByTargetId !== next.aliasesByTargetId) return false;
+  if (prev.lodLevel !== next.lodLevel) return false;
+  if (prev.selected !== next.selected) return false;
+  if (prev.highlighted !== next.highlighted) return false;
+  if (prev.dimmed !== next.dimmed) return false;
   if (prev.onDragStart !== next.onDragStart) return false;
+  if (prev.onSelect !== next.onSelect) return false;
   if (prev.isExpanded !== next.isExpanded) return false;
   if (prev.onToggleExpand !== next.onToggleExpand) return false;
   if (prev.editing !== next.editing) return false;

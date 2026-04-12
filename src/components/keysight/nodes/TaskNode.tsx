@@ -1,9 +1,14 @@
 import type { CSSProperties } from "react";
 import type { TaskEntity } from "@/bindings";
+import type { LodLevel } from "@/components/keysight/types";
 
 interface TaskNodeProps {
   task: TaskEntity;
   style: CSSProperties;
+  lodLevel?: LodLevel;
+  selected?: boolean;
+  highlighted?: boolean;
+  dimmed?: boolean;
 }
 
 /** 任务状态 badge 样式映射 */
@@ -18,13 +23,37 @@ const STATUS_STYLES: Record<string, string> = {
  * 任务节点 — 卡片变体 + status badge + area/project 标签。
  * 宽度 320px，和 CardNode 同族但带状态标记。
  */
-export function TaskNode({ task, style }: TaskNodeProps) {
+export function TaskNode({
+  task,
+  style,
+  lodLevel = 0,
+  selected = false,
+  highlighted = false,
+  dimmed = false,
+}: TaskNodeProps) {
   const badgeClass = STATUS_STYLES[task.status] ?? STATUS_STYLES.next;
+  const ring = selected
+    ? "0 0 0 2px rgba(59, 130, 246, 0.8)"
+    : highlighted
+      ? "0 0 0 2px rgba(16, 185, 129, 0.7)"
+      : undefined;
+  const opacity = dimmed ? 0.35 : 1;
+
+  if (lodLevel === 2) {
+    return (
+      <div
+        data-entity-id={task.id}
+        className="select-none rounded-md border border-emerald-200 bg-emerald-200/70"
+        style={{ ...style, width: 320, height: 18, opacity: dimmed ? 0.2 : 0.7, boxShadow: ring }}
+      />
+    );
+  }
+
   return (
     <div
       data-entity-id={task.id}
       className="select-none rounded-xl border border-border/50 bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04)]"
-      style={{ ...style, width: 320 }}
+      style={{ ...style, width: 320, opacity, boxShadow: ring }}
     >
       <div className="flex items-center gap-2 px-4 pt-3 pb-1">
         <span className="flex h-5 w-5 items-center justify-center rounded bg-gradient-to-br from-emerald-400 to-green-600 text-[10px] font-bold text-white">
@@ -35,12 +64,12 @@ export function TaskNode({ task, style }: TaskNodeProps) {
           {task.status}
         </span>
       </div>
-      {task.content && (
+      {lodLevel === 0 && task.content && (
         <p className="px-4 pb-2 text-xs leading-relaxed text-muted-foreground">
           {task.content.length > 100 ? task.content.slice(0, 100) + "..." : task.content}
         </p>
       )}
-      {(task.area || task.project) && (
+      {lodLevel === 0 && (task.area || task.project) && (
         <div className="flex gap-1 px-4 pb-3">
           {task.area && (
             <span className="rounded-full bg-gray-100 px-2 py-0.5 text-[10px] font-medium text-gray-600 dark:bg-gray-800 dark:text-gray-300">

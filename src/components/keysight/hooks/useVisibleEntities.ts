@@ -2,6 +2,7 @@ import { useMemo } from "react";
 import type { ViewportState } from "@/components/keysight/useViewport";
 import type { EntityWithPosition } from "@/components/keysight/types";
 import { ENTITY_DIMENSIONS } from "@/components/keysight/types";
+import { Quadtree } from "@/components/keysight/lib/quadtree";
 
 /** 视口裁剪 buffer（世界坐标像素），避免滚动时边缘闪烁 */
 const BUFFER = 300;
@@ -27,32 +28,35 @@ export function useVisibleEntities(
   viewport: ViewportState,
   containerSize: { width: number; height: number },
   dimensions: Record<string, { width: number; height: number }> = {},
+  forceVisibleIds: Iterable<string> = [],
 ): EntityWithPosition[] {
+  const quadtree = useMemo(() => {
+    const entries = entities.map((entity) => {
+      const dim = dimensions[entity.id] ?? ENTITY_DIMENSIONS[entity.kind];
+      return {
+        id: entity.id,
+        x: entity.position.x,
+        y: entity.position.y,
+        w: dim.width,
+        h: dim.height,
+      };
+    });
+    return Quadtree.fromEntries(entries);
+  }, [entities, dimensions]);
+
   return useMemo(() => {
     const { zoom, panX, panY } = viewport;
     const { width, height } = containerSize;
+    if (width === 0 || height === 0) return entities;
 
     // 世界坐标下的视口边界（含 buffer）
     const viewLeft = -panX / zoom - BUFFER;
     const viewTop = -panY / zoom - BUFFER;
     const viewRight = (-panX + width) / zoom + BUFFER;
     const viewBottom = (-panY + height) / zoom + BUFFER;
+    const forced = new Set(forceVisibleIds);
+    const visible = new Set(quadtree.queryRect(viewLeft, viewTop, viewRight, viewBottom));
 
-    return entities.filter((e) => {
-      // 优先用调用方提供的真实尺寸，回退到 kind 的 ENTITY_DIMENSIONS placeholder
-      const dim = dimensions[e.id] ?? ENTITY_DIMENSIONS[e.kind];
-      const ex = e.position.x;
-      const ey = e.position.y;
-      const ew = dim.width;
-      const eh = dim.height;
-
-      // 矩形相交检测：两个矩形不相交的逆命题
-      return !(
-        ex + ew < viewLeft ||
-        ex > viewRight ||
-        ey + eh < viewTop ||
-        ey > viewBottom
-      );
-    });
-  }, [entities, viewport, containerSize, dimensions]);
+    return entities.filter((entity) => forced.has(entity.id) || visible.has(entity.id));
+  }, [containerSize, entities, forceVisibleIds, quadtree, viewport]);
 }

@@ -1,5 +1,6 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type { AtomicCard } from "@/bindings";
+import type { LodLevel } from "@/components/keysight/types";
 import { RenderedMarkdown } from "./RenderedMarkdown";
 
 /** Card 行内编辑可选字段 */
@@ -14,6 +15,10 @@ interface CardNodeProps {
   style: CSSProperties;
   /** 外观变体：normal card vs alias ghost */
   variant?: "card" | "alias";
+  lodLevel?: LodLevel;
+  selected?: boolean;
+  highlighted?: boolean;
+  dimmed?: boolean;
   /** 是否展开 — 折叠时只显示 title + understanding；展开后显示 content + 关联列表 */
   isExpanded?: boolean;
   /** 点击 toggle 箭头时的回调 */
@@ -90,6 +95,10 @@ export const CardNode = memo(function CardNode({
   aliasRefs = [],
   style,
   variant = "card",
+  lodLevel = 0,
+  selected = false,
+  highlighted = false,
+  dimmed = false,
   isExpanded = false,
   onToggleExpand,
   editingField = null,
@@ -100,6 +109,12 @@ export const CardNode = memo(function CardNode({
   const isAlias = variant === "alias";
   const isEditingTitle = editingField === "card-title";
   const isEditingUnderstanding = editingField === "card-understanding";
+  const emphasisRing = selected
+    ? "0 0 0 2px rgba(59, 130, 246, 0.9), 0 10px 28px rgba(59, 130, 246, 0.15)"
+    : highlighted
+      ? "0 0 0 2px rgba(29, 158, 117, 0.85), 0 8px 24px rgba(29, 158, 117, 0.12)"
+      : "0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.04)";
+  const opacity = dimmed ? 0.35 : 1;
 
   const linkedCards = (card.linkTo ?? [])
     .map((id) => cardsById[id])
@@ -107,6 +122,83 @@ export const CardNode = memo(function CardNode({
   const relatedCards = (card.related ?? [])
     .map((id) => cardsById[id])
     .filter((c): c is AtomicCard => c != null);
+
+  if (lodLevel === 2) {
+    return (
+      <div
+        data-entity-id={card.id}
+        style={{
+          ...style,
+          width: 520,
+          height: 22,
+          borderRadius: 4,
+          border: isAlias ? "1px dashed rgba(100, 116, 139, 0.7)" : "1px solid rgba(29, 158, 117, 0.22)",
+          background: isAlias ? "rgba(148, 163, 184, 0.24)" : "rgba(29, 158, 117, 0.2)",
+          boxShadow: emphasisRing,
+          opacity: dimmed ? 0.2 : 0.75,
+          userSelect: "none",
+          cursor: "grab",
+        }}
+      />
+    );
+  }
+
+  if (lodLevel === 1) {
+    return (
+      <div
+        data-entity-id={card.id}
+        style={{
+          ...style,
+          width: 520,
+          padding: "4px 10px",
+          borderRadius: 7,
+          border: isAlias ? "1px dashed rgba(100, 116, 139, 0.45)" : "1px solid rgba(0, 0, 0, 0.12)",
+          background: "#ffffff",
+          boxShadow: emphasisRing,
+          opacity,
+          userSelect: "none",
+          cursor: "grab",
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+        }}
+      >
+        <span
+          style={{
+            flexShrink: 0,
+            display: "inline-flex",
+            alignItems: "center",
+            justifyContent: "center",
+            width: 18,
+            height: 18,
+            borderRadius: 4,
+            fontSize: 10,
+            fontWeight: 700,
+            color: "#fff",
+            background: isAlias
+              ? "linear-gradient(to bottom right, #94a3b8, #64748b)"
+              : "linear-gradient(to bottom right, #60a5fa, #4f46e5)",
+          }}
+        >
+          {isAlias ? "A" : "C"}
+        </span>
+        <div
+          style={{
+            minWidth: 0,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            fontSize: 11,
+            lineHeight: 1.3,
+            fontWeight: 600,
+            color: "#2C2C2A",
+          }}
+        >
+          {card.title}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
@@ -119,7 +211,8 @@ export const CardNode = memo(function CardNode({
         background: "#ffffff",
         border: isAlias ? "1.5px dashed rgba(0, 0, 0, 0.12)" : "1.5px solid rgba(0, 0, 0, 0.10)",
         borderRadius: 10,
-        boxShadow: "0 1px 4px rgba(0, 0, 0, 0.06), 0 0 0 0.5px rgba(0, 0, 0, 0.04)",
+        boxShadow: emphasisRing,
+        opacity,
         userSelect: "none",
         cursor: "grab",
       }}
