@@ -5,7 +5,7 @@ import { useViewport } from "@/components/keysight/useViewport";
 
 /** 创建一个真实的 viewport 用于测试 */
 function createTestViewport() {
-  const { result } = renderHook(() => useViewport());
+  const { result } = renderHook(() => useViewport("test-wb"));
   return result.current;
 }
 

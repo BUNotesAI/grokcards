@@ -90,7 +90,7 @@ function mergeEntitiesWithPositions(data: WhiteboardData): EntityWithPosition[] 
  * viewport 由 GraphView 创建，GraphToolbar 和 GraphCanvas 共享。
  */
 export function GraphView() {
-  const viewport = useViewport();
+  const viewport = useViewport(ROOT_WHITEBOARD);
   const containerRef = useRef<HTMLDivElement>(null);
   const containerSize = useContainerSize(containerRef);
   const data = useWhiteboardData(ROOT_WHITEBOARD);

@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 
 const MIN_ZOOM = 0.05;
 const MAX_ZOOM = 3.0;
@@ -15,6 +15,35 @@ function clampZoom(z: number): number {
   return Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, z));
 }
 
+const DEFAULT_VIEWPORT: ViewportState = { zoom: 1, panX: 0, panY: 0 };
+const STORAGE_PREFIX = "keysight:viewport:";
+const SAVE_DEBOUNCE_MS = 500;
+
+/** 从 localStorage 读取白板视口 */
+function loadViewport(whiteboardId: string): ViewportState {
+  try {
+    const raw = localStorage.getItem(STORAGE_PREFIX + whiteboardId);
+    if (raw) {
+      const parsed = JSON.parse(raw);
+      if (
+        typeof parsed.zoom === "number" &&
+        typeof parsed.panX === "number" &&
+        typeof parsed.panY === "number"
+      ) {
+        return { zoom: clampZoom(parsed.zoom), panX: parsed.panX, panY: parsed.panY };
+      }
+    }
+  } catch {
+    // 损坏的 JSON，忽略
+  }
+  return { ...DEFAULT_VIEWPORT };
+}
+
+/** 保存白板视口到 localStorage */
+function saveViewport(whiteboardId: string, state: ViewportState): void {
+  localStorage.setItem(STORAGE_PREFIX + whiteboardId, JSON.stringify(state));
+}
+
 /**
  * 画布视口控制 hook
  *
@@ -23,13 +52,33 @@ function clampZoom(z: number): number {
  * - resetView：重置到初始状态（zoom=1, panX=0, panY=0）
  * - 鼠标拖拽平移
  * - Cmd/Ctrl + 滚轮缩放（以鼠标位置为中心）；普通滚轮平移
+ * - 视口状态按白板 ID 持久化到 localStorage（500ms debounce）
  */
-export function useViewport() {
-  const [state, setState] = useState<ViewportState>({
-    zoom: 1,
-    panX: 0,
-    panY: 0,
-  });
+export function useViewport(whiteboardId: string) {
+  const [state, setState] = useState<ViewportState>(() => loadViewport(whiteboardId));
+
+  // 白板切换时加载对应视口
+  const prevWhiteboardIdRef = useRef(whiteboardId);
+  useEffect(() => {
+    if (prevWhiteboardIdRef.current !== whiteboardId) {
+      // 保存旧白板视口（立即写入，不等 debounce）
+      saveViewport(prevWhiteboardIdRef.current, state);
+      prevWhiteboardIdRef.current = whiteboardId;
+      // 加载新白板视口
+      setState(loadViewport(whiteboardId));
+    }
+  }, [whiteboardId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Debounced 持久化
+  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  useEffect(() => {
+    debounceRef.current = setTimeout(() => {
+      saveViewport(whiteboardId, state);
+    }, SAVE_DEBOUNCE_MS);
+    return () => {
+      if (debounceRef.current) clearTimeout(debounceRef.current);
+    };
+  }, [state, whiteboardId]);
 
   // 拖拽状态用 ref，不触发渲染
   const dragRef = useRef<{
@@ -55,7 +104,7 @@ export function useViewport() {
   }, []);
 
   const resetView = useCallback(() => {
-    setState({ zoom: 1, panX: 0, panY: 0 });
+    setState({ ...DEFAULT_VIEWPORT });
   }, []);
 
   // Pan: 鼠标拖拽

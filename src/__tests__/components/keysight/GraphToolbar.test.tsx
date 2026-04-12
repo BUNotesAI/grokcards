@@ -6,7 +6,7 @@ import { vi } from "vitest";
 
 /** 创建真实 viewport */
 function createTestViewport() {
-  const { result } = renderHook(() => useViewport());
+  const { result } = renderHook(() => useViewport("test-wb"));
   return result.current;
 }
 
