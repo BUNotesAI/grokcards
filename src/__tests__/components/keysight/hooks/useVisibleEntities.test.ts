@@ -85,4 +85,25 @@ describe("useVisibleEntities", () => {
     );
     expect(result.current).toHaveLength(1);
   });
+
+  it("section 用 dimensions map 提供的真实尺寸做裁剪（不被 ENTITY_DIMENSIONS placeholder 误 cull）", () => {
+    // Section 在 (0, 0)，实际宽 2500（覆盖很多成员卡片），高 800
+    // 视口 panX=-1500 → 屏幕看到世界坐标 [1500, 2500]
+    // Section 右边界 = 0 + 2500 = 2500 → 与视口相交，应保留
+    // Bug 行为：useVisibleEntities 用 ENTITY_DIMENSIONS.section.width=400 → 右边界 400 < 1500 → cull
+    const section: EntityWithPosition = {
+      kind: "section",
+      id: "sec_wide",
+      entity: { id: "sec_wide", title: "Wide section", cardIds: [] },
+      position: { x: 0, y: 0 },
+    };
+    const viewport: ViewportState = { zoom: 1, panX: -1500, panY: 0 };
+    const dimensions = {
+      sec_wide: { width: 2500, height: 800 },
+    };
+    const { result } = renderHook(() =>
+      useVisibleEntities([section], viewport, defaultSize, dimensions),
+    );
+    expect(result.current).toHaveLength(1);
+  });
 });

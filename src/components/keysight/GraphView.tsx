@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState, useCallback, useEffect, type MouseEvent as ReactMouseEvent } from "react";
 import { GraphCanvas } from "@/components/keysight/GraphCanvas";
+import { GraphEdges } from "@/components/keysight/GraphEdges";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
 import { useContainerSize } from "@/components/keysight/hooks/useContainerSize";
@@ -7,7 +8,13 @@ import { useWhiteboardData, useWhiteboardList, type WhiteboardData } from "@/com
 import { useVisibleEntities } from "@/components/keysight/hooks/useVisibleEntities";
 import { EntityNode } from "@/components/keysight/nodes/EntityNode";
 import { WhiteboardNode } from "@/components/keysight/nodes/WhiteboardNode";
-import type { EntityKind, EntityWithPosition } from "@/components/keysight/types";
+import { buildEdges } from "@/components/keysight/lib/buildEdges";
+import { buildEntityDimensions } from "@/components/keysight/lib/buildEntityDimensions";
+import { perfLog } from "@/lib/perf";
+import type {
+  EntityKind,
+  EntityWithPosition,
+} from "@/components/keysight/types";
 import type { Position } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { commands } from "@/bindings";
@@ -119,6 +126,22 @@ export function GraphView() {
   const data = useWhiteboardData(currentWhiteboardId);
   const queryClient = useQueryClient();
 
+  // 启动性能：mount + isLoading 转为 false 的时刻
+  const mountedRef = useRef(false);
+  if (!mountedRef.current) {
+    mountedRef.current = true;
+    perfLog("GraphView mount (first render)");
+  }
+  const wasLoadingRef = useRef(true);
+  useEffect(() => {
+    if (wasLoadingRef.current && !data.isLoading) {
+      wasLoadingRef.current = false;
+      perfLog(
+        `GraphView data ready: cards=${data.cards.length} notes=${data.notes.length} sections=${data.sections.length} aliases=${data.aliases.length} tasks=${data.tasks.length} questions=${data.questions.length} positions=${Object.keys(data.positions).length}`,
+      );
+    }
+  }, [data.isLoading, data.cards.length, data.notes.length, data.sections.length, data.aliases.length, data.tasks.length, data.questions.length, data.positions]);
+
   // 搜索状态
   const [searchQuery, setSearchQuery] = useState("");
 
@@ -152,6 +175,59 @@ export function GraphView() {
     setExpandedId((prev) => (prev === entityId ? null : entityId));
   }, []);
 
+  // 行内编辑状态：同时只能编辑一个字段
+  // field 区分：card-title / card-understanding / note-title / note-body
+  type EditingField =
+    | "card-title"
+    | "card-understanding"
+    | "note-title"
+    | "note-body";
+  const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
+
+  const handleStartEdit = useCallback((id: string, field: EditingField) => {
+    if (lastDidDragRef.current) {
+      lastDidDragRef.current = false;
+      return;
+    }
+    setEditing({ id, field });
+  }, []);
+
+  const handleCancelEdit = useCallback(() => {
+    setEditing(null);
+  }, []);
+
+  // 提交编辑 — 调用对应 Rust command 写回 + invalidate 查询
+  const handleCommitEdit = useCallback(
+    async (id: string, field: EditingField, value: string) => {
+      try {
+        switch (field) {
+          case "card-title":
+            await unwrapCommand(commands.cardEditTitle(id, value));
+            break;
+          case "card-understanding":
+            await unwrapCommand(commands.cardUpdateUnderstanding(id, value));
+            break;
+          case "note-title":
+            await unwrapCommand(commands.noteUpdate(id, value, null, null));
+            break;
+          case "note-body":
+            await unwrapCommand(commands.noteUpdate(id, null, value, null));
+            break;
+        }
+        if (field === "card-title" || field === "card-understanding") {
+          queryClient.invalidateQueries({ queryKey: ["cards"] });
+        } else {
+          queryClient.invalidateQueries({ queryKey: ["notes", currentWhiteboardId] });
+        }
+      } catch (e) {
+        console.error(`提交 ${field} 失败:`, e);
+      } finally {
+        setEditing(null);
+      }
+    },
+    [queryClient, currentWhiteboardId],
+  );
+
   // 有效位置 = 服务器位置 + 本地覆盖（拖拽中的实时位置）
   const effectivePositions = useMemo(
     () => ({ ...data.positions, ...localPositions }),
@@ -162,6 +238,26 @@ export function GraphView() {
   const allEntities = useMemo(
     () => mergeEntitiesWithPositions(data, effectivePositions),
     [data, effectivePositions],
+  );
+
+  // 所有实体 id → kind 映射（SectionNode 按 kind 查询真实尺寸算 bounds 用）
+  const allKinds = useMemo(() => {
+    const kinds: Record<string, EntityKind> = {};
+    for (const c of data.cards) kinds[c.id] = "card";
+    for (const n of data.notes) kinds[n.id] = "note";
+    for (const t of data.tasks) kinds[t.id] = "task";
+    for (const q of data.questions) kinds[q.id] = "question";
+    for (const s of data.sections) kinds[s.id] = "section";
+    for (const a of data.aliases) kinds[a.aliasId] = "alias";
+    return kinds;
+  }, [data.cards, data.notes, data.tasks, data.questions, data.sections, data.aliases]);
+
+  // 实体 id → 渲染尺寸映射（GraphEdges 的 clipToRect + useVisibleEntities 视口裁剪用）
+  // section 用 computeSectionBounds 算真实尺寸（SectionNode.PADDING=40 对齐），
+  // 否则视口偏离 section 左上角后，section 的 placeholder 400×300 会被错误 cull
+  const allDimensions = useMemo(
+    () => buildEntityDimensions(allKinds, data.sections, data.positions, 40),
+    [allKinds, data.sections, data.positions],
   );
 
   // 子白板列表（仅根白板时加载）
@@ -213,8 +309,24 @@ export function GraphView() {
     });
   }, [whiteboards, data.positions, currentWhiteboardId, allEntities, queryClient]);
 
-  // 视口裁剪
-  const visibleEntities = useVisibleEntities(allEntities, viewport.state, containerSize);
+  // 视口裁剪 — 传入 allDimensions 让 section 用真实 bounds 而非 placeholder
+  const visibleEntities = useVisibleEntities(
+    allEntities,
+    viewport.state,
+    containerSize,
+    allDimensions,
+  );
+
+  // 启动性能：第一次有 visible entities
+  const firstVisiblePaintRef = useRef(false);
+  useEffect(() => {
+    if (!firstVisiblePaintRef.current && visibleEntities.length > 0) {
+      firstVisiblePaintRef.current = true;
+      perfLog(
+        `GraphView first visible paint: visible=${visibleEntities.length}/${allEntities.length}`,
+      );
+    }
+  }, [visibleEntities.length, allEntities.length]);
 
   // 用 ref 跟随 effectivePositions，让 handleDragStart 保持 stable reference
   // 避免 onDragStart prop 每次渲染都变导致 EntityNode 全量 re-render
@@ -382,17 +494,12 @@ export function GraphView() {
   // 所有位置映射（SectionNode bounds 计算用）
   const allPositions = data.positions;
 
-  // 所有实体 id → kind 映射（SectionNode 按 kind 查询真实尺寸算 bounds 用）
-  const allKinds = useMemo(() => {
-    const kinds: Record<string, EntityKind> = {};
-    for (const c of data.cards) kinds[c.id] = "card";
-    for (const n of data.notes) kinds[n.id] = "note";
-    for (const t of data.tasks) kinds[t.id] = "task";
-    for (const q of data.questions) kinds[q.id] = "question";
-    for (const s of data.sections) kinds[s.id] = "section";
-    for (const a of data.aliases) kinds[a.aliasId] = "alias";
-    return kinds;
-  }, [data.cards, data.notes, data.tasks, data.questions, data.sections, data.aliases]);
+  // 当前白板的可渲染 edge 列表（从 cards/notes/aliases 数据派生）
+  // 仅包含 from 和 to 都在当前白板内的 edge，避免渲染断头连线
+  const renderEdges = useMemo(() => {
+    const entitySet = new Set<string>(Object.keys(allKinds));
+    return buildEdges(data.cards, data.notes, data.aliases, entitySet);
+  }, [data.cards, data.notes, data.aliases, allKinds]);
 
   // 实体计数
   const entityCounts: EntityCounts = useMemo(
@@ -466,6 +573,12 @@ export function GraphView() {
       )}
       <div className="relative flex-1 overflow-hidden">
         <GraphCanvas viewport={viewport}>
+          {/* edges 渲染在 entity 节点之下作为背景层 */}
+          <GraphEdges
+            edges={renderEdges}
+            positions={allPositions}
+            dimensions={allDimensions}
+          />
           {filteredEntities.map((e) => (
             <EntityNode
               key={e.id}
@@ -477,6 +590,10 @@ export function GraphView() {
               onDragStart={handleDragStart}
               isExpanded={expandedId === e.id}
               onToggleExpand={handleToggleExpand}
+              editing={editing && editing.id === e.id ? editing.field : null}
+              onStartEdit={handleStartEdit}
+              onCommitEdit={handleCommitEdit}
+              onCancelEdit={handleCancelEdit}
             />
           ))}
           {whiteboardEntities.map((wb) => {

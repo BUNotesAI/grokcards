@@ -2,6 +2,9 @@ import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "re
 import type { AtomicCard } from "@/bindings";
 import { RenderedMarkdown } from "./RenderedMarkdown";
 
+/** Card 行内编辑可选字段 */
+type CardEditField = "card-title" | "card-understanding";
+
 interface CardNodeProps {
   card: AtomicCard;
   /** cardId → AtomicCard 全局查找表，用于解析 related/linkTo 显示标题 */
@@ -15,6 +18,14 @@ interface CardNodeProps {
   isExpanded?: boolean;
   /** 点击 toggle 箭头时的回调 */
   onToggleExpand?: (e: ReactMouseEvent) => void;
+  /** 当前正在编辑哪个字段；null 表示未编辑 */
+  editingField?: CardEditField | null;
+  /** 双击进入编辑模式回调 */
+  onStartEdit?: (id: string, field: CardEditField) => void;
+  /** 提交编辑回调 */
+  onCommitEdit?: (id: string, field: CardEditField, value: string) => void;
+  /** 取消编辑回调（Escape） */
+  onCancelEdit?: () => void;
 }
 
 /** 区域标题（LINKED / RELATED / ALIASES / SEE ALSO） */
@@ -81,8 +92,14 @@ export const CardNode = memo(function CardNode({
   variant = "card",
   isExpanded = false,
   onToggleExpand,
+  editingField = null,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
 }: CardNodeProps) {
   const isAlias = variant === "alias";
+  const isEditingTitle = editingField === "card-title";
+  const isEditingUnderstanding = editingField === "card-understanding";
 
   const linkedCards = (card.linkTo ?? [])
     .map((id) => cardsById[id])
@@ -175,13 +192,50 @@ export const CardNode = memo(function CardNode({
         >
           {isAlias ? "A" : "C"}
         </span>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <RenderedMarkdown markdown={card.title} variant="title" />
+        <div
+          style={{ flex: 1, minWidth: 0 }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onStartEdit?.(card.id, "card-title");
+          }}
+        >
+          {isEditingTitle ? (
+            <input
+              autoFocus
+              defaultValue={card.title}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={(e) => onCommitEdit?.(card.id, "card-title", e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancelEdit?.();
+                }
+              }}
+              style={{
+                width: "100%",
+                fontSize: 14,
+                fontWeight: 600,
+                color: "#2C2C2A",
+                border: "1.5px solid #1D9E75",
+                borderRadius: 4,
+                padding: "2px 6px",
+                outline: "none",
+                background: "#fff",
+                fontFamily: "inherit",
+              }}
+            />
+          ) : (
+            <RenderedMarkdown markdown={card.title} variant="title" />
+          )}
         </div>
       </div>
 
-      {/* Understanding 字段 — 用户的洞察，琥珀色/绿色强调 */}
-      {card.understanding && (
+      {/* Understanding 字段 — 双击进入编辑模式；空内容也允许编辑（双击占位区） */}
+      {(card.understanding || isEditingUnderstanding) && (
         <div
           style={{
             margin: "10px 14px 0 14px",
@@ -190,8 +244,58 @@ export const CardNode = memo(function CardNode({
             background: "#F9F8F5",
             borderLeft: "3px solid #1D9E75",
           }}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onStartEdit?.(card.id, "card-understanding");
+          }}
         >
-          <RenderedMarkdown markdown={card.understanding} variant="understanding" />
+          {isEditingUnderstanding ? (
+            <textarea
+              ref={(el) => {
+                if (!el) return;
+                el.style.height = "auto";
+                el.style.height = `${el.scrollHeight}px`;
+                el.focus();
+                el.setSelectionRange(el.value.length, el.value.length);
+              }}
+              defaultValue={card.understanding}
+              onInput={(e) => {
+                const el = e.currentTarget;
+                el.style.height = "auto";
+                el.style.height = `${el.scrollHeight}px`;
+              }}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={(e) =>
+                onCommitEdit?.(card.id, "card-understanding", e.currentTarget.value)
+              }
+              onKeyDown={(e) => {
+                if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancelEdit?.();
+                } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                }
+              }}
+              style={{
+                width: "100%",
+                fontSize: 13.5,
+                color: "#5F5E5A",
+                lineHeight: 1.7,
+                border: "1.5px solid #1D9E75",
+                borderRadius: 4,
+                padding: "6px 8px",
+                outline: "none",
+                background: "#fff",
+                fontFamily: "inherit",
+                resize: "none",
+                overflow: "hidden",
+              }}
+            />
+          ) : (
+            <RenderedMarkdown markdown={card.understanding} variant="understanding" />
+          )}
         </div>
       )}
 

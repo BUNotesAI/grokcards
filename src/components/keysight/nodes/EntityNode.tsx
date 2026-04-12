@@ -8,6 +8,14 @@ import { NoteNode } from "./NoteNode";
 import { SectionNode } from "./SectionNode";
 import { AliasNode } from "./AliasNode";
 
+/** 当前实体正在编辑的字段；null 表示该实体未在编辑 */
+export type EditingField =
+  | "card-title"
+  | "card-understanding"
+  | "note-title"
+  | "note-body"
+  | null;
+
 interface EntityNodeProps {
   entity: EntityWithPosition;
   allPositions: Record<string, Position>;
@@ -21,6 +29,18 @@ interface EntityNodeProps {
   isExpanded?: boolean;
   /** 切换展开状态的回调（click 且未发生拖拽时触发） */
   onToggleExpand?: (entityId: string) => void;
+  /** 当前实体正在编辑的字段；null 表示未编辑 */
+  editing?: EditingField;
+  /** 双击进入编辑模式回调 */
+  onStartEdit?: (id: string, field: NonNullable<EditingField>) => void;
+  /** 提交编辑回调（onBlur / Enter / Cmd+Enter 时触发） */
+  onCommitEdit?: (
+    id: string,
+    field: NonNullable<EditingField>,
+    value: string,
+  ) => void;
+  /** 取消编辑回调（Escape） */
+  onCancelEdit?: () => void;
 }
 
 /**
@@ -38,6 +58,10 @@ function EntityNodeImpl({
   onDragStart,
   isExpanded = false,
   onToggleExpand,
+  editing = null,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
 }: EntityNodeProps) {
   // 使用 transform 而非 left/top — GPU 合成，避免 layout reflow，拖拽更丝滑
   const wrapperStyle: CSSProperties = {
@@ -69,6 +93,12 @@ function EntityNodeImpl({
   // 内部节点使用空 style — wrapper 负责定位
   const innerStyle: CSSProperties = {};
 
+  // Card / Note 行内编辑 — 仅当 editing.id === entity.id 时才传 field
+  const cardEditingField =
+    editing === "card-title" || editing === "card-understanding" ? editing : null;
+  const noteEditingField =
+    editing === "note-title" || editing === "note-body" ? editing : null;
+
   switch (entity.kind) {
     case "card":
       return (
@@ -79,6 +109,10 @@ function EntityNodeImpl({
             aliasRefs={aliasesByTargetId[entity.entity.id]}
             isExpanded={isExpanded}
             onToggleExpand={handleToggle}
+            editingField={cardEditingField}
+            onStartEdit={onStartEdit}
+            onCommitEdit={onCommitEdit}
+            onCancelEdit={onCancelEdit}
             style={innerStyle}
           />
         </div>
@@ -98,7 +132,14 @@ function EntityNodeImpl({
     case "note":
       return (
         <div style={wrapperStyle} onMouseDown={handleMouseDown}>
-          <NoteNode note={entity.entity} style={innerStyle} />
+          <NoteNode
+            note={entity.entity}
+            editingField={noteEditingField}
+            onStartEdit={onStartEdit}
+            onCommitEdit={onCommitEdit}
+            onCancelEdit={onCancelEdit}
+            style={innerStyle}
+          />
         </div>
       );
     case "section":
@@ -148,5 +189,9 @@ export const EntityNode = memo(EntityNodeImpl, (prev, next) => {
   if (prev.onDragStart !== next.onDragStart) return false;
   if (prev.isExpanded !== next.isExpanded) return false;
   if (prev.onToggleExpand !== next.onToggleExpand) return false;
+  if (prev.editing !== next.editing) return false;
+  if (prev.onStartEdit !== next.onStartEdit) return false;
+  if (prev.onCommitEdit !== next.onCommitEdit) return false;
+  if (prev.onCancelEdit !== next.onCancelEdit) return false;
   return true;
 });

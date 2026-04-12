@@ -1,6 +1,8 @@
-import { memo, type CSSProperties } from "react";
+import { memo, useMemo, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import remarkBreaks from "remark-breaks";
+import { normalizeBoldMarkdown } from "@/components/keysight/lib/normalizeBoldMarkdown";
 
 interface Props {
   markdown: string;
@@ -19,7 +21,9 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
   markdown,
   variant = "body",
 }: Props) {
-  if (!markdown) return null;
+  // 预处理 obsidian 风格的宽松 strong 标记（**X **）让 react-markdown 也能识别
+  const normalized = useMemo(() => normalizeBoldMarkdown(markdown ?? ""), [markdown]);
+  if (!normalized) return null;
 
   // 每个 variant 的基础容器样式
   const containerStyle: CSSProperties = (() => {
@@ -36,7 +40,7 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
   return (
     <div className="ks-rendered" style={containerStyle}>
       <ReactMarkdown
-        remarkPlugins={[remarkGfm]}
+        remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
           p({ children }) {
             return <p style={{ margin: variant === "title" ? 0 : "2px 0" }}>{children}</p>;
@@ -142,7 +146,7 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
           },
         }}
       >
-        {markdown}
+        {normalized}
       </ReactMarkdown>
     </div>
   );
