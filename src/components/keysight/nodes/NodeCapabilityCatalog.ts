@@ -227,69 +227,77 @@ export const NODE_CAPABILITIES: readonly NodeCapability[] = [
 ];
 
 // ============================================================================
-// Per-kind handlers — 类型系统强制每个 NodeKind 提供完整 capability handlers 子集
+// Handler map — 单一声明源,per-kind handlers 从此 Pick
+// ============================================================================
+
+/**
+ * 所有 capability 的 handler 签名全集,按 `CapabilityKind` 索引。
+ *
+ * 单一声明源:per-NodeKind handlers 用 `Pick<NodeCapabilityHandlerMap, ...>` 裁剪,
+ * 保证任何节点类型的 handlers 字段签名都来自同一源头。
+ * 参数无关于 NodeKind —— node-specific 信息(entity id / kind)在 closure 里捕获。
+ */
+export type NodeCapabilityHandlerMap = {
+  copy_uuid_title: () => void;
+  draw_connection: () => void;
+  related: () => void;
+  create_alias: () => void;
+  jump_to_source_card: () => void;
+  edit_title: () => void;
+  move_to_section: (sectionId: string) => void;
+  remove_from_group: () => void;
+  set_color: (color: string) => void;
+  delete: () => void;
+};
+
+// ============================================================================
+// Per-kind handlers — Pick 子集,字段与 NODE_CAPABILITIES.applies_to 对齐
 // ============================================================================
 //
-// 这些 interface 的字段必须**精确匹配** NODE_CAPABILITIES 里 applies_to 包含该 NodeKind
-// 的 capability 集合。两处声明手动同步,漂移风险由 sub-stage 3 的 Code Review 6 项检查
-// 的"测试覆盖"项兜底(组件测试会触发每个 handler)。
+// 这些类型的 key 集合必须**精确匹配** NODE_CAPABILITIES 里 applies_to 包含该 NodeKind
+// 的 capability 集合。两处声明手动同步,漂移风险由组件测试兜底(测试触发每个 handler)。
+// 渲染时把 menu.handlers 当作 `Partial<NodeCapabilityHandlerMap>` 处理,这是合法的
+// 结构子类型关系(Pick 子集 → Partial 全集)。
 
 /** Card 节点菜单 handlers (6 个) */
-export interface CardNodeHandlers {
-  readonly copy_uuid_title: () => void;
-  readonly draw_connection: () => void;
-  readonly related: () => void;
-  readonly create_alias: () => void;
-  readonly move_to_section: (sectionId: string) => void;
-  readonly remove_from_group: () => void;
-}
+export type CardNodeHandlers = Pick<
+  NodeCapabilityHandlerMap,
+  "copy_uuid_title" | "draw_connection" | "related" | "create_alias" | "move_to_section" | "remove_from_group"
+>;
 
 /** Alias 节点菜单 handlers (6 个) */
-export interface AliasNodeHandlers {
-  readonly copy_uuid_title: () => void;
-  readonly draw_connection: () => void;
-  readonly jump_to_source_card: () => void;
-  readonly move_to_section: (sectionId: string) => void;
-  readonly remove_from_group: () => void;
-  readonly delete: () => void;
-}
+export type AliasNodeHandlers = Pick<
+  NodeCapabilityHandlerMap,
+  "copy_uuid_title" | "draw_connection" | "jump_to_source_card" | "move_to_section" | "remove_from_group" | "delete"
+>;
 
 /** Note 节点菜单 handlers (7 个) */
-export interface NoteNodeHandlers {
-  readonly copy_uuid_title: () => void;
-  readonly draw_connection: () => void;
-  readonly edit_title: () => void;
-  readonly move_to_section: (sectionId: string) => void;
-  readonly remove_from_group: () => void;
-  readonly set_color: (color: string) => void;
-  readonly delete: () => void;
-}
+export type NoteNodeHandlers = Pick<
+  NodeCapabilityHandlerMap,
+  "copy_uuid_title" | "draw_connection" | "edit_title" | "move_to_section" | "remove_from_group" | "set_color" | "delete"
+>;
 
 /** Question 节点菜单 handlers (6 个) */
-export interface QuestionNodeHandlers {
-  readonly copy_uuid_title: () => void;
-  readonly draw_connection: () => void;
-  readonly edit_title: () => void;
-  readonly move_to_section: (sectionId: string) => void;
-  readonly remove_from_group: () => void;
-  readonly delete: () => void;
-}
+export type QuestionNodeHandlers = Pick<
+  NodeCapabilityHandlerMap,
+  "copy_uuid_title" | "draw_connection" | "edit_title" | "move_to_section" | "remove_from_group" | "delete"
+>;
 
 /** Section 节点菜单 handlers (3 个) */
-export interface SectionNodeHandlers {
-  readonly copy_uuid_title: () => void;
-  readonly set_color: (color: string) => void;
-  readonly delete: () => void;
-}
+export type SectionNodeHandlers = Pick<
+  NodeCapabilityHandlerMap,
+  "copy_uuid_title" | "set_color" | "delete"
+>;
 
 /**
  * 节点菜单运行时配置判别联合。
  *
- * sub-stage 3 用这个替换 NodeContextMenu.tsx 里的 NodeMenuConfig props。
- * NodeContextMenu 的渲染逻辑:
- *   `NODE_CAPABILITIES.filter(cap => cap.applies_to.has(config.kind))`
- *     + visibility 判定 + order 排序 + ui_kind 分派
- *     → 每项从 `config.handlers` 里按 capability.kind 取 handler
+ * NodeContextMenu 的渲染逻辑(单一路径,无 per-kind 分支):
+ *   NODE_CAPABILITIES
+ *     .filter(cap => cap.applies_to.has(menu.kind))
+ *     .filter(cap => isVisible(cap, ctx))
+ *     .sort((a,b) => a.order - b.order)
+ *     .map(cap => renderByUiKind(cap, menu.handlers))
  */
 export type NodeMenuConfig =
   | { readonly kind: "card"; readonly handlers: CardNodeHandlers }
@@ -297,3 +305,16 @@ export type NodeMenuConfig =
   | { readonly kind: "note"; readonly handlers: NoteNodeHandlers }
   | { readonly kind: "question"; readonly handlers: QuestionNodeHandlers }
   | { readonly kind: "section"; readonly handlers: SectionNodeHandlers };
+
+// ============================================================================
+// Backward compat 类型别名 —— 旧 NodeContextMenu.tsx 的 *MenuConfig 接口已被
+// 新的 handlers 嵌套形态替换,但为了让 CardNode / AliasNode / NoteNode /
+// QuestionNode / SectionNode / EntityNode 的 contextMenu prop 类型声明和旧 import
+// 继续工作,这里 re-export 为 Extract<NodeMenuConfig, {kind}> 的别名。
+// ============================================================================
+
+export type CardMenuConfig = Extract<NodeMenuConfig, { readonly kind: "card" }>;
+export type AliasMenuConfig = Extract<NodeMenuConfig, { readonly kind: "alias" }>;
+export type NoteMenuConfig = Extract<NodeMenuConfig, { readonly kind: "note" }>;
+export type QuestionMenuConfig = Extract<NodeMenuConfig, { readonly kind: "question" }>;
+export type SectionMenuConfig = Extract<NodeMenuConfig, { readonly kind: "section" }>;

@@ -1,4 +1,4 @@
-import type { MouseEventHandler } from "react";
+import { Fragment, useMemo, type MouseEventHandler } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -9,6 +9,24 @@ import {
   DropdownMenuSubTrigger,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import {
+  NODE_CAPABILITIES,
+  type NodeCapability,
+  type NodeCapabilityHandlerMap,
+  type NodeMenuConfig,
+} from "./NodeCapabilityCatalog";
+
+// Re-export 类型别名 — 保持 CardNode / AliasNode / NoteNode / QuestionNode /
+// SectionNode / EntityNode 的旧 import 路径继续工作,无需调整下游文件。
+export type {
+  NodeMenuConfig,
+  CardMenuConfig,
+  AliasMenuConfig,
+  NoteMenuConfig,
+  QuestionMenuConfig,
+  SectionMenuConfig,
+  NodeCapabilityHandlerMap,
+} from "./NodeCapabilityCatalog";
 
 /** Note 颜色面板 — 和旧 Obsidian 插件的 7 色便签色板对齐 */
 export const NOTE_COLORS = [
@@ -21,65 +39,7 @@ export const NOTE_COLORS = [
   "#ffc6ff",
 ] as const;
 
-/** Card 节点菜单配置 */
-export interface CardMenuConfig {
-  kind: "card";
-  onCopyTitle: () => void;
-  onDrawConnection: () => void;
-  onRelated: () => void;
-  onCreateAlias: () => void;
-  onMoveToSection: (sectionId: string) => void;
-  onRemoveFromGroup: () => void;
-}
-
-/** Alias 节点菜单配置 */
-export interface AliasMenuConfig {
-  kind: "alias";
-  onJumpToSourceCard: () => void;
-  onDrawConnection: () => void;
-  onMoveToSection: (sectionId: string) => void;
-  onRemoveFromGroup: () => void;
-  onDelete: () => void;
-}
-
-/** Note 节点菜单配置 */
-export interface NoteMenuConfig {
-  kind: "note";
-  onCopyUuidTitle: () => void;
-  onDrawConnection: () => void;
-  onEditTitle: () => void;
-  onMoveToSection: (sectionId: string) => void;
-  onRemoveFromGroup: () => void;
-  onDelete: () => void;
-  onSetColor: (color: string) => void;
-}
-
-/** Question 节点菜单配置 — 与 Note 同结构但无颜色面板 */
-export interface QuestionMenuConfig {
-  kind: "question";
-  onCopyUuidTitle: () => void;
-  onDrawConnection: () => void;
-  onEditTitle: () => void;
-  onMoveToSection: (sectionId: string) => void;
-  onRemoveFromGroup: () => void;
-  onDelete: () => void;
-}
-
-/** Section 节点菜单配置 */
-export interface SectionMenuConfig {
-  kind: "section";
-  onDelete: () => void;
-}
-
-/** 节点菜单判别联合 — 区分 Card / Alias / Note / Question / Section 五类菜单项 */
-export type NodeMenuConfig =
-  | CardMenuConfig
-  | AliasMenuConfig
-  | NoteMenuConfig
-  | QuestionMenuConfig
-  | SectionMenuConfig;
-
-/** 当前白板的 section 精简列表（供 Move to Section 子菜单使用） */
+/** 当前白板的 section 精简列表(供 Move to Section 子菜单使用) */
 export interface SectionListItem {
   id: string;
   title: string;
@@ -88,11 +48,11 @@ export interface SectionListItem {
 interface NodeContextMenuProps {
   menu: NodeMenuConfig;
   sections: SectionListItem[];
-  /** 实体当前所属 section，为 null 时隐藏 "Remove from group" */
+  /** 实体当前所属 section,为 null 时隐藏 "Remove from group" */
   currentSectionId: string | null;
 }
 
-/** 包装 Base UI trigger handler，同时阻止事件冒泡到节点 wrapper。 */
+/** 包装 Base UI trigger handler,同时阻止事件冒泡到节点 wrapper。 */
 function withStopBubble<T extends HTMLElement>(
   handler?: MouseEventHandler<T>,
 ): MouseEventHandler<T> {
@@ -102,65 +62,50 @@ function withStopBubble<T extends HTMLElement>(
   };
 }
 
-/** 共享的 "Move to Section" 子菜单 — 所有变体通用 */
-function MoveToSectionSubmenu({
-  sections,
-  onMoveToSection,
-}: {
-  sections: SectionListItem[];
-  onMoveToSection: (sectionId: string) => void;
-}) {
-  if (sections.length === 0) return null;
-  return (
-    <DropdownMenuSub>
-      <DropdownMenuSubTrigger>Move to Section</DropdownMenuSubTrigger>
-      <DropdownMenuSubContent className="max-h-64 min-w-[160px] overflow-y-auto">
-        {sections.map((s) => (
-          <DropdownMenuItem
-            key={s.id}
-            onClick={() => onMoveToSection(s.id)}
-          >
-            <span className="truncate">{s.title || "(untitled)"}</span>
-          </DropdownMenuItem>
-        ))}
-      </DropdownMenuSubContent>
-    </DropdownMenuSub>
-  );
+/** 把 capability 归入三个渲染组之一,组间插入 DropdownMenuSeparator */
+type CapabilityGroup = "normal" | "custom" | "destructive";
+
+function groupOf(cap: NodeCapability): CapabilityGroup {
+  if (cap.destructive) return "destructive";
+  if (cap.ui_kind === "custom") return "custom";
+  return "normal";
 }
 
-/** Note 专属的 7 色块面板 — 菜单底部横排 */
-function NoteColorRow({ onSetColor }: { onSetColor: (color: string) => void }) {
-  return (
-    <div className="flex items-center gap-1 px-1.5 py-1.5">
-      {NOTE_COLORS.map((color) => (
-        <button
-          key={color}
-          type="button"
-          aria-label={`Set color ${color}`}
-          onClick={() => onSetColor(color)}
-          className="h-5 w-5 rounded-full border border-foreground/15 ring-0 transition-transform hover:scale-110"
-          style={{ background: color }}
-        />
-      ))}
-    </div>
-  );
+/** 判断 capability 是否应当显示(visibility rule 匹配上下文)*/
+function isCapabilityVisible(
+  cap: NodeCapability,
+  ctx: { currentSectionId: string | null; sectionsCount: number },
+): boolean {
+  if (!cap.visible) return true;
+  if (cap.visible === "in_section") return ctx.currentSectionId !== null;
+  if (cap.visible === "sections_not_empty") return ctx.sectionsCount > 0;
+  return true;
 }
 
 /**
  * 节点上下文菜单 — 右上角 ⋯ 按钮 + DropdownMenu。
  *
- * 菜单项按 menu.kind 分派：
- * - card: Copy title / Draw connection / Related / Create alias / Move to Section / Remove from group
- * - alias: Remove from group / Jump to source card / Draw connection / Move to Section / Delete alias
- * - note: Copy UUID+title / Draw connection / Edit title / Move to Section / Remove from group / Delete / 7 色块
- * - section: Delete section
+ * 渲染逻辑:从 `NODE_CAPABILITIES` 按 `applies_to.has(menu.kind)` 过滤,按 `visible`
+ * 规则判定,按 `order` 升序排序,按 `ui_kind` 分派渲染组件(plain / submenu / custom)。
+ * 所有节点类型走**同一渲染路径**,无 per-kind switch 分支。
  */
 export function NodeContextMenu({
   menu,
   sections,
   currentSectionId,
 }: NodeContextMenuProps) {
-  const showRemoveFromGroup = currentSectionId !== null;
+  // 先把 menu.handlers 当作 Partial<HandlerMap> 处理 — 结构子类型关系合法
+  // (per-kind Pick 子集 → Partial 全集),运行时按 cap.kind 查找 handler
+  const handlerMap = menu.handlers as Partial<NodeCapabilityHandlerMap>;
+
+  const applicableCaps = useMemo(() => {
+    const ctx = { currentSectionId, sectionsCount: sections.length };
+    return NODE_CAPABILITIES
+      .filter((cap) => cap.applies_to.has(menu.kind))
+      .filter((cap) => isCapabilityVisible(cap, ctx))
+      .slice()
+      .sort((a, b) => a.order - b.order);
+  }, [menu.kind, currentSectionId, sections.length]);
 
   return (
     <DropdownMenu>
@@ -181,104 +126,105 @@ export function NodeContextMenu({
           );
         }}
       />
-      <DropdownMenuContent
-        align="end"
-        className="min-w-[180px]"
-      >
-        {menu.kind === "card" && (
-          <>
-            <DropdownMenuItem onClick={menu.onCopyTitle}>Copy title</DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onDrawConnection}>Draw connection</DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onRelated}>Related</DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onCreateAlias}>Create alias</DropdownMenuItem>
-            <MoveToSectionSubmenu
-              sections={sections}
-              onMoveToSection={menu.onMoveToSection}
-            />
-            {showRemoveFromGroup && (
-              <DropdownMenuItem onClick={menu.onRemoveFromGroup}>
-                Remove from group
-              </DropdownMenuItem>
-            )}
-          </>
-        )}
-
-        {menu.kind === "alias" && (
-          <>
-            {showRemoveFromGroup && (
-              <DropdownMenuItem onClick={menu.onRemoveFromGroup}>
-                Remove from group
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuItem onClick={menu.onJumpToSourceCard}>
-              → Jump to source card
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onDrawConnection}>Draw connection</DropdownMenuItem>
-            <MoveToSectionSubmenu
-              sections={sections}
-              onMoveToSection={menu.onMoveToSection}
-            />
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={menu.onDelete}>
-              Delete alias
-            </DropdownMenuItem>
-          </>
-        )}
-
-        {menu.kind === "note" && (
-          <>
-            <DropdownMenuItem onClick={menu.onCopyUuidTitle}>
-              Copy UUID + title
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onDrawConnection}>Draw connection</DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onEditTitle}>Edit title</DropdownMenuItem>
-            <MoveToSectionSubmenu
-              sections={sections}
-              onMoveToSection={menu.onMoveToSection}
-            />
-            {showRemoveFromGroup && (
-              <DropdownMenuItem onClick={menu.onRemoveFromGroup}>
-                Remove from group
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={menu.onDelete}>
-              Delete
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <NoteColorRow onSetColor={menu.onSetColor} />
-          </>
-        )}
-
-        {menu.kind === "question" && (
-          <>
-            <DropdownMenuItem onClick={menu.onCopyUuidTitle}>
-              Copy UUID + title
-            </DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onDrawConnection}>Draw connection</DropdownMenuItem>
-            <DropdownMenuItem onClick={menu.onEditTitle}>Edit title</DropdownMenuItem>
-            <MoveToSectionSubmenu
-              sections={sections}
-              onMoveToSection={menu.onMoveToSection}
-            />
-            {showRemoveFromGroup && (
-              <DropdownMenuItem onClick={menu.onRemoveFromGroup}>
-                Remove from group
-              </DropdownMenuItem>
-            )}
-            <DropdownMenuSeparator />
-            <DropdownMenuItem variant="destructive" onClick={menu.onDelete}>
-              Delete
-            </DropdownMenuItem>
-          </>
-        )}
-
-        {menu.kind === "section" && (
-          <DropdownMenuItem variant="destructive" onClick={menu.onDelete}>
-            Delete section
-          </DropdownMenuItem>
-        )}
+      <DropdownMenuContent align="end" className="min-w-[180px]">
+        {applicableCaps.map((cap, idx) => {
+          const prev = idx > 0 ? applicableCaps[idx - 1] : null;
+          const needsSeparator = prev !== null && groupOf(prev) !== groupOf(cap);
+          return (
+            <Fragment key={cap.kind}>
+              {needsSeparator && <DropdownMenuSeparator />}
+              <CapabilityItem cap={cap} handlerMap={handlerMap} sections={sections} />
+            </Fragment>
+          );
+        })}
       </DropdownMenuContent>
     </DropdownMenu>
+  );
+}
+
+/** 按 ui_kind 分派 capability 渲染 */
+function CapabilityItem({
+  cap,
+  handlerMap,
+  sections,
+}: {
+  cap: NodeCapability;
+  handlerMap: Partial<NodeCapabilityHandlerMap>;
+  sections: SectionListItem[];
+}) {
+  if (cap.ui_kind === "plain") {
+    // 类型安全:plain capability 的 handler 都是 () => void
+    const handler = handlerMap[cap.kind] as (() => void) | undefined;
+    if (!handler) return null;
+    return (
+      <DropdownMenuItem
+        onClick={handler}
+        variant={cap.destructive ? "destructive" : undefined}
+      >
+        {cap.label}
+      </DropdownMenuItem>
+    );
+  }
+
+  if (cap.kind === "move_to_section") {
+    const handler = handlerMap.move_to_section;
+    if (!handler) return null;
+    return (
+      <MoveToSectionSubmenu
+        label={cap.label}
+        sections={sections}
+        onMoveToSection={handler}
+      />
+    );
+  }
+
+  if (cap.kind === "set_color") {
+    const handler = handlerMap.set_color;
+    if (!handler) return null;
+    return <NoteColorRow onSetColor={handler} />;
+  }
+
+  return null;
+}
+
+/** 共享的 "Move to Section" 子菜单 — 循环展开当前白板的 sections */
+function MoveToSectionSubmenu({
+  label,
+  sections,
+  onMoveToSection,
+}: {
+  label: string;
+  sections: SectionListItem[];
+  onMoveToSection: (sectionId: string) => void;
+}) {
+  return (
+    <DropdownMenuSub>
+      <DropdownMenuSubTrigger>{label}</DropdownMenuSubTrigger>
+      <DropdownMenuSubContent className="max-h-64 min-w-[160px] overflow-y-auto">
+        {sections.map((s) => (
+          <DropdownMenuItem key={s.id} onClick={() => onMoveToSection(s.id)}>
+            <span className="truncate">{s.title || "(untitled)"}</span>
+          </DropdownMenuItem>
+        ))}
+      </DropdownMenuSubContent>
+    </DropdownMenuSub>
+  );
+}
+
+/** Note/Section/... 颜色面板 — 菜单底部横排 7 色块 */
+function NoteColorRow({ onSetColor }: { onSetColor: (color: string) => void }) {
+  return (
+    <div className="flex items-center gap-1 px-1.5 py-1.5">
+      {NOTE_COLORS.map((color) => (
+        <button
+          key={color}
+          type="button"
+          aria-label={`Set color ${color}`}
+          onClick={() => onSetColor(color)}
+          className="h-5 w-5 rounded-full border border-foreground/15 ring-0 transition-transform hover:scale-110"
+          style={{ background: color }}
+        />
+      ))}
+    </div>
   );
 }

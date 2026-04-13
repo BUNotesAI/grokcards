@@ -12,16 +12,18 @@ const mockQuestion: QuestionEntity = {
   status: "pending",
 };
 
-/** 构造 question 菜单 config — 各回调都是 vi.fn */
+/** 构造 question 菜单 config — 各 handler 都是 vi.fn */
 function makeQuestionMenu(): QuestionMenuConfig {
   return {
     kind: "question",
-    onCopyUuidTitle: vi.fn(),
-    onDrawConnection: vi.fn(),
-    onEditTitle: vi.fn(),
-    onMoveToSection: vi.fn(),
-    onRemoveFromGroup: vi.fn(),
-    onDelete: vi.fn(),
+    handlers: {
+      copy_uuid_title: vi.fn(),
+      draw_connection: vi.fn(),
+      edit_title: vi.fn(),
+      move_to_section: vi.fn(),
+      remove_from_group: vi.fn(),
+      delete: vi.fn(),
+    },
   };
 }
 

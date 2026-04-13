@@ -23,30 +23,41 @@ import type {
 } from "./NodeContextMenu";
 
 /**
- * 节点菜单回调集合 — 所有回调都以 entityId 为首参数，保持 stable reference
- * 方便 EntityNode 的 memo 比较。
+ * 节点菜单回调集合 — 由 GraphView 传给 EntityNode,EntityNode 封装成 NodeMenuConfig
+ * 的 handlers 对象透传给 NodeContextMenu。
+ *
+ * ## 统一 vs per-kind
+ * - **统一 handler**(`onCopyEntityUuidTitle`):Phase B1 所有节点都支持"复制 UUID + title",
+ *   共享同一 normalize pipeline `UUID:{id} {normalizeCardTitleForClipboard(title)}`,
+ *   由 GraphView 集中在一处实现,kind 参数用于 entity 查找分派。
+ * - **per-kind handler**(delete / 编辑 title 等):不同节点走不同 Tauri command
+ *   (`alias_delete` / `note_delete` / `question_delete` / `section_delete` 等),
+ *   语义差异大,保留 per-kind 接口。
  */
 export interface NodeContextMenuHandlers {
-  /** Card 菜单 */
-  onCopyCardTitle: (id: string) => void;
+  /** 共享:复制 UUID + normalized title(Card/Alias/Note/Question/Section 共用) */
+  onCopyEntityUuidTitle: (entityId: string, kind: EntityKind) => void;
+  /** Card/Alias/Note/Question:从此节点开始画一条连线 */
   onDrawConnectionFrom: (id: string) => void;
+  /** Card 专属:打开 Related 视图 */
   onRelatedFrom: (id: string) => void;
+  /** Card 专属:为卡片创建 alias */
   onCreateAlias: (cardId: string) => void;
-  /** Alias 菜单 */
+  /** Alias 专属:跳转到 source card */
   onJumpToSourceCard: (aliasId: string) => void;
+  /** Alias 专属:删除 */
   onDeleteAlias: (aliasId: string) => void;
-  /** Note 菜单 */
-  onCopyNoteUuidTitle: (noteId: string) => void;
+  /** Note 专属 */
   onEditNoteTitle: (noteId: string) => void;
   onDeleteNote: (noteId: string) => void;
   onSetNoteColor: (noteId: string, color: string) => void;
-  /** Question 菜单 */
-  onCopyQuestionUuidTitle: (questionId: string) => void;
+  /** Question 专属 */
   onEditQuestionTitle: (questionId: string) => void;
   onDeleteQuestion: (questionId: string) => void;
-  /** Section 菜单 */
+  /** Section 专属 */
   onDeleteSection: (sectionId: string) => void;
-  /** 共享 */
+  onSetSectionColor: (sectionId: string, color: string) => void;
+  /** 共享:分组 */
   onMoveToSection: (entityId: string, sectionId: string) => void;
   onRemoveFromGroup: (entityId: string) => void;
 }
@@ -137,18 +148,20 @@ function EntityNodeImpl({
   onOpenAlias,
   onSelectTag,
 }: EntityNodeProps) {
-  // 按 entity.kind 派发构造对应类型的菜单配置
-  // 回调闭合 entity.id，这样 NodeContextMenu 内无需感知 id
+  // 按 entity.kind 派发构造对应 NodeMenuConfig 判别联合变体
+  // 回调闭合 entity.id + entity.kind,这样 NodeContextMenu 内按 capability.kind 分派即可
   const cardMenu = useMemo<CardMenuConfig | null>(() => {
     if (!menuHandlers || entity.kind !== "card") return null;
     return {
       kind: "card",
-      onCopyTitle: () => menuHandlers.onCopyCardTitle(entity.id),
-      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
-      onRelated: () => menuHandlers.onRelatedFrom(entity.id),
-      onCreateAlias: () => menuHandlers.onCreateAlias(entity.id),
-      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
-      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
+      handlers: {
+        copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "card"),
+        draw_connection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+        related: () => menuHandlers.onRelatedFrom(entity.id),
+        create_alias: () => menuHandlers.onCreateAlias(entity.id),
+        move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+        remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+      },
     };
   }, [menuHandlers, entity.id, entity.kind]);
 
@@ -156,13 +169,15 @@ function EntityNodeImpl({
     if (!menuHandlers || entity.kind !== "note") return null;
     return {
       kind: "note",
-      onCopyUuidTitle: () => menuHandlers.onCopyNoteUuidTitle(entity.id),
-      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
-      onEditTitle: () => menuHandlers.onEditNoteTitle(entity.id),
-      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
-      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
-      onDelete: () => menuHandlers.onDeleteNote(entity.id),
-      onSetColor: (color) => menuHandlers.onSetNoteColor(entity.id, color),
+      handlers: {
+        copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "note"),
+        draw_connection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+        edit_title: () => menuHandlers.onEditNoteTitle(entity.id),
+        move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+        remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+        set_color: (color) => menuHandlers.onSetNoteColor(entity.id, color),
+        delete: () => menuHandlers.onDeleteNote(entity.id),
+      },
     };
   }, [menuHandlers, entity.id, entity.kind]);
 
@@ -170,12 +185,14 @@ function EntityNodeImpl({
     if (!menuHandlers || entity.kind !== "question") return null;
     return {
       kind: "question",
-      onCopyUuidTitle: () => menuHandlers.onCopyQuestionUuidTitle(entity.id),
-      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
-      onEditTitle: () => menuHandlers.onEditQuestionTitle(entity.id),
-      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
-      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
-      onDelete: () => menuHandlers.onDeleteQuestion(entity.id),
+      handlers: {
+        copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "question"),
+        draw_connection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+        edit_title: () => menuHandlers.onEditQuestionTitle(entity.id),
+        move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+        remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+        delete: () => menuHandlers.onDeleteQuestion(entity.id),
+      },
     };
   }, [menuHandlers, entity.id, entity.kind]);
 
@@ -183,11 +200,14 @@ function EntityNodeImpl({
     if (!menuHandlers || entity.kind !== "alias") return null;
     return {
       kind: "alias",
-      onJumpToSourceCard: () => menuHandlers.onJumpToSourceCard(entity.id),
-      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
-      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
-      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
-      onDelete: () => menuHandlers.onDeleteAlias(entity.id),
+      handlers: {
+        copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "alias"),
+        draw_connection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+        jump_to_source_card: () => menuHandlers.onJumpToSourceCard(entity.id),
+        move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+        remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+        delete: () => menuHandlers.onDeleteAlias(entity.id),
+      },
     };
   }, [menuHandlers, entity.id, entity.kind]);
 
@@ -195,7 +215,11 @@ function EntityNodeImpl({
     if (!menuHandlers || entity.kind !== "section") return null;
     return {
       kind: "section",
-      onDelete: () => menuHandlers.onDeleteSection(entity.id),
+      handlers: {
+        copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "section"),
+        set_color: (color) => menuHandlers.onSetSectionColor(entity.id, color),
+        delete: () => menuHandlers.onDeleteSection(entity.id),
+      },
     };
   }, [menuHandlers, entity.id, entity.kind]);
 

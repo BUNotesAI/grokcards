@@ -931,17 +931,44 @@ export function GraphView({
     }
   }, [currentWhiteboardId, queryClient, whiteboardDraft]);
 
-  // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode，memo 比较依赖它不变
-  // 依赖 data/viewport/queryClient，数据变化时整体替换（EntityNode 整体重渲染）
+  // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode,memo 比较依赖它不变
+  // 依赖 data/viewport/queryClient,数据变化时整体替换(EntityNode 整体重渲染)
   const menuHandlers = useMemo<NodeContextMenuHandlers>(
     () => ({
-      // Card: Copy title → 复制到剪贴板（去掉 markdown 加粗 + 转义反斜杠）
-      onCopyCardTitle: (id) => {
-        const card = data.cards.find((c) => c.id === id);
-        if (!card) return;
-        void navigator.clipboard.writeText(normalizeCardTitleForClipboard(card.title));
+      // 共享:Copy UUID + normalized title(所有节点)
+      // pipeline: `UUID:${id} ${normalizeCardTitleForClipboard(title)}`
+      // kind 决定 entity 查找位置;Alias 借 source card 的 title
+      onCopyEntityUuidTitle: (entityId, kind) => {
+        let title: string | undefined;
+        switch (kind) {
+          case "card":
+            title = data.cards.find((c) => c.id === entityId)?.title;
+            break;
+          case "note":
+            title = data.notes.find((n) => n.id === entityId)?.title;
+            break;
+          case "question":
+            title = data.questions.find((q) => q.id === entityId)?.title;
+            break;
+          case "section":
+            title = data.sections.find((s) => s.id === entityId)?.title;
+            break;
+          case "alias": {
+            const alias = data.aliases.find((a) => a.aliasId === entityId);
+            if (!alias) break;
+            title = data.cards.find((c) => c.id === alias.cardId)?.title;
+            break;
+          }
+          case "task":
+          case "whiteboard":
+            return; // Task 预留,whiteboard 无菜单 —— B1 不接入
+        }
+        if (title === undefined) return;
+        void navigator.clipboard.writeText(
+          `UUID:${entityId} ${normalizeCardTitleForClipboard(title)}`,
+        );
       },
-      // Card/Alias: Draw connection → 进入画连线模式，等待下一次点击目标实体
+      // Card/Alias/Note/Question: Draw connection → 进入画连线模式,等待下一次点击目标实体
       onDrawConnectionFrom: (id) => {
         setRelatedPickerCardId(null);
         setRelatedSearch("");
@@ -1000,12 +1027,6 @@ export function GraphView({
           console.error("删除 alias 失败:", e);
         }
       },
-      // Note: Copy UUID + title
-      onCopyNoteUuidTitle: (noteId) => {
-        const note = data.notes.find((n) => n.id === noteId);
-        if (!note) return;
-        void navigator.clipboard.writeText(`UUID:${note.id} ${note.title}`);
-      },
       // Note: Edit title → 复用已有 inline 编辑
       onEditNoteTitle: (noteId) => setEditing({ id: noteId, field: "note-title" }),
       // Note: Delete
@@ -1026,12 +1047,6 @@ export function GraphView({
           console.error("更新 note 颜色失败:", e);
         }
       },
-      // Question: Copy UUID + title
-      onCopyQuestionUuidTitle: (questionId) => {
-        const question = data.questions.find((q) => q.id === questionId);
-        if (!question) return;
-        void navigator.clipboard.writeText(`UUID:${question.id} ${question.title}`);
-      },
       // Question: Edit title → 复用已有 inline 编辑
       onEditQuestionTitle: (questionId) =>
         setEditing({ id: questionId, field: "question-title" }),
@@ -1051,6 +1066,15 @@ export function GraphView({
           queryClient.invalidateQueries();
         } catch (e) {
           console.error("删除 section 失败:", e);
+        }
+      },
+      // Section: Set background color (复用 section_update 的 color 参数)
+      onSetSectionColor: async (sectionId, color) => {
+        try {
+          await unwrapCommand(commands.sectionUpdate(sectionId, null, color));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("更新 section 颜色失败:", e);
         }
       },
       // 共享: Move to Section — 先从旧 section 移除再加入新 section
@@ -1083,6 +1107,7 @@ export function GraphView({
       data.notes,
       data.questions,
       data.aliases,
+      data.sections,
       effectivePositions,
       entityToSectionId,
       allDimensions,
