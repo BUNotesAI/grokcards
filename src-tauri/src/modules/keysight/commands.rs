@@ -5,7 +5,7 @@ use tauri::State;
 
 use super::domain::alias::{AliasStore, SqliteAliasStore};
 use super::domain::card::{CardStore, SqliteCardStore};
-use super::domain::entity::{EntityGraph, SqliteEntityGraph};
+use super::domain::entity::{resolve_user_drawn_edge_type, EntityGraph, SqliteEntityGraph};
 use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
@@ -844,6 +844,8 @@ pub fn entity_connect(
     label: Option<String>,
 ) -> Result<(), AppError> {
     let conn = state.db.lock().unwrap();
+    // 按 source 实体前缀归一化 edge_type — TS 侧无需感知 note_link/alias_link 约定
+    let edge_type = resolve_user_drawn_edge_type(&from_id, edge_type);
     let graph = SqliteEntityGraph::new(&conn);
     graph
         .connect(&from_id, &to_id, edge_type, style, label.as_deref())

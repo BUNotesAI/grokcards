@@ -1,6 +1,11 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { QuestionEntity } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
+import {
+  NodeContextMenu,
+  type QuestionMenuConfig,
+  type SectionListItem,
+} from "./NodeContextMenu";
 
 type QuestionEditField = "question-title" | "question-body";
 
@@ -15,6 +20,12 @@ interface QuestionNodeProps {
   onStartEdit?: (id: string, field: QuestionEditField) => void;
   onCommitEdit?: (id: string, field: QuestionEditField, value: string) => void;
   onCancelEdit?: () => void;
+  /** ⋯ 菜单配置；null/undefined 时不渲染菜单 */
+  contextMenu?: QuestionMenuConfig | null;
+  /** 可选择加入的 sections（当前白板） */
+  menuSections?: SectionListItem[];
+  /** 当前 question 所属 section；null 表示未在任何 section */
+  currentSectionId?: string | null;
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -35,6 +46,9 @@ export function QuestionNode({
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
+  contextMenu = null,
+  menuSections = [],
+  currentSectionId = null,
 }: QuestionNodeProps) {
   const badgeClass = STATUS_STYLES[question.status] ?? STATUS_STYLES.pending;
   const ring = selected
@@ -124,6 +138,13 @@ export function QuestionNode({
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}>
           {question.status}
         </span>
+        {contextMenu && (
+          <NodeContextMenu
+            menu={contextMenu}
+            sections={menuSections}
+            currentSectionId={currentSectionId}
+          />
+        )}
       </div>
       {lodLevel === 0 && (
         isEditingBody ? (

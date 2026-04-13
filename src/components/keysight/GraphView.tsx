@@ -1025,6 +1025,24 @@ export function GraphView({
           console.error("更新 note 颜色失败:", e);
         }
       },
+      // Question: Copy UUID + title
+      onCopyQuestionUuidTitle: (questionId) => {
+        const question = data.questions.find((q) => q.id === questionId);
+        if (!question) return;
+        void navigator.clipboard.writeText(`UUID:${question.id} ${question.title}`);
+      },
+      // Question: Edit title → 复用已有 inline 编辑
+      onEditQuestionTitle: (questionId) =>
+        setEditing({ id: questionId, field: "question-title" }),
+      // Question: Delete
+      onDeleteQuestion: async (questionId) => {
+        try {
+          await unwrapCommand(commands.questionDelete(questionId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("删除 question 失败:", e);
+        }
+      },
       // Section: Delete
       onDeleteSection: async (sectionId) => {
         try {
@@ -1062,6 +1080,7 @@ export function GraphView({
     [
       data.cards,
       data.notes,
+      data.questions,
       data.aliases,
       effectivePositions,
       entityToSectionId,

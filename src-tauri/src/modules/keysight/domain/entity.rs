@@ -41,6 +41,30 @@ impl<'a> SqliteEntityGraph<'a> {
     }
 }
 
+/// 把用户从 ⋯ 菜单 Draw connection 画线时 caller 传入的 edge_type
+/// 按 source 实体前缀归一化为 Rust 持久化层读写一致的值。
+///
+/// 背景：`NoteStore::get` / `AliasStore::get` 按 `note_link` / `alias_link`
+/// 回读 edges 表，若 entity_connect 写入时仍用 caller 传的 `LinkTo`，
+/// 边会真写入 DB 但在 note/alias 侧永远读不回，buildEdges 也就渲染不出。
+/// 所以在 Rust 入口按 from_id 前缀强制归一化，TS 侧可无脑传 `LinkTo`。
+///
+/// - `note_*` → [`EdgeType::NoteLink`]（覆盖 caller）
+/// - `alias_*` → [`EdgeType::AliasLink`]（覆盖 caller）
+/// - 其它（主要是 `card_*`）→ 保留 caller 传入值（支持 Related picker 的 Related / 历史 SeeAlso）
+pub(in crate::modules::keysight) fn resolve_user_drawn_edge_type(
+    from_id: &str,
+    caller_edge_type: EdgeType,
+) -> EdgeType {
+    if from_id.starts_with("note_") {
+        EdgeType::NoteLink
+    } else if from_id.starts_with("alias_") {
+        EdgeType::AliasLink
+    } else {
+        caller_edge_type
+    }
+}
+
 impl EntityGraph for SqliteEntityGraph<'_> {
     fn connect(
         &self,
@@ -194,5 +218,52 @@ mod tests {
 
         let edges = graph.edges_from("card_aaa").unwrap();
         assert_eq!(edges.len(), 2, "不同类型的边应共存");
+    }
+
+    // ============================================================
+    // resolve_user_drawn_edge_type — 前端 ⋯ 菜单 Draw connection 的归一化
+    // ============================================================
+    //
+    // 背景：TS 侧 onDrawConnectionFrom 不知道 Rust 持久化约定（Note 的
+    // linked_note_ids 只从 edge_type='note_link' 的 edge 读回，Alias 同理），
+    // 所以在 Rust 入口按 from_id 前缀强制归一化，让 TS 无脑传 LinkTo 即可。
+
+    #[test]
+    fn test_resolve_user_drawn_edge_type_note_source_forces_note_link() {
+        // note 源 — 不管 caller 传什么都应归一为 NoteLink
+        assert_eq!(
+            resolve_user_drawn_edge_type("note_aaa11111", EdgeType::LinkTo),
+            EdgeType::NoteLink
+        );
+        assert_eq!(
+            resolve_user_drawn_edge_type("note_aaa11111", EdgeType::Related),
+            EdgeType::NoteLink
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_drawn_edge_type_alias_source_forces_alias_link() {
+        // alias 源 — 归一为 AliasLink
+        assert_eq!(
+            resolve_user_drawn_edge_type("alias_xxx22222", EdgeType::LinkTo),
+            EdgeType::AliasLink
+        );
+    }
+
+    #[test]
+    fn test_resolve_user_drawn_edge_type_card_source_preserves_caller() {
+        // card 源 — 保留 caller 传入，支持 Related picker 的 Related / 历史 SeeAlso
+        assert_eq!(
+            resolve_user_drawn_edge_type("card_xxx33333", EdgeType::LinkTo),
+            EdgeType::LinkTo
+        );
+        assert_eq!(
+            resolve_user_drawn_edge_type("card_xxx33333", EdgeType::Related),
+            EdgeType::Related
+        );
+        assert_eq!(
+            resolve_user_drawn_edge_type("card_xxx33333", EdgeType::SeeAlso),
+            EdgeType::SeeAlso
+        );
     }
 }

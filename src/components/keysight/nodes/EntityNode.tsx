@@ -17,6 +17,7 @@ import type {
   AliasMenuConfig,
   CardMenuConfig,
   NoteMenuConfig,
+  QuestionMenuConfig,
   SectionMenuConfig,
   SectionListItem,
 } from "./NodeContextMenu";
@@ -39,6 +40,10 @@ export interface NodeContextMenuHandlers {
   onEditNoteTitle: (noteId: string) => void;
   onDeleteNote: (noteId: string) => void;
   onSetNoteColor: (noteId: string, color: string) => void;
+  /** Question 菜单 */
+  onCopyQuestionUuidTitle: (questionId: string) => void;
+  onEditQuestionTitle: (questionId: string) => void;
+  onDeleteQuestion: (questionId: string) => void;
   /** Section 菜单 */
   onDeleteSection: (sectionId: string) => void;
   /** 共享 */
@@ -161,6 +166,19 @@ function EntityNodeImpl({
     };
   }, [menuHandlers, entity.id, entity.kind]);
 
+  const questionMenu = useMemo<QuestionMenuConfig | null>(() => {
+    if (!menuHandlers || entity.kind !== "question") return null;
+    return {
+      kind: "question",
+      onCopyUuidTitle: () => menuHandlers.onCopyQuestionUuidTitle(entity.id),
+      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+      onEditTitle: () => menuHandlers.onEditQuestionTitle(entity.id),
+      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
+      onDelete: () => menuHandlers.onDeleteQuestion(entity.id),
+    };
+  }, [menuHandlers, entity.id, entity.kind]);
+
   const aliasMenu = useMemo<AliasMenuConfig | null>(() => {
     if (!menuHandlers || entity.kind !== "alias") return null;
     return {
@@ -276,6 +294,9 @@ function EntityNodeImpl({
             onStartEdit={onStartEdit}
             onCommitEdit={onCommitEdit}
             onCancelEdit={onCancelEdit}
+            contextMenu={questionMenu}
+            menuSections={menuSections}
+            currentSectionId={currentSectionId}
             style={innerStyle}
             lodLevel={lodLevel}
             selected={selected}

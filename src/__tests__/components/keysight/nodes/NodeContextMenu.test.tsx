@@ -268,6 +268,88 @@ describe("NodeContextMenu", () => {
     });
   });
 
+  describe("variant='question'", () => {
+    const questionConfig: Extract<NodeMenuConfig, { kind: "question" }> = {
+      kind: "question",
+      onCopyUuidTitle: vi.fn(),
+      onDrawConnection: vi.fn(),
+      onEditTitle: vi.fn(),
+      onMoveToSection: vi.fn(),
+      onRemoveFromGroup: vi.fn(),
+      onDelete: vi.fn(),
+    };
+
+    beforeEach(() => {
+      for (const fn of Object.values(questionConfig)) {
+        if (typeof fn === "function") (fn as ReturnType<typeof vi.fn>).mockClear();
+      }
+    });
+
+    it("打开菜单 → 显示 Question 菜单项", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Copy UUID + title")).toBeInTheDocument();
+      expect(screen.getByText("Draw connection")).toBeInTheDocument();
+      expect(screen.getByText("Edit title")).toBeInTheDocument();
+      expect(screen.getByText("Move to Section")).toBeInTheDocument();
+      expect(screen.getByText("Delete")).toBeInTheDocument();
+    });
+
+    it("未在任何 section 时不显示 Remove from group", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.queryByText("Remove from group")).not.toBeInTheDocument();
+    });
+
+    it("在 section 中时显示 Remove from group", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId="sec_a" />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Remove from group")).toBeInTheDocument();
+    });
+
+    it("点击 Copy UUID + title → onCopyUuidTitle 被调用", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Copy UUID + title")));
+      expect(questionConfig.onCopyUuidTitle).toHaveBeenCalledTimes(1);
+    });
+
+    it("点击 Draw connection → onDrawConnection 被调用", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Draw connection")));
+      expect(questionConfig.onDrawConnection).toHaveBeenCalledTimes(1);
+    });
+
+    it("点击 Edit title → onEditTitle 被调用", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Edit title")));
+      expect(questionConfig.onEditTitle).toHaveBeenCalledTimes(1);
+    });
+
+    it("点击 Delete → onDelete 被调用", () => {
+      render(
+        <NodeContextMenu menu={questionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Delete")));
+      expect(questionConfig.onDelete).toHaveBeenCalledTimes(1);
+    });
+  });
+
   describe("variant='section'", () => {
     const sectionConfig: Extract<NodeMenuConfig, { kind: "section" }> = {
       kind: "section",

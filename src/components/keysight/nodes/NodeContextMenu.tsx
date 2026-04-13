@@ -54,14 +54,30 @@ export interface NoteMenuConfig {
   onSetColor: (color: string) => void;
 }
 
+/** Question 节点菜单配置 — 与 Note 同结构但无颜色面板 */
+export interface QuestionMenuConfig {
+  kind: "question";
+  onCopyUuidTitle: () => void;
+  onDrawConnection: () => void;
+  onEditTitle: () => void;
+  onMoveToSection: (sectionId: string) => void;
+  onRemoveFromGroup: () => void;
+  onDelete: () => void;
+}
+
 /** Section 节点菜单配置 */
 export interface SectionMenuConfig {
   kind: "section";
   onDelete: () => void;
 }
 
-/** 节点菜单判别联合 — 区分 Card / Alias / Note / Section 四类菜单项 */
-export type NodeMenuConfig = CardMenuConfig | AliasMenuConfig | NoteMenuConfig | SectionMenuConfig;
+/** 节点菜单判别联合 — 区分 Card / Alias / Note / Question / Section 五类菜单项 */
+export type NodeMenuConfig =
+  | CardMenuConfig
+  | AliasMenuConfig
+  | NoteMenuConfig
+  | QuestionMenuConfig
+  | SectionMenuConfig;
 
 /** 当前白板的 section 精简列表（供 Move to Section 子菜单使用） */
 export interface SectionListItem {
@@ -231,6 +247,29 @@ export function NodeContextMenu({
             </DropdownMenuItem>
             <DropdownMenuSeparator />
             <NoteColorRow onSetColor={menu.onSetColor} />
+          </>
+        )}
+
+        {menu.kind === "question" && (
+          <>
+            <DropdownMenuItem onClick={menu.onCopyUuidTitle}>
+              Copy UUID + title
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={menu.onDrawConnection}>Draw connection</DropdownMenuItem>
+            <DropdownMenuItem onClick={menu.onEditTitle}>Edit title</DropdownMenuItem>
+            <MoveToSectionSubmenu
+              sections={sections}
+              onMoveToSection={menu.onMoveToSection}
+            />
+            {showRemoveFromGroup && (
+              <DropdownMenuItem onClick={menu.onRemoveFromGroup}>
+                Remove from group
+              </DropdownMenuItem>
+            )}
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={menu.onDelete}>
+              Delete
+            </DropdownMenuItem>
           </>
         )}
 
