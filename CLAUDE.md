@@ -56,6 +56,7 @@ Devlog「下次从这里开始」简化为 pointer → `docs/handoff/{area}.md`
 | L0 | 测试真实代码路径 — 禁止 test theater | 新增测试 / Code Review |
 | L0 | TDD — Red-Green-Refactor 开发循环 | 新功能 / Bug 修复 / 迁移 / 重构 |
 | L0 | Trait-First — 面向接口编程 | 新增模块 / 跨模块依赖 / 可测试性设计 |
+| L0 | 建模优先 + 强类型 — 防火墙模型（"想出错都难"） | 任何 pub fn / pub struct / trait |
 | L1 | 框架参考资料 — 不猜 API，查 Tauri skills + 官方文档 | 使用 Tauri / React API 时 |
 | L1 | Rust Skills — 10 个领域 | 遇到编译错误/设计问题 |
 | L2 | LESSONS.md — 模块级踩坑经验 | 修改模块代码前**必须先读** |
@@ -177,21 +178,23 @@ src-tauri/src/
 ```
 功能域 Active tasks 全部完成
   │
-  ├─ 1. /harness-check-tests    ← agent 语义自查，补测试缺口
-  ├─ 2. Code Review              ← 结构化审查（5 项检查）
-  ├─ 3. git commit               ← 提交
+  ├─ 1. /harness-check-tests        ← agent 语义自查，补测试缺口
+  ├─ 2. /harness-type-safety-check  ← agent 类型安全 / 建模强度自查（防火墙）
+  ├─ 3. Code Review                  ← 结构化审查（6 项检查）
+  ├─ 4. git commit                   ← 提交
   │
   ▼
 标记 Done
 ```
 
-**Review 5 项检查**：
+**Review 6 项检查**：
 
 1. **测试覆盖** — 每个 domain 纯函数至少 happy path + error path 各一个测试。边界条件、跨实体交互是否覆盖
 2. **逻辑正确性** — 特别是从旧代码移植的逻辑，逐行核对
 3. **回归风险** — 未来变更可能静默破坏的场景，是否有测试锁住
 4. **I/O 正确性** — SQLite 读写完整性、文件操作正确性
 5. **IPC 类型安全** — 所有 command 是否有 `#[specta::specta]`，bindings.ts 是否最新，TS 是否从 bindings import
+6. **建模强度（防火墙）** — pub fn 是否有 `String/bool/&str` 当业务参数？invariant 是被构造器保证还是注释提醒？enum 加 variant 后所有 match 是否被强制穷尽（无 `_` 通配）？跨模块依赖是否走 trait？详见 [L0: 建模优先 + 强类型](#l0-建模优先--强类型--防火墙模型)
 
 ---
 
@@ -409,6 +412,132 @@ TDD 回答"什么时候写测试"（代码之前），Anti-Test-Theater 回答"�
 - 迁移：从旧系统已知行为推导测试，先全红，逐个变绿
 - 重构：不改测试，只改实现，全程保持绿色
 - **所有场景都遵循 Red/Green 人工确认关卡**
+
+---
+
+### L0: 建模优先 + 强类型 — 防火墙模型
+
+**核心理念**：一切都在模型中。模型未定义的行为默认非法。
+
+> **"想出错都难"原则**：如果一段代码可能出错，则它一定会出错。我们把所有可能出错的地方在编译期 close 掉，让非法状态根本无法被构造，而不是依赖运行时检查或注释提醒。
+
+**防火墙思路**：每个 pub fn 的签名是一道防火墙，只接受显式建模的输入。**Default-deny** —— 没在类型里允许的就是禁止的。要新增允许的组合，只能改类型本身（编译器会逼你回到所有读写端补 case，没有任何静默路径）。
+
+**Rust 建模 = 六件套**：`struct + enum + trait + impl + module + lifetime` 合起来用，**不是只 struct**。Java OO 把"数据 + 行为"塞进 class，Rust 把"数据形状 / 类型集合 / 行为契约 / 实现 / 可见性 / 借用"分成六个正交工具。其中 **enum 判别联合 + trait 行为契约 + type state 状态机** 是 Rust 比 Java OO 显著强的部分。
+
+#### 反模式杜绝清单
+
+**A. Primitive obsession — 裸基础类型承载业务语义**
+
+| ❌ 反模式 | ✅ 替代 |
+|---|---|
+| `fn delete_card(id: &str)` | `fn delete_card(id: CardId)` — newtype value object |
+| `status: String` | `status: enum CardStatus { Draft, Reviewed, ... }` |
+| `kind: String` 当判别 | 判别联合 enum |
+| `fn foo(force: bool, dry_run: bool)` | enum 参数（消除 boolean blindness） |
+| `price_cents: i64` 满天飞 | `Price` newtype，构造时校验非负 |
+| `HashMap<String, Value>` 业务存储 | typed struct |
+
+**B. 逃生舱口与通配符**
+
+| ❌ 反模式 | ✅ 替代 |
+|---|---|
+| `match foo { _ => ... }` 吞未来 variant | 列穷所有 variant（编译器强制） |
+| `Option<Option<T>>` | 重新建模为单层 enum / struct |
+| `as` 数值转换可能截断 | `try_from` |
+| `.unwrap()` / `.expect()` 在业务路径 | `?` 传播 + 边界 match |
+| `let _ = result_returning_fn()` 吞 Result | 显式 handle 或 propagate |
+| 业务 crate 用 `anyhow::Error` | thiserror enum per module |
+| `String` 当 error type | typed error variant |
+| 调用方解析 error message 字符串做控制流 | match enum variant |
+
+**C. 贫血模型 + 错位封装**
+
+| ❌ 反模式 | ✅ 替代 |
+|---|---|
+| pub 字段允许外部直改 | 私有字段 + 校验构造器 (`fn new(...) -> Result<Self, E>`) |
+| 业务规则散落在 handler/service | 方法挂在聚合根 / domain entity 上 |
+| 派生 `Default` 的有 invariant 类型 | 不派生 Default（Default 通常违反 invariant） |
+| `pub` 暴露内部数据结构 | `pub(super)` / `pub(in crate::module)` |
+| getter 返回 `Vec<T>` | 返回 `&[T]`（避免外部突变） |
+
+**D. ID / 边界数据未校验**
+
+| ❌ 反模式 | ✅ 替代 |
+|---|---|
+| DB / IPC 拿 string 直接当 id 用 | 边界一次性 `EntityId::parse(&str)`，之后类型保证 |
+| 假设 prefix 永远对 / format 永远对 | parse 时校验，parse 之后免检（"parse don't validate"） |
+| 跨模块用 string 互相引用实体 | 跨模块用强类型 newtype id |
+
+**E. Stringly-typed dispatch**
+
+| ❌ 反模式 | ✅ 替代 |
+|---|---|
+| `connect(from: &str, to: &str, kind: EdgeType)` —— 三个参数全是逃生舱口，编译器无法保证一致性 | `connect(edge: Edge)` 接判别联合，每个变体写死 (from_kind, to_kind) 合法组合 |
+| 跨模块依赖直接 import `RealFs`/`RealHttp` | trait + impl，依赖注入 |
+| 测试需要复制业务逻辑才能写 | 抽到纯函数 + 接口边界处 mock |
+
+**F. 状态机未编码进类型**
+
+| ❌ 反模式 | ✅ 替代 |
+|---|---|
+| 字段记 `status: enum` + 方法内 if-check | type state pattern：`Order<Draft>` vs `Order<Submitted>`，编译器禁止 Submitted 调 publish |
+| 不区分"已校验" / "未校验"数据 | `RawInput` vs `ValidatedInput` 两个类型 |
+
+#### 务实例外（必须有 `// 例外:` 注释）
+
+下面这些被一般规则禁但本项目接受 —— **凡列入例外的代码旁必须有简短 `// 例外:` 注释说明理由**：
+
+- `state.db.lock().unwrap()` —— Mutex poisoning 不可恢复，unwrap 是 Rust 社区惯例
+- `RealVaultFs::new(...)` 在 commands.rs 直接构造 —— 避免 trait 泛型在 IPC 边界扩散
+- 一些 `let _ =` —— 仅当返回值完全无业务意义（如 drop guard）
+- specta/serde 派生需要的 `Default` —— 仅当被派生类型本身就是"零值合法"
+
+凡没注释的，审视时一律当违规。
+
+#### 触发时机 + 自审 prompt
+
+| 时机 | 自审问题 |
+|---|---|
+| 新增 pub fn | 签名里有 `&str`/`String`/`bool`/`u32` 当业务参数？拿掉是否仍能完整表达接口？ |
+| 新增 pub struct | pub 字段有几个？invariant 是构造器保证还是注释提醒？ |
+| 新增 trait | 拿掉所有 String/bool 后还剩什么？是否退化成函数指针集合？ |
+| 新模块 bootstrap | **type-first**：先写 type 直到"凭 signature 写不出 illegal 调用"再写 impl |
+| Code Review | 6 项检查里的第 6 项（建模强度） |
+| Session 结束 | 当天有新增 pub fn → 跑 `/harness-type-safety-check` |
+
+#### Make Illegal States Unrepresentable — 七个具体技术
+
+按使用频率排序，详见 `rust-modeling` / `rust-types` skills：
+
+1. **Newtype value object** — 每个有语义的基础值都包成 struct，构造器校验，之后免检
+2. **判别联合作 dispatch 入口** — 所有"按 kind 派发"的逻辑用 enum，编译器强制穷尽
+3. **Type state pattern** — 状态写入类型参数（`Order<Draft>` vs `Order<Submitted>`），方法只挂在合法状态的 impl block 上 —— Java OO 没有的能力
+4. **聚合根** — 对外只暴露根的方法，内部成员 `pub(super)` / `pub(in crate::xxx)`
+5. **Parse don't validate** — 边界一次性 parse 进强类型，之后**永远不再校验**
+6. **Errors as types** — thiserror enum + From trait 链路传播；调用方 match variant 不解析 message 字符串
+7. **Traits for boundaries** — 所有外部依赖（fs / http / db / 跨模块）都是 trait
+
+#### 与 Trait-First 的关系
+
+Trait-First 是这条原则的**特例应用**：把"用 trait 表达行为契约"具体化到 Rust 实践层面。建模优先是更高层的 umbrella 原则 —— 不仅 trait，所有 type 都该承载语义。
+
+#### 踩坑样例 1 — keysight Note↔Note 静默失败（2026-04-13）
+
+**症状**：从 Note ⋯ 菜单 Draw connection 到另一个 Note，UI 永远画不出线。
+
+**根因链**：
+1. `EntityGraph::connect(from: &str, to: &str, edge_type: EdgeType, ...)` —— 三个 stringly typed 逃生舱口，trait 退化成函数指针集合
+2. 前端硬编码 `edge_type: "LinkTo"`
+3. Rust 写入 `(note_a, note_b, 'link_to')`
+4. `note.get` 按 `edge_type = 'note_link'` 读取 → 读不回
+5. UI 不渲染 → DB 留 orphan edge
+
+**类型系统本可阻止**：
+- 如果 `from_id` 是 `EntityId` 判别联合，传 `(EntityId::Note, EdgeType::LinkTo)` 给 `connect()` 接 `Edge` 判别联合时根本不存在该变体 → 编译期失败
+- 如果 `connect()` 接 `Edge::NoteLink { from: NoteId, to: NoteLinkTarget }`，前端只能传 `NoteLinkTarget::{Card,Note,Section,Alias}`，永远没机会传 `LinkTo`
+
+**教训**：trait 接受 stringly typed 参数，本质上把 trait 退化成函数指针集合，类型系统形同虚设。这就是 L0 建模优先存在的原因。
 
 ---
 
@@ -724,9 +853,10 @@ describe('TodoList', () => {
 #### 功能域完成时
 
 ```
-1. /harness-check-tests    ← agent 语义自查，补测试缺口
-2. Code Review（5 项检查）  ← 测试覆盖 / 逻辑正确性 / 回归风险 / I/O 正确性 / IPC 类型安全
-3. git commit              ← 提交
+1. /harness-check-tests        ← agent 语义自查，补测试缺口
+2. /harness-type-safety-check  ← agent 类型安全 / 建模强度自查（防火墙）
+3. Code Review（6 项检查）     ← 测试覆盖 / 逻辑正确性 / 回归风险 / I/O 正确性 / IPC 类型安全 / 建模强度
+4. git commit                  ← 提交
 ```
 
 ---
@@ -741,22 +871,25 @@ describe('TodoList', () => {
 3. 读 docs/progress/*.md → 全局视图，确认 Active 总数 ≤ 3
 4. 确定本 session 要做的功能域
 5. 如果要修改某模块 → 先读该模块 LESSONS.md
+6. 默念 L0 防火墙原则 — 写任何 pub fn 前先问"这签名能不能写出 illegal 调用？"
 ```
 
 ### 开发中
 
 ```
 1. 编译用 clippy 不用 build
-2. Task 完成 → 更新 docs/progress/{area}.md + changelog
-3. 功能域 Active tasks 全部完成 → 触发质量流程（/harness-check-tests → Review → commit）
+2. 新增 pub fn / pub struct / trait → 自审签名是否有 String/bool/&str 当业务参数；有就回去包 newtype/enum（务实例外要加 // 例外: 注释）
+3. Task 完成 → 更新 docs/progress/{area}.md + changelog
+4. 功能域 Active tasks 全部完成 → 触发质量流程（/harness-check-tests → /harness-type-safety-check → Review → commit）
 ```
 
 ### Session 结束
 
 ```
 1. Task 未完成 → /harness-save-next-context → docs/handoff/{area}.md
-2. 追加 devlog
-3. 如有踩坑 → 写 LESSONS.md + 路由到五层记忆体系对应层级
+2. 如果今天加过 pub fn / pub struct / trait → 跑 /harness-type-safety-check
+3. 追加 devlog
+4. 如有踩坑 → 写 LESSONS.md + 路由到五层记忆体系对应层级
 ```
 
 ---
@@ -767,20 +900,32 @@ describe('TodoList', () => {
 
 ```
 1. 创建模块目录 src-tauri/src/modules/{name}/
-2. 写 models.rs — derive Serialize + Deserialize + specta::Type
-3. 写 errors.rs — thiserror + impl Into<AppError>
-4. 写 db.rs — 建表 migration
-5. 定义 domain traits — 行为契约（Trait-First）
-6. 写 domain 测试 — 针对 trait 的期望行为（TDD: Red）
-7. 写 domain.rs — 业务纯函数实现 trait（TDD: Green → Refactor）
-8. 写 commands.rs — 薄壳 + #[tauri::command] + #[specta::specta]
-9. 写 mod.rs — pub use commands + models
-10. 在 modules/mod.rs 注册
-11. 在 lib.rs 的 collect_commands![] 添加
-12. cargo test export_bindings → 验证 bindings.ts 更新
-13. 在副作用矩阵中登记写操作
-14. 如涉及新 plugin → 更新 capabilities/default.json（最小权限）
-15. 写 TS 组件时 → 配套组件测试（渲染 + 事件接线）
+
+2. Type Sketch — 在写任何 impl 之前列出本模块的类型骨架（防火墙）
+   a. 列 newtype id（CardId / NoteId / ...）+ 状态 enum + 度量值
+   b. 列 trait 行为契约的方法签名（无 impl）
+      - 跨模块依赖（fs / http / db）也用 trait 表达，便于测试 mock
+   c. 写一段 //! 文档注释或 fake usage 函数，演示典型 happy path 流程
+      - 检验：能否凭这些 type 自然表达 happy path？
+      - 检验：能否凭这些 type 写出 illegal path？写得出 → 类型不够紧
+   d. 反复 a/b/c 直到「凭 signature 写不出 illegal 调用，也不缺合法表达」
+   e. 然后才进入 step 3（写 models.rs）；允许在 impl 期间回 step 2 微调 1-3 次
+
+3. 写 models.rs — 把 step 2 的 type sketch 落地为 derive Serialize + Deserialize + specta::Type 的 struct/enum
+4. 写 errors.rs — thiserror + impl Into<AppError>
+5. 写 db.rs — 建表 migration
+6. 定义 domain traits — 把 step 2.b 的方法签名落地到 trait（Trait-First）
+7. 写 domain 测试 — 针对 trait 的期望行为（TDD: Red）
+8. 写 domain.rs — 业务纯函数实现 trait（TDD: Green → Refactor）
+9. 写 commands.rs — 薄壳 + #[tauri::command] + #[specta::specta]
+10. 写 mod.rs — pub use commands + models
+11. 在 modules/mod.rs 注册
+12. 在 lib.rs 的 collect_commands![] 添加
+13. cargo test export_bindings → 验证 bindings.ts 更新
+14. 在副作用矩阵中登记写操作
+15. 如涉及新 plugin → 更新 capabilities/default.json（最小权限）
+16. 写 TS 组件时 → 配套组件测试（渲染 + 事件接线）
+17. 跑 `/harness-type-safety-check` → 对照 L0 防火墙清单做最后自查
 ```
 
 ---
