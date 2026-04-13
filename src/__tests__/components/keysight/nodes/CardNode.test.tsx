@@ -60,6 +60,59 @@ describe("CardNode", () => {
     expect(screen.queryByText("rust")).not.toBeInTheDocument();
   });
 
+  it("折叠状态下直接显示 tags、related 和 alias section", () => {
+    const onOpenAlias = vi.fn();
+    render(
+      <CardNode
+        card={{ ...mockCard, related: ["card_related"] }}
+        cardsById={{
+          card_related: {
+            ...mockCard,
+            id: "card_related",
+            title: "Related Card",
+          },
+        }}
+        aliasRefs={[
+          { aliasId: "alias_1", aliasTitle: "Trait Basics" },
+          { aliasId: "alias_2", aliasTitle: "Advanced Rust" },
+        ]}
+        onOpenAlias={onOpenAlias}
+        style={{}}
+      />,
+    );
+
+    expect(screen.getByTitle("Search tag #rust")).toBeInTheDocument();
+    expect(screen.getByTitle("Search tag #testing")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Related Card/i })).toBeInTheDocument();
+    expect(screen.getByText("Aliases (2)")).toBeInTheDocument();
+    expect(screen.getAllByText("Trait Basics").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Advanced Rust").length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: /Trait Basics/i }));
+    expect(onOpenAlias).toHaveBeenCalledWith("alias_1");
+  });
+
+  it("折叠状态下 related 仍保留 markdown 渲染", () => {
+    render(
+      <CardNode
+        card={{ ...mockCard, related: ["card_related"] }}
+        cardsById={{
+          card_related: {
+            ...mockCard,
+            id: "card_related",
+            title: "**Coercion** 强制转换",
+          },
+        }}
+        style={{}}
+      />,
+    );
+
+    expect(
+      screen.getByRole("button", { name: /Coercion 强制转换/i }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Coercion", { selector: "strong" }).length).toBeGreaterThan(0);
+  });
+
   it("带 data-entity-id 属性", () => {
     const { container } = render(<CardNode card={mockCard} style={{}} />);
     const node = container.firstElementChild;

@@ -86,16 +86,11 @@ function ToggleBlockView({
   variant: NonNullable<Props["variant"]>;
 }) {
   const [open, setOpen] = useState(false);
+  const titleColor = variant === "title" ? "#2C2C2A" : "#3d3830";
+  const arrowColor = open ? "#2C2C2A" : "#8f8574";
 
   return (
-    <div
-      style={{
-        margin: "6px 0",
-        borderRadius: 8,
-        border: "1px solid rgba(29, 158, 117, 0.16)",
-        background: variant === "understanding" ? "rgba(249, 248, 245, 0.7)" : "#fafaf8",
-      }}
-    >
+    <div style={{ margin: "4px 0" }}>
       <button
         type="button"
         aria-expanded={open}
@@ -105,22 +100,40 @@ function ToggleBlockView({
           display: "flex",
           width: "100%",
           alignItems: "center",
-          gap: 8,
+          gap: 6,
           border: "none",
           background: "transparent",
-          padding: "8px 10px",
+          padding: "2px 0",
           textAlign: "left",
-          color: "#2C2C2A",
+          color: titleColor,
           cursor: "pointer",
           fontSize: 13,
-          fontWeight: 600,
+          fontWeight: 500,
+          lineHeight: 1.5,
         }}
       >
-        <span style={{ flexShrink: 0, color: "#1D9E75" }}>{open ? "▾" : "›"}</span>
+        <span
+          aria-hidden="true"
+          style={{
+            flexShrink: 0,
+            width: 14,
+            color: arrowColor,
+            fontSize: 12,
+            lineHeight: 1,
+            transform: open ? "translateY(0.5px)" : "translateY(-0.5px)",
+          }}
+        >
+          {open ? "▼" : "▶"}
+        </span>
         <span>{block.title}</span>
       </button>
       {open && (
-        <div style={{ padding: "0 10px 10px 28px" }}>
+        <div
+          style={{
+            marginLeft: 20,
+            paddingTop: 4,
+          }}
+        >
           <RenderedMarkdown markdown={block.content} variant={variant} />
         </div>
       )}
@@ -157,20 +170,34 @@ function MarkdownContent({
           },
           ul({ children }) {
             return (
-              <ul style={{ margin: "4px 0", paddingLeft: 0, listStylePosition: "inside" }}>
+              <ul
+                style={{
+                  margin: "6px 0",
+                  paddingLeft: "1.2em",
+                  listStylePosition: "outside",
+                  listStyleType: "disc",
+                }}
+              >
                 {children}
               </ul>
             );
           },
           ol({ children }) {
             return (
-              <ol style={{ margin: "4px 0", paddingLeft: 0, listStylePosition: "inside" }}>
+              <ol
+                style={{
+                  margin: "6px 0",
+                  paddingLeft: "1.2em",
+                  listStylePosition: "outside",
+                  listStyleType: "decimal",
+                }}
+              >
                 {children}
               </ol>
             );
           },
           li({ children }) {
-            return <li style={{ margin: "1px 0" }}>{children}</li>;
+            return <li style={{ margin: "2px 0" }}>{children}</li>;
           },
           code({ className, children, ...props }) {
             const isBlock = className?.startsWith("language-");
@@ -234,6 +261,67 @@ function MarkdownContent({
           },
           h3({ children }) {
             return <div style={{ margin: "4px 0", fontWeight: 600, fontSize: 12 }}>{children}</div>;
+          },
+          table({ children }) {
+            return (
+              <div style={{ margin: "8px 0", overflowX: "auto" }}>
+                <table
+                  style={{
+                    width: "100%",
+                    minWidth: 320,
+                    borderCollapse: "separate",
+                    borderSpacing: 0,
+                    border: "1px solid #e7dfd1",
+                    borderRadius: 10,
+                    overflow: "hidden",
+                    background: "#fffdf8",
+                    fontSize: 12.5,
+                    lineHeight: 1.55,
+                  }}
+                >
+                  {children}
+                </table>
+              </div>
+            );
+          },
+          thead({ children }) {
+            return <thead style={{ background: "#f7f2e8" }}>{children}</thead>;
+          },
+          tbody({ children }) {
+            return <tbody>{children}</tbody>;
+          },
+          tr({ children }) {
+            return <tr style={{ background: "#fffdf8" }}>{children}</tr>;
+          },
+          th({ children }) {
+            return (
+              <th
+                style={{
+                  borderBottom: "1px solid #e7dfd1",
+                  padding: "8px 10px",
+                  textAlign: "left",
+                  fontWeight: 700,
+                  color: "#453b2f",
+                  verticalAlign: "top",
+                }}
+              >
+                {children}
+              </th>
+            );
+          },
+          td({ children }) {
+            return (
+              <td
+                style={{
+                  borderTop: "1px solid #efe7d8",
+                  padding: "8px 10px",
+                  color: "#4a4a47",
+                  verticalAlign: "top",
+                }}
+              >
+                {children}
+              </td>
+            );
           },
           a({ children, href }) {
             return (

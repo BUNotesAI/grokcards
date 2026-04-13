@@ -1,6 +1,6 @@
 import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import type { AtomicCard, CardAlias } from "@/bindings";
-import type { LodLevel } from "@/components/keysight/types";
+import type { AliasReference, LodLevel } from "@/components/keysight/types";
 import { CardNode } from "./CardNode";
 import type { AliasMenuConfig, SectionListItem } from "./NodeContextMenu";
 
@@ -9,7 +9,7 @@ interface AliasNodeProps {
   /** 目标卡片（可能为 null，如果查不到则显示降级 UI） */
   targetCard: AtomicCard | null;
   cardsById?: Record<string, AtomicCard>;
-  aliasRefs?: Array<{ aliasId: string; aliasTitle: string }>;
+  aliasRefs?: AliasReference[];
   style: CSSProperties;
   lodLevel?: LodLevel;
   selected?: boolean;
@@ -23,6 +23,9 @@ interface AliasNodeProps {
   menuSections?: SectionListItem[];
   /** 当前 alias 所属 section；null 表示未在任何 section */
   currentSectionId?: string | null;
+  onOpenCard?: (id: string) => void;
+  onOpenAlias?: (id: string) => void;
+  onSelectTag?: (tag: string) => void;
 }
 
 /**
@@ -45,6 +48,9 @@ export function AliasNode({
   contextMenu = null,
   menuSections = [],
   currentSectionId = null,
+  onOpenCard,
+  onOpenAlias,
+  onSelectTag,
 }: AliasNodeProps) {
   if (!targetCard) {
     return (
@@ -91,6 +97,9 @@ export function AliasNode({
       contextMenu={contextMenu}
       menuSections={menuSections}
       currentSectionId={currentSectionId}
+      onOpenCard={onOpenCard}
+      onOpenAlias={onOpenAlias}
+      onSelectTag={onSelectTag}
     />
   );
 }

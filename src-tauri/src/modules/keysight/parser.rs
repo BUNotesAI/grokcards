@@ -30,6 +30,8 @@ struct RawEntityFrontmatter {
     source: Option<String>,
     #[serde(default, rename = "see-also")]
     see_also: Vec<String>,
+    #[serde(default)]
+    color: Option<String>,
     // task 字段
     #[serde(default)]
     status: Option<String>,
@@ -53,6 +55,7 @@ pub(super) struct ParsedEntity {
     pub see_also: Vec<String>,
     pub understanding: String,
     pub source: String,
+    pub color: Option<String>,
     pub task_status: Option<String>,
     pub task_area: Option<String>,
     pub task_project: Option<String>,
@@ -264,6 +267,7 @@ pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
         see_also: raw.see_also,
         understanding: raw.understanding.unwrap_or_default(),
         source: raw.source.unwrap_or_default(),
+        color: raw.color,
         task_status,
         task_area,
         task_project,

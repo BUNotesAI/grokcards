@@ -18,6 +18,14 @@ export interface GraphSelection {
   kind: GraphSelectableKind;
 }
 
+export interface AliasReference {
+  aliasId: string;
+  aliasTitle: string;
+  cardId?: string;
+  sectionId?: string | null;
+  sectionTitle?: string | null;
+}
+
 /** 各类型实体的联合 — 带位置信息 */
 export type EntityWithPosition =
   | { kind: "card"; entity: AtomicCard; position: Position; id: string }

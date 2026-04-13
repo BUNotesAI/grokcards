@@ -10,8 +10,12 @@ pub(in crate::modules::keysight) trait VaultFs {
     fn read_file(&self, relative_path: &str) -> Result<String, KeysightError>;
     /// 写入 vault 内相对路径的文件内容。
     fn write_file(&self, relative_path: &str, content: &str) -> Result<(), KeysightError>;
+    /// 删除 vault 内相对路径的文件。
+    fn delete_file(&self, relative_path: &str) -> Result<(), KeysightError>;
     /// 列出指定子目录下所有 .md 文件及其 mtime（epoch ms）。
     fn list_md_files(&self, subdir: &str) -> Result<Vec<(String, f64)>, KeysightError>;
+    /// 列出指定子目录下一层的所有子目录名。
+    fn list_first_level_dirs(&self, subdir: &str) -> Result<Vec<String>, KeysightError>;
 }
 
 /// 真实文件系统实现。
@@ -85,6 +89,15 @@ impl VaultFs for RealVaultFs {
             .map_err(|e| KeysightError::FileError(format!("写入 {abs}: {e}")))
     }
 
+    fn delete_file(&self, relative_path: &str) -> Result<(), KeysightError> {
+        let abs = self.abs_path(relative_path);
+        if !Path::new(&abs).exists() {
+            return Ok(());
+        }
+        std::fs::remove_file(&abs)
+            .map_err(|e| KeysightError::FileError(format!("删除 {abs}: {e}")))
+    }
+
     fn list_md_files(&self, subdir: &str) -> Result<Vec<(String, f64)>, KeysightError> {
         let vault_root = PathBuf::from(&self.vault_path);
         let target_dir = vault_root.join(subdir);
@@ -95,6 +108,29 @@ impl VaultFs for RealVaultFs {
         Self::walk_md_files(&target_dir, &vault_root, &mut results)?;
         Ok(results)
     }
+
+    fn list_first_level_dirs(&self, subdir: &str) -> Result<Vec<String>, KeysightError> {
+        let target_dir = PathBuf::from(&self.vault_path).join(subdir);
+        if !target_dir.exists() {
+            return Ok(vec![]);
+        }
+
+        let mut results = std::fs::read_dir(&target_dir)
+            .map_err(|e| KeysightError::FileError(format!("读取目录 {}: {e}", target_dir.display())))?
+            .filter_map(|entry| entry.ok())
+            .filter_map(|entry| {
+                let path = entry.path();
+                if !path.is_dir() {
+                    return None;
+                }
+                path.file_name()
+                    .and_then(|name| name.to_str())
+                    .map(|name| name.to_string())
+            })
+            .collect::<Vec<_>>();
+        results.sort();
+        Ok(results)
+    }
 }
 
 /// 测试用 mock 文件系统。
@@ -102,6 +138,7 @@ impl VaultFs for RealVaultFs {
 pub(super) struct MockVaultFs {
     files: std::cell::RefCell<std::collections::HashMap<String, String>>,
     mtimes: std::cell::RefCell<std::collections::HashMap<String, f64>>,
+    dirs: std::cell::RefCell<std::collections::HashSet<String>>,
 }
 
 #[cfg(test)]
@@ -110,6 +147,7 @@ impl MockVaultFs {
         Self {
             files: std::cell::RefCell::new(std::collections::HashMap::new()),
             mtimes: std::cell::RefCell::new(std::collections::HashMap::new()),
+            dirs: std::cell::RefCell::new(std::collections::HashSet::new()),
         }
     }
 
@@ -139,6 +177,11 @@ impl MockVaultFs {
         self
     }
 
+    pub fn with_dir(self, path: &str) -> Self {
+        self.dirs.borrow_mut().insert(path.to_string());
+        self
+    }
+
     /// 获取 mock 文件系统中的文件内容（用于测试断言）。
     pub fn get_file(&self, path: &str) -> Option<String> {
         self.files.borrow().get(path).cloned()
@@ -162,6 +205,12 @@ impl VaultFs for MockVaultFs {
         Ok(())
     }
 
+    fn delete_file(&self, relative_path: &str) -> Result<(), KeysightError> {
+        self.files.borrow_mut().remove(relative_path);
+        self.mtimes.borrow_mut().remove(relative_path);
+        Ok(())
+    }
+
     fn list_md_files(&self, subdir: &str) -> Result<Vec<(String, f64)>, KeysightError> {
         let prefix = format!("{subdir}/");
         let files = self.files.borrow();
@@ -174,6 +223,33 @@ impl VaultFs for MockVaultFs {
                 (k.clone(), mtime)
             })
             .collect();
+        Ok(results)
+    }
+
+    fn list_first_level_dirs(&self, subdir: &str) -> Result<Vec<String>, KeysightError> {
+        let prefix = format!("{subdir}/");
+        let mut results = std::collections::HashSet::new();
+
+        for path in self.dirs.borrow().iter() {
+            if let Some(rest) = path.strip_prefix(&prefix) {
+                if !rest.is_empty() && !rest.contains('/') {
+                    results.insert(rest.to_string());
+                }
+            }
+        }
+
+        for path in self.files.borrow().keys() {
+            if let Some(rest) = path.strip_prefix(&prefix) {
+                if let Some((dir, _)) = rest.split_once('/') {
+                    if !dir.is_empty() {
+                        results.insert(dir.to_string());
+                    }
+                }
+            }
+        }
+
+        let mut results = results.into_iter().collect::<Vec<_>>();
+        results.sort();
         Ok(results)
     }
 }

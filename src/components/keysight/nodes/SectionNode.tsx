@@ -1,5 +1,6 @@
 import { useMemo, type CSSProperties } from "react";
 import type { GraphSection, Position } from "@/bindings";
+import { applyMarkdownBold } from "@/components/keysight/lib/applyMarkdownBold";
 import {
   ENTITY_DIMENSIONS,
   type EntityKind,
@@ -15,6 +16,10 @@ interface SectionNodeProps {
   memberPositions: Record<string, Position>;
   /** member id → kind 映射，用于查询每个 member 的真实渲染尺寸 */
   memberKinds: Record<string, EntityKind>;
+  editingField?: "section-title" | null;
+  onStartEdit?: (id: string, field: "section-title") => void;
+  onCommitEdit?: (id: string, field: "section-title", value: string) => void;
+  onCancelEdit?: () => void;
   contextMenu?: SectionMenuConfig | null;
   style: CSSProperties;
 }
@@ -73,11 +78,16 @@ export function SectionNode({
   section,
   memberPositions,
   memberKinds,
+  editingField = null,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
   contextMenu = null,
   style,
 }: SectionNodeProps) {
   const colors =
     SECTION_COLORS[section.color ?? "default"] ?? SECTION_COLORS.default;
+  const isEditingTitle = editingField === "section-title";
 
   const bounds = useMemo(() => {
     const members: SectionMember[] = [];
@@ -109,11 +119,54 @@ export function SectionNode({
         </div>
       ) : null}
       <div className="px-3 pt-2">
-        <h3
+        <div
           className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}
+          onDoubleClick={(e) => {
+            e.stopPropagation();
+            onStartEdit?.(section.id, "section-title");
+          }}
         >
-          {section.title}
-        </h3>
+          {isEditingTitle ? (
+            <input
+              autoFocus
+              defaultValue={section.title}
+              aria-label="Edit section title"
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
+              onBlur={(e) => onCommitEdit?.(section.id, "section-title", e.currentTarget.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  e.currentTarget.blur();
+                } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+                  e.preventDefault();
+                  applyMarkdownBold(e.currentTarget);
+                } else if (e.key === "Escape") {
+                  e.preventDefault();
+                  onCancelEdit?.();
+                }
+              }}
+              style={{
+                width: "100%",
+                fontSize: 12,
+                fontWeight: 700,
+                letterSpacing: "0.08em",
+                textTransform: "uppercase",
+                color: "#374151",
+                border: "1.5px solid #60a5fa",
+                borderRadius: 6,
+                padding: "4px 6px",
+                outline: "none",
+                background: "#ffffff",
+                fontFamily: "inherit",
+              }}
+            />
+          ) : (
+            <h3 className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}>
+              {section.title}
+            </h3>
+          )}
+        </div>
       </div>
     </div>
   );

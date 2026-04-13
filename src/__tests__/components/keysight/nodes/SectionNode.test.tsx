@@ -1,7 +1,8 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { SectionNode } from "@/components/keysight/nodes/SectionNode";
 import type { EntityKind } from "@/components/keysight/types";
 import type { GraphSection, Position } from "@/bindings";
+import { vi } from "vitest";
 
 const mockSection: GraphSection = {
   id: "sec_test0001",
@@ -98,5 +99,41 @@ describe("SectionNode", () => {
     // minY=-742, maxYBottom=-473+180=-293 → height = -293 - (-742) + 80 = 529
     expect(el.style.width).toBe("640px");
     expect(el.style.height).toBe("529px");
+  });
+
+  it("editingField='section-title' 时渲染 input，并在 Enter 时提交", () => {
+    const onCommitEdit = vi.fn();
+    render(
+      <SectionNode
+        section={mockSection}
+        memberPositions={memberPositions}
+        memberKinds={memberKinds}
+        editingField="section-title"
+        onCommitEdit={onCommitEdit}
+        style={{}}
+      />,
+    );
+
+    const input = screen.getByRole("textbox", { name: /edit section title/i });
+    fireEvent.change(input, { target: { value: "新的标题" } });
+    fireEvent.keyDown(input, { key: "Enter" });
+
+    expect(onCommitEdit).toHaveBeenCalledWith("sec_test0001", "section-title", "新的标题");
+  });
+
+  it("双击标题时进入 section title 编辑", () => {
+    const onStartEdit = vi.fn();
+    render(
+      <SectionNode
+        section={mockSection}
+        memberPositions={memberPositions}
+        memberKinds={memberKinds}
+        onStartEdit={onStartEdit}
+        style={{}}
+      />,
+    );
+
+    fireEvent.doubleClick(screen.getByText("核心概念"));
+    expect(onStartEdit).toHaveBeenCalledWith("sec_test0001", "section-title");
   });
 });

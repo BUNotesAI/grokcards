@@ -46,12 +46,16 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::task_query_all,
         // keysight: question
         modules::keysight::commands::question_query_all,
+        modules::keysight::commands::question_create,
+        modules::keysight::commands::question_update,
+        modules::keysight::commands::question_delete,
         // keysight: note
         modules::keysight::commands::note_get,
         modules::keysight::commands::note_query_all,
         modules::keysight::commands::note_create,
         modules::keysight::commands::note_delete,
         modules::keysight::commands::note_update,
+        modules::keysight::commands::note_migrate_to_files,
         // keysight: alias
         modules::keysight::commands::alias_get,
         modules::keysight::commands::alias_query_all,
@@ -75,6 +79,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::overview_stats,
         modules::keysight::commands::overview_graph,
         modules::keysight::commands::whiteboard_list,
+        modules::keysight::commands::whiteboard_create,
         // keysight: config
         modules::keysight::commands::get_vault_info,
         // keysight: legacy import

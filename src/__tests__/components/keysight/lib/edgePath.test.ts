@@ -45,4 +45,21 @@ describe("buildEdgePath", () => {
     const startX = parseFloat(match![1]);
     expect(startX).toBeCloseTo(100, 0);
   });
+
+  it("垂直布局时终点也应离目标卡片保留足够箭头空间", () => {
+    const above = { x: 0, y: 0, width: 100, height: 100 };
+    const below = { x: 0, y: 220, width: 100, height: 100 };
+    const result = buildEdgePath(above, below);
+
+    expect(result).not.toBeNull();
+    const match = result!.path.match(/ ([\d.-]+),([\d.-]+)$/);
+    expect(match).not.toBeNull();
+    const endX = parseFloat(match![1]);
+    const endY = parseFloat(match![2]);
+
+    // 旧逻辑终点会直接贴在 208；现在会再沿切线回退，为箭头留出空间。
+    expect(endY).toBeLessThan(200);
+    expect(endY).toBeGreaterThan(190);
+    expect(endX).toBeLessThan(50);
+  });
 });

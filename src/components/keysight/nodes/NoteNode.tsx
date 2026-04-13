@@ -62,6 +62,7 @@ export const NoteNode = memo(function NoteNode({
 }: NoteNodeProps) {
   const isEditingTitle = editingField === "note-title";
   const isEditingBody = editingField === "note-body";
+  const bodyText = note.content.trim();
   const emphasisRing = selected
     ? "0 0 0 2px rgba(34, 197, 94, 0.9), 0 10px 28px rgba(16, 185, 129, 0.15)"
     : highlighted
@@ -282,65 +283,78 @@ export const NoteNode = memo(function NoteNode({
         )}
       </div>
 
-      {/* 正文（markdown）— 双击进入编辑模式；空内容也允许编辑 */}
-      {(note.content || isEditingBody) && (
-        <div
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            onStartEdit?.(note.id, "note-body");
-          }}
-        >
-          {isEditingBody ? (
-            <textarea
-              ref={(el) => {
-                if (!el) return;
-                el.style.height = "auto";
-                el.style.height = `${el.scrollHeight}px`;
-                el.focus();
-                el.setSelectionRange(el.value.length, el.value.length);
-              }}
-              defaultValue={note.content}
-              onInput={(e) => {
-                const el = e.currentTarget;
-                el.style.height = "auto";
-                el.style.height = `${el.scrollHeight}px`;
-              }}
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => e.stopPropagation()}
-              onBlur={(e) => onCommitEdit?.(note.id, "note-body", e.currentTarget.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") {
-                  e.preventDefault();
-                  onCancelEdit?.();
-                } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
-                  e.preventDefault();
-                  applyMarkdownBold(e.currentTarget);
-                } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
-                  e.preventDefault();
-                  e.currentTarget.blur();
-                }
-              }}
-              style={{
-                width: "100%",
-                minHeight: 60,
-                fontSize: 13,
-                color: "#4a4a47",
-                lineHeight: 1.6,
-                border: "1.5px solid #1D9E75",
-                borderRadius: 4,
-                padding: "6px 8px",
-                outline: "none",
-                background: "#fff",
-                fontFamily: "inherit",
-                resize: "none",
-                overflow: "hidden",
-              }}
-            />
-          ) : (
-            <RenderedMarkdown markdown={note.content} variant="body" />
-          )}
-        </div>
-      )}
+      {/* 正文（markdown）— 参考 Obsidian Canvas：note/text card 双击即可进入编辑；空内容也保留正文区域 */}
+      <div
+        onDoubleClick={(e) => {
+          e.stopPropagation();
+          onStartEdit?.(note.id, "note-body");
+        }}
+      >
+        {isEditingBody ? (
+          <textarea
+            ref={(el) => {
+              if (!el) return;
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+              el.focus();
+              el.setSelectionRange(el.value.length, el.value.length);
+            }}
+            defaultValue={note.content}
+            onInput={(e) => {
+              const el = e.currentTarget;
+              el.style.height = "auto";
+              el.style.height = `${el.scrollHeight}px`;
+            }}
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onBlur={(e) => onCommitEdit?.(note.id, "note-body", e.currentTarget.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") {
+                e.preventDefault();
+                onCancelEdit?.();
+              } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+                e.preventDefault();
+                applyMarkdownBold(e.currentTarget);
+              } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
+                e.preventDefault();
+                e.currentTarget.blur();
+              }
+            }}
+            style={{
+              width: "100%",
+              minHeight: 60,
+              fontSize: 13,
+              color: "#4a4a47",
+              lineHeight: 1.6,
+              border: "1.5px solid #1D9E75",
+              borderRadius: 4,
+              padding: "6px 8px",
+              outline: "none",
+              background: "#fff",
+              fontFamily: "inherit",
+              resize: "none",
+              overflow: "hidden",
+            }}
+          />
+        ) : bodyText ? (
+          <RenderedMarkdown markdown={note.content} variant="body" />
+        ) : (
+          <div
+            style={{
+              minHeight: 60,
+              borderRadius: 8,
+              border: "1px dashed rgba(29, 158, 117, 0.28)",
+              background: "rgba(255, 255, 255, 0.42)",
+              padding: "10px 12px",
+              fontSize: 12.5,
+              color: "#6f7f74",
+              lineHeight: 1.6,
+            }}
+          >
+            Double-click to add note text
+          </div>
+        )}
+      </div>
     </div>
   );
 });

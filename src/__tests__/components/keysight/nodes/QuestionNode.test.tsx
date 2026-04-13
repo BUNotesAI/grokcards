@@ -1,4 +1,5 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
+import { vi } from "vitest";
 import { QuestionNode } from "@/components/keysight/nodes/QuestionNode";
 import type { QuestionEntity } from "@/bindings";
 
@@ -28,5 +29,17 @@ describe("QuestionNode", () => {
     const doing = { ...mockQuestion, status: "doing" };
     render(<QuestionNode question={doing} style={{}} />);
     expect(screen.getByText("doing")).toBeInTheDocument();
+  });
+
+  it("双击 title -> onStartEdit('question-title')", () => {
+    const onStartEdit = vi.fn();
+    render(<QuestionNode question={mockQuestion} style={{}} onStartEdit={onStartEdit} />);
+    fireEvent.doubleClick(screen.getByText("【QUE】为什么需要 FTS5"));
+    expect(onStartEdit).toHaveBeenCalledWith("q_test00001", "question-title");
+  });
+
+  it("editingField='question-body' -> 渲染 textarea", () => {
+    render(<QuestionNode question={mockQuestion} style={{}} editingField="question-body" />);
+    expect(screen.getByDisplayValue("问题详细描述").tagName).toBe("TEXTAREA");
   });
 });

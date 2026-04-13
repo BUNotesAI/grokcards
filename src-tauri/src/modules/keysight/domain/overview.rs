@@ -1,9 +1,12 @@
 #![allow(dead_code)]
+use std::collections::HashMap;
+
 use rusqlite::Connection;
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::models::StatsResponse;
 use crate::modules::keysight::models::{CardSummary, GraphOverviewResponse, WhiteboardOverview, WhiteboardSummary};
+use crate::modules::keysight::vault_fs::VaultFs;
 
 /// 查询各实体类型的数量统计。
 pub(in crate::modules::keysight) fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
@@ -126,7 +129,10 @@ pub(in crate::modules::keysight) fn graph_overview(conn: &Connection) -> Result<
 /// 查询所有子白板的轻量统计（排除 wb_root）。
 pub(in crate::modules::keysight) fn list_whiteboards(
     conn: &Connection,
+    fs: &dyn VaultFs,
 ) -> Result<Vec<WhiteboardSummary>, KeysightError> {
+    let folder_whiteboards = fs.list_first_level_dirs("whiteboard")?;
+
     let mut stmt = conn.prepare(
         "SELECT whiteboard_id,
                 SUM(CASE WHEN kind = 'card' THEN 1 ELSE 0 END),
@@ -153,7 +159,27 @@ pub(in crate::modules::keysight) fn list_whiteboards(
             })
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(rows)
+
+    let mut by_id: HashMap<String, WhiteboardSummary> = rows
+        .into_iter()
+        .map(|summary| (summary.whiteboard_id.clone(), summary))
+        .collect();
+
+    for whiteboard_id in folder_whiteboards {
+        by_id.entry(whiteboard_id.clone()).or_insert(WhiteboardSummary {
+            whiteboard_id,
+            cards: 0,
+            notes: 0,
+            sections: 0,
+            aliases: 0,
+            tasks: 0,
+            questions: 0,
+        });
+    }
+
+    let mut results = by_id.into_values().collect::<Vec<_>>();
+    results.sort_by(|a, b| a.whiteboard_id.cmp(&b.whiteboard_id));
+    Ok(results)
 }
 
 #[cfg(test)]
@@ -161,6 +187,7 @@ mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
     use crate::modules::keysight::domain::sync;
+    use crate::modules::keysight::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -239,23 +266,26 @@ mod tests {
     #[test]
     fn test_list_whiteboards_empty() {
         let conn = test_conn();
-        let result = list_whiteboards(&conn).unwrap();
+        let fs = MockVaultFs::new();
+        let result = list_whiteboards(&conn, &fs).unwrap();
         assert!(result.is_empty());
     }
 
     #[test]
     fn test_list_whiteboards_excludes_wb_root() {
         let conn = test_conn();
+        let fs = MockVaultFs::new();
         let card_md = "---\ntype: atomic-card\nid: card_wb_r001\n---\n\n# 【ATC】Root Card\n\nBody.\n";
         sync::sync_file(&conn, "whiteboard/root_card.md", card_md, 100.0).unwrap();
 
-        let result = list_whiteboards(&conn).unwrap();
+        let result = list_whiteboards(&conn, &fs).unwrap();
         assert!(result.is_empty(), "wb_root 的实体不应出现在子白板列表中");
     }
 
     #[test]
     fn test_list_whiteboards_counts_by_kind() {
         let conn = test_conn();
+        let fs = MockVaultFs::new();
         let card1 = "---\ntype: atomic-card\nid: card_wbl_001\n---\n\n# 【ATC】Card 1\n\nBody.\n";
         sync::sync_file(&conn, "whiteboard/rust/c1.md", card1, 100.0).unwrap();
         let card2 = "---\ntype: atomic-card\nid: card_wbl_002\n---\n\n# 【ATC】Card 2\n\nBody.\n";
@@ -271,7 +301,7 @@ mod tests {
             [],
         ).unwrap();
 
-        let result = list_whiteboards(&conn).unwrap();
+        let result = list_whiteboards(&conn, &fs).unwrap();
         assert_eq!(result.len(), 2);
 
         let rust_wb = result.iter().find(|w| w.whiteboard_id == "rust").unwrap();
@@ -282,5 +312,19 @@ mod tests {
         let ct_wb = result.iter().find(|w| w.whiteboard_id == "chentian").unwrap();
         assert_eq!(ct_wb.aliases, 1);
         assert_eq!(ct_wb.cards, 0);
+    }
+
+    #[test]
+    fn test_list_whiteboards_includes_empty_folder_whiteboard() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new().with_dir("whiteboard/agent");
+
+        let result = list_whiteboards(&conn, &fs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].whiteboard_id, "agent");
+        assert_eq!(result[0].cards, 0);
+        assert_eq!(result[0].notes, 0);
+        assert_eq!(result[0].aliases, 0);
     }
 }

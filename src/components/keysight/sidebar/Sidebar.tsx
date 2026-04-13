@@ -1,15 +1,11 @@
 import type { MouseEvent as ReactMouseEvent, ReactNode } from "react";
 import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
-import { SidebarTabs } from "@/components/keysight/sidebar/SidebarTabs";
-import type { SidebarTab, SidebarTabItem } from "@/components/keysight/sidebar/types";
 import { Button } from "@/components/ui/button";
 
 interface SidebarProps {
   collapsed: boolean;
   width: number;
-  tabs: SidebarTabItem[];
-  activeTab: SidebarTab;
-  onTabChange: (tab: SidebarTab) => void;
+  title: string;
   onToggleCollapse: () => void;
   onResizeStart: (event: ReactMouseEvent<HTMLDivElement>) => void;
   children: ReactNode;
@@ -18,9 +14,7 @@ interface SidebarProps {
 export function Sidebar({
   collapsed,
   width,
-  tabs,
-  activeTab,
-  onTabChange,
+  title,
   onToggleCollapse,
   onResizeStart,
   children,
@@ -47,12 +41,7 @@ export function Sidebar({
       style={{ width }}
     >
       <div className="flex items-start gap-2 border-b border-[#e4dccd] px-4 py-3">
-        <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-semibold uppercase tracking-[0.18em] text-[#978d79]">
-            Keysight
-          </div>
-          <div className="mt-1 text-lg font-semibold text-[#231f17]">Workspace</div>
-        </div>
+        <div className="min-w-0 flex-1 text-sm font-semibold text-[#231f17]">{title}</div>
         <Button
           variant="ghost"
           size="icon-sm"
@@ -62,10 +51,6 @@ export function Sidebar({
         >
           <PanelLeftClose className="size-4" />
         </Button>
-      </div>
-
-      <div className="border-b border-[#e4dccd] px-4 py-3">
-        <SidebarTabs tabs={tabs} activeTab={activeTab} onTabChange={onTabChange} />
       </div>
 
       <div className="min-h-0 flex-1 overflow-y-auto px-4 py-4">{children}</div>

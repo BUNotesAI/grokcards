@@ -112,7 +112,26 @@ describe("NoteNode", () => {
     });
 
     it("空 body 时也能进入编辑（双击占位区，双击应触发 onStartEdit）", () => {
-      // 空 content 的 note，editingField 设为 'note-body' → textarea 渲染（哪怕 content 为空）
+      const emptyNote: GraphNote = { ...mockNote, content: "" };
+      const onStartEdit = vi.fn();
+      render(
+        <NoteNode
+          note={emptyNote}
+          style={{}}
+          onStartEdit={onStartEdit}
+        />,
+      );
+      fireEvent.doubleClick(screen.getByText("Double-click to add note text"));
+      expect(onStartEdit).toHaveBeenCalledWith("note_test0001", "note-body");
+    });
+
+    it("空 body 时显示可编辑占位区", () => {
+      const emptyNote: GraphNote = { ...mockNote, content: "" };
+      render(<NoteNode note={emptyNote} style={{}} />);
+      expect(screen.getByText("Double-click to add note text")).toBeInTheDocument();
+    });
+
+    it("空 body 且 editingField='note-body' → 渲染空 textarea", () => {
       const emptyNote: GraphNote = { ...mockNote, content: "" };
       render(
         <NoteNode

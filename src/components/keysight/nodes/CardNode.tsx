@@ -1,6 +1,6 @@
 import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type { AtomicCard } from "@/bindings";
-import type { LodLevel } from "@/components/keysight/types";
+import type { AliasReference, LodLevel } from "@/components/keysight/types";
 import { applyMarkdownBold } from "@/components/keysight/lib/applyMarkdownBold";
 import { RenderedMarkdown } from "./RenderedMarkdown";
 import {
@@ -17,7 +17,7 @@ interface CardNodeProps {
   /** cardId → AtomicCard 全局查找表，用于解析 related/linkTo 显示标题 */
   cardsById?: Record<string, AtomicCard>;
   /** 反向索引：指向此 card 的 aliases（含所属 section 标题） */
-  aliasRefs?: Array<{ aliasId: string; aliasTitle: string }>;
+  aliasRefs?: AliasReference[];
   style: CSSProperties;
   /** 外观变体：normal card vs alias ghost */
   variant?: "card" | "alias";
@@ -43,6 +43,12 @@ interface CardNodeProps {
   menuSections?: SectionListItem[];
   /** 当前 card/alias 所属 section；null 表示未在任何 section */
   currentSectionId?: string | null;
+  /** 点击 related 卡片时在侧边栏/图上打开它 */
+  onOpenCard?: (id: string) => void;
+  /** 点击 alias 行时在侧边栏打开 alias 详情 */
+  onOpenAlias?: (id: string) => void;
+  /** 点击 tag 时触发侧边栏标签搜索 */
+  onSelectTag?: (tag: string) => void;
 }
 
 /** 区域标题（LINKED / RELATED / ALIASES / SEE ALSO） */
@@ -50,33 +56,30 @@ function SectionHeading({ label, count }: { label: string; count: number }) {
   return (
     <div
       style={{
-        marginTop: 8,
-        padding: "4px 8px",
+        marginTop: 10,
+        padding: "2px 0 6px 0",
         fontSize: 11,
-        fontWeight: 500,
-        color: "#1D9E75",
-        background: "rgba(29, 158, 117, 0.08)",
-        borderRadius: 4,
+        fontWeight: 600,
+        letterSpacing: "0.08em",
+        color: "#9a907e",
+        textTransform: "uppercase",
       }}
     >
-      ▸ {label} ({count})
+      {label} ({count})
     </div>
   );
 }
 
-/** 关联卡片行 — 左侧绿色竖条，和旧 ks-linked-card 样式对齐 */
+/** 关联卡片行 — 更接近 Obsidian 的扁平列表分割线 */
 function LinkedRow({ title }: { title: string }) {
   return (
     <div
       style={{
-        marginTop: 4,
-        padding: "6px 10px",
-        borderRadius: 6,
-        background: "#fafaf8",
-        borderLeft: "3px solid #1D9E75",
+        padding: "8px 0",
+        borderTop: "1px solid rgba(44, 44, 42, 0.08)",
         fontSize: 12,
-        color: "#4a4a47",
-        opacity: 0.88,
+        color: "#4f4a43",
+        lineHeight: 1.45,
         overflow: "hidden",
         textOverflow: "ellipsis",
         whiteSpace: "nowrap",
@@ -84,6 +87,42 @@ function LinkedRow({ title }: { title: string }) {
     >
       <RenderedMarkdown markdown={title} variant="body" />
     </div>
+  );
+}
+
+function LinkedActionRow({
+  title,
+  onClick,
+}: {
+  title: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onMouseDown={(e) => e.stopPropagation()}
+      onClick={(e) => {
+        e.stopPropagation();
+        onClick();
+      }}
+      style={{
+        display: "block",
+        width: "100%",
+        padding: "7px 0",
+        border: "none",
+        borderTop: "1px solid rgba(44, 44, 42, 0.08)",
+        background: "transparent",
+        color: "#4f4a43",
+        textAlign: "left",
+        cursor: "pointer",
+        lineHeight: 1.45,
+        overflow: "hidden",
+        textOverflow: "ellipsis",
+        whiteSpace: "nowrap",
+      }}
+    >
+      <RenderedMarkdown markdown={title} variant="body" />
+    </button>
   );
 }
 
@@ -120,6 +159,9 @@ export const CardNode = memo(function CardNode({
   contextMenu = null,
   menuSections = [],
   currentSectionId = null,
+  onOpenCard,
+  onOpenAlias,
+  onSelectTag,
 }: CardNodeProps) {
   const isAlias = variant === "alias";
   const isEditingTitle = editingField === "card-title";
@@ -420,7 +462,90 @@ export const CardNode = memo(function CardNode({
         </div>
       )}
 
-      {/* 以下内容仅在展开状态下显示：content / tags / 关联 */}
+      {/* 折叠态也显示 tags / related / aliases，贴近 Obsidian 的快速浏览体验 */}
+      {!isExpanded && (card.tags.length > 0 || relatedCards.length > 0 || aliasRefs.length > 0) && (
+        <div style={{ padding: "0 14px 12px 14px" }}>
+          {card.tags.length > 0 && (
+            <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginTop: 4 }}>
+              {card.tags.map((tag) => (
+                <button
+                  key={tag}
+                  type="button"
+                  onMouseDown={(e) => e.stopPropagation()}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onSelectTag?.(tag);
+                  }}
+                  title={`Search tag #${tag}`}
+                  style={{
+                    border: "none",
+                    borderRadius: 999,
+                    background: "#eef7f2",
+                    color: "#1d7058",
+                    padding: "4px 10px",
+                    fontSize: 11,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                  }}
+                >
+                  #{tag}
+                </button>
+              ))}
+            </div>
+          )}
+          {relatedCards.length > 0 && (
+            <div style={{ marginTop: card.tags.length > 0 ? 10 : 6 }}>
+              <div
+                style={{
+                  padding: "2px 0 6px 0",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.08em",
+                  color: "#9a907e",
+                  textTransform: "uppercase",
+                }}
+              >
+                Related ({relatedCards.length})
+              </div>
+              {relatedCards.map((relatedCard) => (
+                <LinkedActionRow
+                  key={relatedCard.id}
+                  title={relatedCard.title}
+                  onClick={() => onOpenCard?.(relatedCard.id)}
+                />
+              ))}
+            </div>
+          )}
+          {aliasRefs.length > 0 && (
+            <div style={{ marginTop: card.tags.length > 0 || relatedCards.length > 0 ? 10 : 6 }}>
+              <div
+                style={{
+                  padding: "2px 0 6px 0",
+                  fontSize: 11,
+                  fontWeight: 600,
+                  letterSpacing: "0.08em",
+                  color: "#9a907e",
+                  textTransform: "uppercase",
+                }}
+              >
+                Aliases ({aliasRefs.length})
+              </div>
+              {aliasRefs.map((aliasRef) => (
+                onOpenAlias ? (
+                  <LinkedActionRow
+                    key={aliasRef.aliasId}
+                    title={aliasRef.aliasTitle}
+                    onClick={() => onOpenAlias(aliasRef.aliasId)}
+                  />
+                ) : (
+                  <LinkedRow key={aliasRef.aliasId} title={aliasRef.aliasTitle} />
+                )
+              ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {isExpanded && card.content && (
         <div style={{ padding: "10px 14px" }}>
           <RenderedMarkdown markdown={card.content} variant="body" />
@@ -468,7 +593,15 @@ export const CardNode = memo(function CardNode({
           <>
             <SectionHeading label="ALIASES" count={aliasRefs.length} />
             {aliasRefs.map((a) => (
-              <LinkedRow key={a.aliasId} title={a.aliasTitle} />
+              onOpenAlias ? (
+                <LinkedActionRow
+                  key={a.aliasId}
+                  title={a.aliasTitle}
+                  onClick={() => onOpenAlias(a.aliasId)}
+                />
+              ) : (
+                <LinkedRow key={a.aliasId} title={a.aliasTitle} />
+              )
             ))}
           </>
         )}

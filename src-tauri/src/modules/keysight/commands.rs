@@ -10,11 +10,12 @@ use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
 use super::domain::section::{SectionStore, SqliteSectionStore};
-use super::domain::{overview, question, sync, task};
+use super::domain::{overview, question, sync, task, whiteboard};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, Edge, EdgeStyle, EdgeType, GraphNote,
-    GraphOverviewResponse, GraphSection, ImportSummary, Position, QuestionEntity, StatsResponse,
-    SyncFileResponse, SyncVaultReport, TaskEntity, VaultInfoResponse, WhiteboardSummary,
+    GraphOverviewResponse, GraphSection, ImportSummary, NoteFileMigrationReport, Position,
+    QuestionEntity, StatsResponse, SyncFileResponse, SyncVaultReport, TaskEntity,
+    VaultInfoResponse, WhiteboardSummary,
 };
 use super::state::KeysightState;
 use super::vault_fs::RealVaultFs;
@@ -455,6 +456,67 @@ pub fn question_query_all(
     question::query_all(&conn, &whiteboard_id).map_err(Into::into)
 }
 
+/// 创建新的 question markdown 文件并同步入库。
+#[tauri::command]
+#[specta::specta]
+pub fn question_create(
+    state: State<'_, KeysightState>,
+    whiteboard_id: String,
+    title: String,
+    content: Option<String>,
+    status: Option<String>,
+) -> Result<QuestionEntity, AppError> {
+    let _t = ScopedTimer::new("cmd:question_create");
+    let conn = lock_db(&state.db, "question_create");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    question::create(
+        &conn,
+        &vault_fs,
+        &whiteboard_id,
+        &title,
+        content.as_deref(),
+        status.as_deref(),
+    )
+    .map_err(Into::into)
+}
+
+/// 更新 question markdown 文件并重新同步。
+#[tauri::command]
+#[specta::specta]
+pub fn question_update(
+    state: State<'_, KeysightState>,
+    id: String,
+    title: Option<String>,
+    content: Option<String>,
+    status: Option<String>,
+) -> Result<(), AppError> {
+    let _t = ScopedTimer::new("cmd:question_update");
+    let conn = lock_db(&state.db, "question_update");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    question::update(
+        &conn,
+        &vault_fs,
+        &id,
+        title.as_deref(),
+        content.as_deref(),
+        status.as_deref(),
+    )
+    .map_err(Into::into)
+}
+
+/// 删除 question markdown 文件并清理数据库。
+#[tauri::command]
+#[specta::specta]
+pub fn question_delete(
+    state: State<'_, KeysightState>,
+    id: String,
+) -> Result<(), AppError> {
+    let _t = ScopedTimer::new("cmd:question_delete");
+    let conn = lock_db(&state.db, "question_delete");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    question::delete(&conn, &vault_fs, &id).map_err(Into::into)
+}
+
 // ============================================================
 // Note
 // ============================================================
@@ -506,7 +568,8 @@ pub fn note_create(
     color: Option<String>,
 ) -> Result<GraphNote, AppError> {
     let conn = state.db.lock().unwrap();
-    let store = SqliteNoteStore::new(&conn);
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
     store
         .create(&whiteboard_id, &title, content.as_deref(), color.as_deref())
         .map_err(Into::into)
@@ -531,7 +594,8 @@ pub fn note_create(
 #[specta::specta]
 pub fn note_delete(state: State<'_, KeysightState>, id: String) -> Result<(), AppError> {
     let conn = state.db.lock().unwrap();
-    let store = SqliteNoteStore::new(&conn);
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
     store.delete(&id).map_err(Into::into)
 }
 
@@ -559,9 +623,22 @@ pub fn note_update(
 ) -> Result<(), AppError> {
     let _t = ScopedTimer::new("cmd:note_update");
     let conn = lock_db(&state.db, "note_update");
-    let store = SqliteNoteStore::new(&conn);
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
     store
         .update(&id, title.as_deref(), content.as_deref(), color.as_deref())
+        .map_err(Into::into)
+}
+
+/// 备份 DB 和 `whiteboard/` 后，把 DB-only notes 导出成 markdown 文件。
+#[tauri::command]
+#[specta::specta]
+pub fn note_migrate_to_files(
+    state: State<'_, KeysightState>,
+) -> Result<NoteFileMigrationReport, AppError> {
+    let _t = ScopedTimer::new("cmd:note_migrate_to_files");
+    let conn = lock_db(&state.db, "note_migrate_to_files");
+    super::domain::note::migrate_db_notes_to_files(&conn, &state.db_path, &state.vault_path)
         .map_err(Into::into)
 }
 
@@ -770,7 +847,18 @@ pub fn entity_connect(
     let graph = SqliteEntityGraph::new(&conn);
     graph
         .connect(&from_id, &to_id, edge_type, style, label.as_deref())
-        .map_err(Into::into)
+        .map_err(AppError::from)?;
+
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    if from_id.starts_with("card_") && matches!(edge_type, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso) {
+        let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
+        store.sync_edges_to_file(&from_id).map_err(AppError::from)?;
+    } else if from_id.starts_with("note_") && edge_type == EdgeType::NoteLink {
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
+        store.sync_links_to_file(&from_id).map_err(AppError::from)?;
+    }
+
+    Ok(())
 }
 
 /// # entity_disconnect
@@ -798,7 +886,18 @@ pub fn entity_disconnect(
     let graph = SqliteEntityGraph::new(&conn);
     graph
         .disconnect(&from_id, &to_id, edge_type)
-        .map_err(Into::into)
+        .map_err(AppError::from)?;
+
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    if from_id.starts_with("card_") && matches!(edge_type, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso) {
+        let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
+        store.sync_edges_to_file(&from_id).map_err(AppError::from)?;
+    } else if from_id.starts_with("note_") && edge_type == EdgeType::NoteLink {
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
+        store.sync_links_to_file(&from_id).map_err(AppError::from)?;
+    }
+
+    Ok(())
 }
 
 // ============================================================
@@ -928,7 +1027,35 @@ pub fn whiteboard_list(
 ) -> Result<Vec<WhiteboardSummary>, AppError> {
     let _t = ScopedTimer::new("cmd:whiteboard_list");
     let conn = lock_db(&state.db, "whiteboard_list");
-    overview::list_whiteboards(&conn).map_err(Into::into)
+    let fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    overview::list_whiteboards(&conn, &fs).map_err(Into::into)
+}
+
+/// # whiteboard_create
+///
+/// ## 前置条件
+/// - `name` trim 后非空
+/// - `name` 不能包含 `/` 或 `:`
+/// - `whiteboard/{name}/` 目录尚不存在
+///
+/// ## 执行效果
+/// 1. 在 vault 下创建空目录 `whiteboard/{name}/`
+/// 2. 返回该 whiteboard 的零统计摘要
+///
+/// ## 不做的事
+/// - 不创建任何 card / section / note
+/// - 不直接写入 positions；root 画布会在看到新 whiteboard 后自动补位置
+///
+/// ## 幂等性
+/// 非幂等 — 已存在同名文件夹时报错
+#[tauri::command]
+#[specta::specta]
+pub fn whiteboard_create(
+    state: State<'_, KeysightState>,
+    name: String,
+) -> Result<WhiteboardSummary, AppError> {
+    let _t = ScopedTimer::new("cmd:whiteboard_create");
+    whiteboard::create_folder(&state.vault_path, &name).map_err(Into::into)
 }
 
 // ============================================================

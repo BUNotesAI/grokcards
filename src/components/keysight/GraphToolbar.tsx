@@ -9,15 +9,22 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import {
+  BookOpen,
+  Boxes,
+  CircleHelp,
+  FolderKanban,
+  FolderPlus,
+  Lightbulb,
   Minus,
+  NotebookPen,
+  PenSquare,
   Plus,
   RotateCcw,
   RefreshCw,
-  FolderPlus,
-  StickyNote,
-  Search,
-  ArrowLeft,
-  Menu,
+  ChevronRight,
+  MapPinned,
+  Rows3,
+  LibraryBig,
 } from "lucide-react";
 
 /** 实体计数 */
@@ -36,8 +43,14 @@ interface GraphToolbarProps {
   onSync: () => void;
   onCreateSection: () => void;
   onCreateNote: () => void;
-  searchQuery: string;
-  onSearchChange: (query: string) => void;
+  onCreateQuestion?: () => void;
+  onCreateWhiteboard?: () => void;
+  creatingWhiteboard?: boolean;
+  whiteboardDraft?: string;
+  onWhiteboardDraftChange?: (value: string) => void;
+  onSubmitWhiteboard?: () => void;
+  onCancelWhiteboard?: () => void;
+  onShowOrphans?: () => void;
   /** 当前白板 id，wb_root 表示根白板 */
   currentWhiteboardId?: string;
   /** 返回根白板的回调，仅子白板时使用 */
@@ -55,10 +68,10 @@ interface GraphToolbarProps {
 /**
  * 画布工具栏 — 4 个区域
  *
- * 状态区：实体计数 + zoom 百分比
- * 创建区：+ Section / + Note
+ * 统计区：实体计数
+ * 创建区：Section / Note / 孤儿
  * 操作区：Sync + zoom +/-/reset
- * 搜索区：输入框（debounce 由父组件管理）
+ * 跳转区：Sections / Boards / Root
  */
 export function GraphToolbar({
   viewport,
@@ -66,8 +79,14 @@ export function GraphToolbar({
   onSync,
   onCreateSection,
   onCreateNote,
-  searchQuery,
-  onSearchChange,
+  onCreateQuestion,
+  onCreateWhiteboard,
+  creatingWhiteboard = false,
+  whiteboardDraft = "",
+  onWhiteboardDraftChange,
+  onSubmitWhiteboard,
+  onCancelWhiteboard,
+  onShowOrphans,
   currentWhiteboardId = "wb_root",
   onNavigateBack,
   sections = [],
@@ -77,66 +96,121 @@ export function GraphToolbar({
 }: GraphToolbarProps) {
   const { state, actions } = viewport;
   const zoomPercent = Math.round(state.zoom * 100);
-
-  const totalEntities =
-    entityCounts.cards +
-    entityCounts.notes +
-    entityCounts.sections +
-    entityCounts.tasks +
-    entityCounts.questions +
-    entityCounts.aliases;
+  const coordX = Math.round(-state.panX / Math.max(state.zoom, 0.001));
+  const coordY = Math.round(-state.panY / Math.max(state.zoom, 0.001));
 
   return (
-    <div className="flex items-center gap-3 border-b border-border bg-background/80 px-4 py-2 backdrop-blur-sm">
-      {/* 状态区 */}
-      <div className="flex items-center gap-2 text-xs text-muted-foreground">
-        {entityCounts.cards > 0 && (
-          <span>{entityCounts.cards} card{entityCounts.cards !== 1 ? "s" : ""}</span>
+    <div className="flex flex-wrap items-center gap-3 border-b border-[#dbd6cc] bg-[#f6f4ef] px-4 py-2 text-[13px] text-[#5c5548]">
+      <div className="flex items-center gap-1.5">
+        <button
+          type="button"
+          onClick={currentWhiteboardId !== "wb_root" ? onNavigateBack : undefined}
+          className="rounded-md px-1.5 py-0.5 text-[#4b4efc] hover:bg-[#ebe8df]"
+        >
+          Root
+        </button>
+        {currentWhiteboardId !== "wb_root" && (
+          <>
+            <ChevronRight className="size-3.5 text-[#9b9383]" />
+            <span className="rounded-md px-1.5 py-0.5 text-[#3a342b]">{currentWhiteboardId}</span>
+          </>
         )}
-        {entityCounts.tasks > 0 && (
-          <span>{entityCounts.tasks} task{entityCounts.tasks !== 1 ? "s" : ""}</span>
-        )}
-        {entityCounts.questions > 0 && (
-          <span>{entityCounts.questions} question{entityCounts.questions !== 1 ? "s" : ""}</span>
-        )}
-        {entityCounts.notes > 0 && (
-          <span>{entityCounts.notes} note{entityCounts.notes !== 1 ? "s" : ""}</span>
-        )}
-        {entityCounts.sections > 0 && (
-          <span>{entityCounts.sections} section{entityCounts.sections !== 1 ? "s" : ""}</span>
-        )}
-        {entityCounts.aliases > 0 && (
-          <span>{entityCounts.aliases} alias{entityCounts.aliases !== 1 ? "es" : ""}</span>
-        )}
-        {totalEntities === 0 && <span>Empty whiteboard</span>}
-        <span className="text-muted-foreground/50">|</span>
-        <span>{zoomPercent}%</span>
       </div>
 
-      <div className="flex-1" />
+      <div className="h-5 w-px bg-[#d8d2c6]" />
 
-      {/* 创建区 */}
-      <Button variant="ghost" size="sm" onClick={onCreateSection} aria-label="Create Section">
-        <FolderPlus className="mr-1 h-4 w-4" />
+      <div className="flex items-center gap-3">
+        <span className="inline-flex items-center gap-1.5">
+          <BookOpen className="size-3.5 text-[#7d725f]" />
+          <span>{entityCounts.cards} Cards</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Boxes className="size-3.5 text-[#7d725f]" />
+          <span>{entityCounts.aliases} Aliases</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <NotebookPen className="size-3.5 text-[#7d725f]" />
+          <span>{entityCounts.notes} Notes</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <Rows3 className="size-3.5 text-[#7d725f]" />
+          <span>{entityCounts.sections} Sections</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <MapPinned className="size-3.5 text-[#7d725f]" />
+          <span>{coordX}×{coordY}</span>
+        </span>
+        <span className="inline-flex items-center gap-1.5">
+          <span className="text-[#7d725f]">Zoom</span>
+          <span>{zoomPercent}%</span>
+        </span>
+      </div>
+
+      <div className="h-5 w-px bg-[#d8d2c6]" />
+
+      <Button variant="outline" size="sm" onClick={onCreateSection} aria-label="Create Section">
+        <LibraryBig className="mr-1 h-4 w-4" />
         Section
       </Button>
-      <Button variant="ghost" size="sm" onClick={onCreateNote} aria-label="Create Note">
-        <StickyNote className="mr-1 h-4 w-4" />
+      <Button variant="outline" size="sm" onClick={onCreateNote} aria-label="Create Note">
+        <PenSquare className="mr-1 h-4 w-4" />
         Note
       </Button>
+      <Button variant="outline" size="sm" onClick={onCreateQuestion} aria-label="Create Question">
+        <CircleHelp className="mr-1 h-4 w-4" />
+        Question
+      </Button>
+      {currentWhiteboardId === "wb_root" && (
+        creatingWhiteboard ? (
+          <Input
+            autoFocus
+            value={whiteboardDraft}
+            placeholder="Whiteboard name (= folder)…"
+            aria-label="Whiteboard name"
+            className="h-9 w-56 bg-white"
+            onChange={(event) => onWhiteboardDraftChange?.(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") onCancelWhiteboard?.();
+            }}
+            onBlur={() => onSubmitWhiteboard?.()}
+          />
+        ) : (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={onCreateWhiteboard}
+            aria-label="Create Whiteboard"
+          >
+            <FolderPlus className="mr-1 h-4 w-4" />
+            Whiteboard
+          </Button>
+        )
+      )}
+      <Button
+        variant="outline"
+        size="icon"
+        onClick={onShowOrphans}
+        aria-label="Show orphans"
+        title="Show orphan cards"
+      >
+        <Lightbulb className="h-4 w-4" />
+      </Button>
 
-      {/* 跳转区 — Sections / Boards 下拉 */}
       {sections.length > 0 && (
         <DropdownMenu>
           <DropdownMenuTrigger
             render={(props) => (
               <Button
-                variant="secondary"
+                variant="outline"
                 size="sm"
                 aria-label="Jump to section"
                 {...(props as React.ComponentProps<typeof Button>)}
               >
-                <Menu className="mr-1 h-4 w-4" />
+                <FolderKanban className="mr-1 h-4 w-4" />
                 Sections
               </Button>
             )}
@@ -163,13 +237,13 @@ export function GraphToolbar({
           <DropdownMenuTrigger
             render={(props) => (
               <Button
-                variant="secondary"
+                variant="outline"
                 size="sm"
                 aria-label="Jump to whiteboard"
                 title="Jump to whiteboard"
                 {...(props as React.ComponentProps<typeof Button>)}
               >
-                <Menu className="mr-1 h-4 w-4" />
+                <LibraryBig className="mr-1 h-4 w-4" />
                 Boards
               </Button>
             )}
@@ -203,42 +277,39 @@ export function GraphToolbar({
       )}
 
       {/* 操作区 */}
-      <div className="flex items-center gap-1 border-l border-border pl-3">
-        <Button variant="ghost" size="icon" onClick={onSync} aria-label="Sync">
+      <div className="ml-auto flex items-center gap-1 border-l border-[#d8d2c6] pl-3">
+        <Button variant="ghost" size="icon" onClick={onSync} aria-label="Sync" title="Sync">
           <RefreshCw className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={actions.zoomOut} aria-label="Zoom out">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={actions.zoomOut}
+          aria-label="Zoom out"
+          title="Zoom out"
+        >
           <Minus className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={actions.zoomIn} aria-label="Zoom in">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={actions.zoomIn}
+          aria-label="Zoom in"
+          title="Zoom in"
+        >
           <Plus className="h-4 w-4" />
         </Button>
-        <Button variant="ghost" size="icon" onClick={actions.resetView} aria-label="Reset zoom">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={actions.resetView}
+          aria-label="Reset zoom"
+          title="Reset zoom"
+        >
           <RotateCcw className="h-4 w-4" />
         </Button>
       </div>
 
-      {/* 搜索区 */}
-      <div className="relative w-48">
-        <Search className="absolute left-2 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-        <Input
-          placeholder="Search..."
-          value={searchQuery}
-          onChange={(e) => onSearchChange(e.target.value)}
-          className="h-8 pl-8 text-sm"
-        />
-      </div>
-
-      {/* 白板导航 */}
-      {currentWhiteboardId !== "wb_root" && (
-        <div className="flex items-center gap-2 border-l border-border pl-3">
-          <Button variant="ghost" size="sm" onClick={onNavigateBack} aria-label="Back to root">
-            <ArrowLeft className="mr-1 h-4 w-4" />
-            Root
-          </Button>
-          <span className="text-xs font-medium text-foreground">{currentWhiteboardId}</span>
-        </div>
-      )}
     </div>
   );
 }

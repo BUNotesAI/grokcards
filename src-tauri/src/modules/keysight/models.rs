@@ -323,6 +323,16 @@ pub struct ToggleSyntaxMigrationReport {
     pub db_notes_updated: u32,
 }
 
+/// DB-only notes -> markdown files 迁移报告。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct NoteFileMigrationReport {
+    pub migrated_notes: u32,
+    pub skipped_notes: u32,
+    pub db_backup_path: String,
+    pub whiteboard_backup_path: String,
+}
+
 /// 统计信息。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

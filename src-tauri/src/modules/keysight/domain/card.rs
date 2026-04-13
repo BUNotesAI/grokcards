@@ -47,6 +47,32 @@ impl<'a> SqliteCardStore<'a> {
     pub fn with_vault_fs(conn: &'a Connection, vault_fs: &'a dyn VaultFs) -> Self {
         Self { conn, vault_fs: Some(vault_fs) }
     }
+
+    pub fn sync_edges_to_file(&self, id: &str) -> Result<(), KeysightError> {
+        let vault_fs = self.vault_fs.ok_or_else(|| {
+            KeysightError::FileError("sync_edges_to_file 需要 VaultFs".to_string())
+        })?;
+        let card = self.get(id)?;
+        let content = vault_fs.read_file(&card.file_path)?;
+        let updated = parser::write_frontmatter(&content, parser::FrontmatterUpdate {
+            link_to: Some(card.link_to.clone()),
+            related: Some(card.related.clone()),
+            see_also: Some(card.see_also.clone()),
+            ..Default::default()
+        });
+        vault_fs.write_file(&card.file_path, &updated)?;
+        crate::modules::keysight::domain::sync::sync_file(
+            self.conn,
+            &card.file_path,
+            &updated,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs_f64()
+                * 1000.0,
+        )?;
+        Ok(())
+    }
 }
 
 /// 从一组 card id 批量加载 tags，返回 id → Vec<tag> 映射。
@@ -83,7 +109,7 @@ fn batch_load_edges(conn: &Connection, ids: &[String]) -> Result<HashMap<String,
     }
     let placeholders: Vec<&str> = ids.iter().map(|_| "?").collect();
     let sql = format!(
-        "SELECT from_id, to_id, edge_type FROM edges WHERE from_id IN ({}) AND edge_type IN ('link_to', 'related', 'see_also')",
+        "SELECT from_id, to_id, edge_type FROM edges WHERE from_id IN ({}) AND edge_type IN ('link_to', 'related', 'see_also') ORDER BY from_id, rowid",
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
@@ -194,6 +220,54 @@ fn assemble_cards(conn: &Connection, card_rows: Vec<CardRow>) -> Result<Vec<Atom
         })
         .collect();
     Ok(cards)
+}
+
+fn sort_cards_by_id_order(cards: Vec<AtomicCard>, ids: &[String]) -> Vec<AtomicCard> {
+    let rank_by_id: HashMap<&str, usize> = ids
+        .iter()
+        .enumerate()
+        .map(|(index, id)| (id.as_str(), index))
+        .collect();
+
+    let mut cards = cards;
+    cards.sort_by_key(|card| rank_by_id.get(card.id.as_str()).copied().unwrap_or(usize::MAX));
+    cards
+}
+
+fn search_rank(card: &AtomicCard, query: &str, words: &[&str]) -> usize {
+    let title = card.title.to_lowercase();
+    let content = card.content.to_lowercase();
+
+    if title == query {
+        return 0;
+    }
+    if title.contains(query) {
+        return 1;
+    }
+    if !words.is_empty() && words.iter().all(|word| title.contains(word)) {
+        return 2;
+    }
+    if content.contains(query) {
+        return 3;
+    }
+    4
+}
+
+fn rank_search_results(mut cards: Vec<AtomicCard>, text: &str) -> Vec<AtomicCard> {
+    let query = text.trim().to_lowercase();
+    let words: Vec<&str> = query.split_whitespace().filter(|word| !word.is_empty()).collect();
+
+    cards.sort_by(|a, b| {
+        let rank_a = search_rank(a, &query, &words);
+        let rank_b = search_rank(b, &query, &words);
+
+        rank_a
+            .cmp(&rank_b)
+            .then_with(|| b.mtime.partial_cmp(&a.mtime).unwrap_or(std::cmp::Ordering::Equal))
+            .then_with(|| a.title.cmp(&b.title))
+    });
+
+    cards
 }
 
 /// # 清理卡片标题历史转义
@@ -358,7 +432,8 @@ impl CardStore for SqliteCardStore<'_> {
         let where_clause = format!("AND e.id IN ({})", placeholders.join(", "));
         let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
         let rows = query_card_rows(self.conn, &where_clause, params.as_slice())?;
-        assemble_cards(self.conn, rows)
+        let cards = assemble_cards(self.conn, rows)?;
+        Ok(sort_cards_by_id_order(cards, ids))
     }
 
     fn count(&self) -> Result<i64, KeysightError> {
@@ -486,7 +561,8 @@ impl CardStore for SqliteCardStore<'_> {
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         if !ids.is_empty() {
-            return self.query_by_ids(&ids);
+            let cards = self.query_by_ids(&ids)?;
+            return Ok(rank_search_results(cards, text));
         }
 
         // FTS 无结果 — fallback 到 LIKE
@@ -496,7 +572,8 @@ impl CardStore for SqliteCardStore<'_> {
             "AND (e.title LIKE ?1 OR e.content LIKE ?1)",
             &[&like_pattern as &dyn rusqlite::types::ToSql],
         )?;
-        assemble_cards(self.conn, rows)
+        let cards = assemble_cards(self.conn, rows)?;
+        Ok(rank_search_results(cards, text))
     }
 
     fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError> {
@@ -512,7 +589,7 @@ impl CardStore for SqliteCardStore<'_> {
 
         // 出边
         let mut out_stmt = self.conn.prepare(
-            "SELECT to_id, edge_type FROM edges WHERE from_id = ?1"
+            "SELECT to_id, edge_type FROM edges WHERE from_id = ?1 ORDER BY rowid"
         )?;
         let out_rows = out_stmt.query_map([id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -533,7 +610,7 @@ impl CardStore for SqliteCardStore<'_> {
 
         // 入边
         let mut in_stmt = self.conn.prepare(
-            "SELECT from_id, edge_type FROM edges WHERE to_id = ?1"
+            "SELECT from_id, edge_type FROM edges WHERE to_id = ?1 ORDER BY rowid"
         )?;
         let in_rows = in_stmt.query_map([id], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
@@ -700,6 +777,22 @@ Second body.
         let ids = vec!["card_test0001".to_string(), "card_test0002".to_string()];
         let cards = store.query_by_ids(&ids).unwrap();
         assert_eq!(cards.len(), 2);
+    }
+
+    #[test]
+    fn test_query_by_ids_preserves_input_order() {
+        let conn = test_conn();
+        seed_card(&conn);
+        seed_card2(&conn);
+        let store = SqliteCardStore::new(&conn);
+
+        let ids = vec!["card_test0002".to_string(), "card_test0001".to_string()];
+        let cards = store.query_by_ids(&ids).unwrap();
+
+        assert_eq!(
+            cards.iter().map(|card| card.id.as_str()).collect::<Vec<_>>(),
+            vec!["card_test0002", "card_test0001"]
+        );
     }
 
     #[test]
@@ -994,6 +1087,41 @@ Dirty body content.
     }
 
     #[test]
+    fn test_search_prioritizes_title_matches_over_content_matches() {
+        let conn = test_conn();
+        let md_title = "\
+---
+type: atomic-card
+id: card_titlematch
+---
+
+# 【ATC】所有权速记
+
+普通内容。
+";
+        let md_content = "\
+---
+type: atomic-card
+id: card_contentmatch
+---
+
+# 【ATC】普通标题
+
+这里讲所有权细节。
+";
+        sync::sync_file(&conn, "whiteboard/title.md", md_title, 1000.0).unwrap();
+        sync::sync_file(&conn, "whiteboard/content.md", md_content, 2000.0).unwrap();
+        let store = SqliteCardStore::new(&conn);
+
+        let results = store.search("所有权").unwrap();
+
+        assert_eq!(
+            results.iter().map(|card| card.id.as_str()).collect::<Vec<_>>(),
+            vec!["card_titlematch", "card_contentmatch"]
+        );
+    }
+
+    #[test]
     fn test_search_no_results() {
         let conn = test_conn();
         seed_card(&conn);
@@ -1045,5 +1173,24 @@ Dirty body content.
         let links = store.query_links("card_lonely1").unwrap();
         assert!(links.link_to.is_empty());
         assert!(links.linked_from.is_empty());
+    }
+
+    #[test]
+    fn test_sync_edges_to_file_rewrites_frontmatter_from_db_edges() {
+        let conn = test_conn();
+        seed_card(&conn);
+        let vfs = seed_card_with_file(&conn);
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES ('card_test0001', 'card_new_target', 'related')",
+            [],
+        )
+        .unwrap();
+
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+        store.sync_edges_to_file("card_test0001").unwrap();
+
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
+        let parsed = parser::parse_entity(&file).unwrap();
+        assert_eq!(parsed.related, vec!["card_other002", "card_new_target"]);
     }
 }

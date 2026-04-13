@@ -15,6 +15,8 @@ export interface EdgePath {
   midY: number;
 }
 
+const EDGE_ARROW_CLEARANCE = 12;
+
 /**
  * 构造 from→to 两矩形之间的 SVG 二次贝塞尔曲线 path。
  *
@@ -29,12 +31,13 @@ export interface EdgePath {
  *
  * @param from 起点矩形
  * @param to 终点矩形
- * @param padding 矩形外扩 padding（让 edge 端点离卡片有缝隙），默认 6
+ * @param padding 矩形外扩 padding（让 edge 端点离卡片有缝隙），默认 12。
+ *        这里要大于箭头 marker 的视觉长度，否则某些方向下箭头会被目标卡片盖住。
  */
 export function buildEdgePath(
   from: EdgeBox,
   to: EdgeBox,
-  padding = 6,
+  padding = 12,
 ): EdgePath | null {
   // 矩形重叠时不渲染连线（视觉上无意义，且 clipToRect 会算出"反向"路径）
   const overlap = !(
@@ -86,6 +89,17 @@ export function buildEdgePath(
   const cpX = midX + nx * curvature;
   const cpY = midY + ny * curvature;
 
-  const path = `M ${p1.x},${p1.y} Q ${cpX},${cpY} ${p2.x},${p2.y}`;
+  // 箭头沿“终点切线方向”旋转；如果终点只离卡片边界留出普通 padding，
+  // 在拐角/斜向连线下箭头头部仍可能被卡片盖住。
+  // 这里把终点再沿切线反向后退一段，确保 marker 有稳定的物理空间。
+  const tangentX = p2.x - cpX;
+  const tangentY = p2.y - cpY;
+  const tangentLen = Math.sqrt(tangentX * tangentX + tangentY * tangentY);
+  const endX =
+    tangentLen > 0 ? p2.x - (tangentX / tangentLen) * EDGE_ARROW_CLEARANCE : p2.x;
+  const endY =
+    tangentLen > 0 ? p2.y - (tangentY / tangentLen) * EDGE_ARROW_CLEARANCE : p2.y;
+
+  const path = `M ${p1.x},${p1.y} Q ${cpX},${cpY} ${endX},${endY}`;
   return { path, midX: cpX, midY: cpY };
 }

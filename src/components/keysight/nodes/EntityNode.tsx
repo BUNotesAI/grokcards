@@ -1,5 +1,6 @@
 import { memo, useMemo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type {
+  AliasReference,
   EntityKind,
   EntityWithPosition,
   GraphSelectableKind,
@@ -51,6 +52,9 @@ export type EditingField =
   | "card-understanding"
   | "note-title"
   | "note-body"
+  | "question-title"
+  | "question-body"
+  | "section-title"
   | null;
 
 interface EntityNodeProps {
@@ -59,7 +63,7 @@ interface EntityNodeProps {
   /** 所有实体 id → kind 映射，SectionNode bounds 计算用 */
   allKinds: Record<string, EntityKind>;
   cardsById?: Record<string, AtomicCard>;
-  aliasesByTargetId?: Record<string, Array<{ aliasId: string; aliasTitle: string }>>;
+  aliasesByTargetId?: Record<string, AliasReference[]>;
   lodLevel?: LodLevel;
   selected?: boolean;
   highlighted?: boolean;
@@ -91,6 +95,9 @@ interface EntityNodeProps {
   menuSections?: SectionListItem[];
   /** 此实体所属 section id；null 表示未在任何 section */
   currentSectionId?: string | null;
+  onOpenCard?: (cardId: string) => void;
+  onOpenAlias?: (aliasId: string) => void;
+  onSelectTag?: (tag: string) => void;
 }
 
 /**
@@ -121,6 +128,9 @@ function EntityNodeImpl({
   menuHandlers = null,
   menuSections = [],
   currentSectionId = null,
+  onOpenCard,
+  onOpenAlias,
+  onSelectTag,
 }: EntityNodeProps) {
   // 按 entity.kind 派发构造对应类型的菜单配置
   // 回调闭合 entity.id，这样 NodeContextMenu 内无需感知 id
@@ -212,6 +222,9 @@ function EntityNodeImpl({
     editing === "card-title" || editing === "card-understanding" ? editing : null;
   const noteEditingField =
     editing === "note-title" || editing === "note-body" ? editing : null;
+  const questionEditingField =
+    editing === "question-title" || editing === "question-body" ? editing : null;
+  const sectionEditingField = editing === "section-title" ? editing : null;
 
   switch (entity.kind) {
     case "card":
@@ -234,6 +247,9 @@ function EntityNodeImpl({
             contextMenu={cardMenu}
             menuSections={menuSections}
             currentSectionId={currentSectionId}
+            onOpenCard={onOpenCard}
+            onOpenAlias={onOpenAlias}
+            onSelectTag={onSelectTag}
             style={innerStyle}
           />
         </div>
@@ -256,6 +272,10 @@ function EntityNodeImpl({
         <div style={wrapperStyle} onMouseDown={handleMouseDown} onClick={handleClick}>
           <QuestionNode
             question={entity.entity}
+            editingField={questionEditingField}
+            onStartEdit={onStartEdit}
+            onCommitEdit={onCommitEdit}
+            onCancelEdit={onCancelEdit}
             style={innerStyle}
             lodLevel={lodLevel}
             selected={selected}
@@ -295,6 +315,10 @@ function EntityNodeImpl({
             section={entity.entity}
             memberPositions={allPositions}
             memberKinds={allKinds}
+            editingField={sectionEditingField}
+            onStartEdit={onStartEdit}
+            onCommitEdit={onCommitEdit}
+            onCancelEdit={onCancelEdit}
             contextMenu={sectionMenu}
             style={{}}
           />
@@ -318,6 +342,9 @@ function EntityNodeImpl({
             contextMenu={aliasMenu}
             menuSections={menuSections}
             currentSectionId={currentSectionId}
+            onOpenCard={onOpenCard}
+            onOpenAlias={onOpenAlias}
+            onSelectTag={onSelectTag}
             style={innerStyle}
           />
         </div>

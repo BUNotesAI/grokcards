@@ -1,10 +1,15 @@
 #![allow(dead_code)]
-use rusqlite::{params, Connection};
+use std::path::{Path, PathBuf};
+
+use rusqlite::{Connection, OptionalExtension};
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
-use crate::modules::keysight::models::GraphNote;
+use crate::modules::keysight::models::{GraphNote, NoteFileMigrationReport};
 use crate::modules::keysight::parser;
+use crate::modules::keysight::vault_fs::{RealVaultFs, VaultFs};
+
+use super::sync;
 
 /// 笔记存储契约。
 pub(in crate::modules::keysight) trait NoteStore {
@@ -17,10 +22,99 @@ pub(in crate::modules::keysight) trait NoteStore {
 
 pub(in crate::modules::keysight) struct SqliteNoteStore<'a> {
     conn: &'a Connection,
+    vault_fs: Option<&'a dyn VaultFs>,
+}
+
+struct NoteSnapshot {
+    whiteboard_id: String,
+    title: String,
+    color: Option<String>,
+    file_path: Option<String>,
+    note: GraphNote,
+}
+
+struct NoteFileState<'a> {
+    id: &'a str,
+    whiteboard_id: &'a str,
+    title: &'a str,
+    content: &'a str,
+    color: Option<&'a str>,
+    linked_card_ids: &'a [String],
+    linked_note_ids: &'a [String],
+    linked_section_ids: &'a [String],
+    file_path: Option<&'a str>,
 }
 
 impl<'a> SqliteNoteStore<'a> {
-    pub fn new(conn: &'a Connection) -> Self { Self { conn } }
+    pub fn new(conn: &'a Connection) -> Self { Self { conn, vault_fs: None } }
+
+    pub fn with_vault_fs(conn: &'a Connection, vault_fs: &'a dyn VaultFs) -> Self {
+        Self {
+            conn,
+            vault_fs: Some(vault_fs),
+        }
+    }
+
+    fn require_vault_fs(&self, op: &str) -> Result<&dyn VaultFs, KeysightError> {
+        self.vault_fs
+            .ok_or_else(|| KeysightError::FileError(format!("{op} 需要 VaultFs")))
+    }
+
+    fn current_snapshot(&self, id: &str) -> Result<NoteSnapshot, KeysightError> {
+        let row: Option<(String, String, Option<String>, Option<String>)> = self
+            .conn
+            .query_row(
+                "SELECT whiteboard_id, title, color, file_path FROM entities WHERE id = ?1 AND kind = 'note'",
+                [id],
+                |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
+            )
+            .optional()?;
+        let (whiteboard_id, title, color, file_path) = row.ok_or_else(|| KeysightError::NotFound(id.to_string()))?;
+        let note = self.get(id)?;
+        Ok(NoteSnapshot {
+            whiteboard_id,
+            title,
+            color,
+            file_path,
+            note,
+        })
+    }
+
+    fn rewrite_note_file_from_state(&self, state: NoteFileState<'_>) -> Result<String, KeysightError> {
+        let vault_fs = self.require_vault_fs("rewrite_note_file_from_state")?;
+        let relative_path = state.file_path
+            .filter(|path| !path.is_empty())
+            .map(|path| path.to_string())
+            .unwrap_or_else(|| note_relative_path(state.whiteboard_id, state.id, state.title));
+        let markdown = render_note_markdown(
+            state.id,
+            state.title,
+            state.content,
+            state.color,
+            state.linked_card_ids,
+            state.linked_note_ids,
+            state.linked_section_ids,
+        );
+        vault_fs.write_file(&relative_path, &markdown)?;
+        sync::sync_file(self.conn, &relative_path, &markdown, current_mtime_ms())?;
+        Ok(relative_path)
+    }
+
+    pub fn sync_links_to_file(&self, id: &str) -> Result<(), KeysightError> {
+        let snapshot = self.current_snapshot(id)?;
+        self.rewrite_note_file_from_state(NoteFileState {
+            id,
+            whiteboard_id: &snapshot.whiteboard_id,
+            title: &snapshot.title,
+            content: &snapshot.note.content,
+            color: snapshot.color.as_deref(),
+            linked_card_ids: snapshot.note.linked_card_ids.as_deref().unwrap_or(&[]),
+            linked_note_ids: snapshot.note.linked_note_ids.as_deref().unwrap_or(&[]),
+            linked_section_ids: snapshot.note.linked_section_ids.as_deref().unwrap_or(&[]),
+            file_path: snapshot.file_path.as_deref(),
+        })?;
+        Ok(())
+    }
 }
 
 impl NoteStore for SqliteNoteStore<'_> {
@@ -29,22 +123,31 @@ impl NoteStore for SqliteNoteStore<'_> {
         let normalized_content = content
             .map(parser::normalize_legacy_toggle_syntax)
             .unwrap_or_default();
-        self.conn.execute(
-            "INSERT INTO entities (id, kind, title, whiteboard_id, content, color) VALUES (?1, 'note', ?2, ?3, ?4, ?5)",
-            params![note_id, title, whiteboard_id, normalized_content, color],
-        )?;
-        Ok(GraphNote {
-            id: note_id,
-            title: title.to_string(),
-            content: normalized_content,
-            color: color.map(|s| s.to_string()),
-            linked_section_ids: None,
-            linked_card_ids: None,
-            linked_note_ids: None,
-        })
+        let relative_path = note_relative_path(whiteboard_id, &note_id, title);
+        let markdown = render_note_markdown(&note_id, title, &normalized_content, color, &[], &[], &[]);
+
+        self.require_vault_fs("create")?
+            .write_file(&relative_path, &markdown)?;
+        sync::sync_file(self.conn, &relative_path, &markdown, current_mtime_ms())?;
+        self.get(&note_id)
     }
 
     fn delete(&self, id: &str) -> Result<(), KeysightError> {
+        let file_path: Option<String> = self
+            .conn
+            .query_row(
+                "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'note'",
+                [id],
+                |r| r.get(0),
+            )
+            .optional()?;
+
+        if let Some(file_path) = file_path.filter(|path| !path.is_empty()) {
+            self.require_vault_fs("delete")?.delete_file(&file_path)?;
+            sync::remove_file(self.conn, &file_path)?;
+            return Ok(());
+        }
+
         self.conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
         self.conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id])?;
         self.conn.execute("DELETE FROM entities WHERE id = ?1", [id])?;
@@ -52,17 +155,28 @@ impl NoteStore for SqliteNoteStore<'_> {
     }
 
     fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError> {
-        if let Some(t) = title {
-            self.conn.execute("UPDATE entities SET title = ?1 WHERE id = ?2", params![t, id])?;
-        }
-        if let Some(c) = content {
-            let normalized = parser::normalize_legacy_toggle_syntax(c);
-            self.conn.execute("UPDATE entities SET content = ?1 WHERE id = ?2", params![normalized, id])?;
-        }
-        if let Some(c) = color {
-            let c_val: Option<&str> = if c == "default" { None } else { Some(c) };
-            self.conn.execute("UPDATE entities SET color = ?1 WHERE id = ?2", params![c_val, id])?;
-        }
+        let snapshot = self.current_snapshot(id)?;
+        let next_title = title.unwrap_or(&snapshot.title);
+        let next_content = content
+            .map(parser::normalize_legacy_toggle_syntax)
+            .unwrap_or_else(|| snapshot.note.content.clone());
+        let next_color = match color {
+            Some("default") => None,
+            Some(other) => Some(other),
+            None => snapshot.color.as_deref(),
+        };
+
+        self.rewrite_note_file_from_state(NoteFileState {
+            id,
+            whiteboard_id: &snapshot.whiteboard_id,
+            title: next_title,
+            content: &next_content,
+            color: next_color,
+            linked_card_ids: snapshot.note.linked_card_ids.as_deref().unwrap_or(&[]),
+            linked_note_ids: snapshot.note.linked_note_ids.as_deref().unwrap_or(&[]),
+            linked_section_ids: snapshot.note.linked_section_ids.as_deref().unwrap_or(&[]),
+            file_path: snapshot.file_path.as_deref(),
+        })?;
         Ok(())
     }
 
@@ -75,9 +189,10 @@ impl NoteStore for SqliteNoteStore<'_> {
             rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
             other => KeysightError::Database(other),
         })?;
-        let content = parser::normalize_legacy_toggle_syntax(&raw_content);
+        let content = parser::normalize_legacy_toggle_syntax(&raw_content)
+            .trim_end_matches('\n')
+            .to_string();
 
-        // 加载 note_link edges，按目标 id 前缀分组
         let mut stmt = self.conn.prepare(
             "SELECT to_id FROM edges WHERE from_id = ?1 AND edge_type = 'note_link'"
         )?;
@@ -118,10 +233,205 @@ impl NoteStore for SqliteNoteStore<'_> {
     }
 }
 
+/// 一次性把 DB-only note 导出为 `whiteboard/` 下的 markdown 文件，并同时备份 DB 与 whiteboard 目录。
+pub(in crate::modules::keysight) fn migrate_db_notes_to_files(
+    conn: &Connection,
+    db_path: &Path,
+    vault_path: &Path,
+) -> Result<NoteFileMigrationReport, KeysightError> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM entities WHERE kind = 'note' AND (file_path IS NULL OR file_path = '') ORDER BY id",
+    )?;
+    let ids: Vec<String> = stmt
+        .query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    if ids.is_empty() {
+        return Ok(NoteFileMigrationReport {
+            migrated_notes: 0,
+            skipped_notes: 0,
+            db_backup_path: String::new(),
+            whiteboard_backup_path: String::new(),
+        });
+    }
+
+    let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S").to_string();
+    let db_backup_path = backup_file(db_path, &timestamp)?;
+    let whiteboard_backup_path = backup_whiteboard_dir(vault_path, &timestamp)?;
+
+    let fs = RealVaultFs::new(vault_path.to_string_lossy().into_owned());
+    let store = SqliteNoteStore::with_vault_fs(conn, &fs);
+    let mut migrated_notes = 0u32;
+    let mut skipped_notes = 0u32;
+
+    for id in ids {
+        match store.sync_links_to_file(&id) {
+            Ok(()) => migrated_notes += 1,
+            Err(KeysightError::NotFound(_)) => skipped_notes += 1,
+            Err(err) => return Err(err),
+        }
+    }
+
+    Ok(NoteFileMigrationReport {
+        migrated_notes,
+        skipped_notes,
+        db_backup_path,
+        whiteboard_backup_path,
+    })
+}
+
+fn current_mtime_ms() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs_f64()
+        * 1000.0
+}
+
+fn whiteboard_relative_dir(whiteboard_id: &str) -> String {
+    if whiteboard_id == "wb_root" {
+        "whiteboard".to_string()
+    } else {
+        format!("whiteboard/{whiteboard_id}")
+    }
+}
+
+fn sanitize_file_component(text: &str) -> String {
+    let cleaned = text
+        .chars()
+        .map(|ch| match ch {
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            _ => ch,
+        })
+        .collect::<String>()
+        .trim()
+        .to_string();
+    if cleaned.is_empty() {
+        "Untitled".to_string()
+    } else {
+        cleaned
+    }
+}
+
+fn note_relative_path(whiteboard_id: &str, note_id: &str, title: &str) -> String {
+    format!(
+        "{}/{} 【NOTE】{}.md",
+        whiteboard_relative_dir(whiteboard_id),
+        note_id,
+        sanitize_file_component(title),
+    )
+}
+
+fn yaml_list(items: &[String]) -> String {
+    if items.is_empty() {
+        " []".to_string()
+    } else {
+        format!(
+            "\n{}",
+            items
+                .iter()
+                .map(|item| format!("  - {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
+}
+
+fn render_note_markdown(
+    id: &str,
+    title: &str,
+    content: &str,
+    color: Option<&str>,
+    linked_card_ids: &[String],
+    linked_note_ids: &[String],
+    linked_section_ids: &[String],
+) -> String {
+    let normalized_body = parser::normalize_legacy_toggle_syntax(content).trim_end().to_string();
+    let mut link_to = linked_card_ids.to_vec();
+    link_to.extend(linked_note_ids.iter().cloned());
+
+    let mut lines = vec![
+        "---".to_string(),
+        "type: note".to_string(),
+        format!("id: {id}"),
+        "tags: []".to_string(),
+        format!("linkTo:{}", yaml_list(&link_to)),
+        "related: []".to_string(),
+        format!("see-also:{}", yaml_list(linked_section_ids)),
+    ];
+    if let Some(color) = color.filter(|value| !value.is_empty()) {
+        lines.push(format!("color: {color}"));
+    }
+    lines.push("---".to_string());
+    lines.push(String::new());
+    lines.push(format!("# 【NOTE】{title}"));
+    lines.push(String::new());
+    if !normalized_body.is_empty() {
+        lines.push(normalized_body);
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn backup_file(source: &Path, timestamp: &str) -> Result<String, KeysightError> {
+    let backup_path = PathBuf::from(format!(
+        "{}.bak-notes-to-files-{}",
+        source.display(),
+        timestamp
+    ));
+    std::fs::copy(source, &backup_path)
+        .map_err(|e| KeysightError::FileError(format!("备份 DB 失败 {} -> {}: {e}", source.display(), backup_path.display())))?;
+    Ok(backup_path.to_string_lossy().into_owned())
+}
+
+fn backup_whiteboard_dir(vault_path: &Path, timestamp: &str) -> Result<String, KeysightError> {
+    let source = vault_path.join("whiteboard");
+    let destination = vault_path.join(format!("whiteboard.bak-notes-to-files-{timestamp}"));
+
+    if destination.exists() {
+        std::fs::remove_dir_all(&destination)
+            .map_err(|e| KeysightError::FileError(format!("清理旧 whiteboard 备份失败 {}: {e}", destination.display())))?;
+    }
+    copy_dir_recursive(&source, &destination)?;
+    Ok(destination.to_string_lossy().into_owned())
+}
+
+fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), KeysightError> {
+    std::fs::create_dir_all(destination)
+        .map_err(|e| KeysightError::FileError(format!("创建目录 {} 失败: {e}", destination.display())))?;
+
+    if !source.exists() {
+        return Ok(());
+    }
+
+    for entry in std::fs::read_dir(source)
+        .map_err(|e| KeysightError::FileError(format!("读取目录 {} 失败: {e}", source.display())))?
+    {
+        let entry = entry.map_err(|e| KeysightError::FileError(format!("遍历目录项失败: {e}")))?;
+        let path = entry.path();
+        let target = destination.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &target)?;
+        } else {
+            std::fs::copy(&path, &target).map_err(|e| {
+                KeysightError::FileError(format!(
+                    "复制文件 {} -> {} 失败: {e}",
+                    path.display(),
+                    target.display()
+                ))
+            })?;
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
+    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use rusqlite::params;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -129,41 +439,81 @@ mod tests {
         conn
     }
 
-    #[test]
-    fn test_create_note() {
-        let conn = test_conn();
-        let store = SqliteNoteStore::new(&conn);
-        let note = store.create("wb_root", "My Note", Some("Content"), Some("yellow")).unwrap();
-        assert!(note.id.starts_with("note_"));
-        assert_eq!(note.title, "My Note");
-        assert_eq!(note.content, "Content");
-        assert_eq!(note.color, Some("yellow".to_string()));
+    fn temp_root(prefix: &str) -> PathBuf {
+        let path = std::env::temp_dir().join(format!(
+            "super_tauri_note_tests_{}_{}",
+            prefix,
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&path).unwrap();
+        path
     }
 
     #[test]
-    fn test_delete_note() {
+    fn test_create_note_writes_markdown_file_and_syncs_db() {
         let conn = test_conn();
-        let store = SqliteNoteStore::new(&conn);
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+
+        let note = store.create("wb_root", "My Note", Some("Content"), Some("yellow")).unwrap();
+
+        assert!(note.id.starts_with("note_"));
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        let file = vfs.get_file(&file_path).unwrap();
+        assert!(file.contains("type: note"));
+        assert!(file.contains("color: yellow"));
+        assert!(file.contains("# 【NOTE】My Note"));
+    }
+
+    #[test]
+    fn test_delete_note_removes_markdown_file_and_db_rows() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         let note = store.create("wb_root", "Del", None, None).unwrap();
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+
         store.delete(&note.id).unwrap();
+
+        assert!(vfs.get_file(&file_path).is_none());
         assert!(matches!(store.get(&note.id), Err(KeysightError::NotFound(_))));
     }
 
     #[test]
-    fn test_update_note() {
+    fn test_update_note_rewrites_markdown_file() {
         let conn = test_conn();
-        let store = SqliteNoteStore::new(&conn);
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         let note = store.create("wb_root", "Old", Some("old"), None).unwrap();
-        store.update(&note.id, Some("New"), Some("new content"), None).unwrap();
+
+        store.update(&note.id, Some("New"), Some("new content"), Some("blue")).unwrap();
+
         let loaded = store.get(&note.id).unwrap();
         assert_eq!(loaded.title, "New");
         assert_eq!(loaded.content, "new content");
+        assert_eq!(loaded.color, Some("blue".to_string()));
+
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        let file = vfs.get_file(&file_path).unwrap();
+        assert!(file.contains("# 【NOTE】New"));
+        assert!(file.contains("new content"));
+        assert!(file.contains("color: blue"));
     }
 
     #[test]
     fn test_update_note_normalizes_legacy_details_summary_to_toggle_syntax() {
         let conn = test_conn();
-        let store = SqliteNoteStore::new(&conn);
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         let note = store.create("wb_root", "Old", Some("old"), None).unwrap();
         store
             .update(
@@ -199,11 +549,82 @@ mod tests {
     #[test]
     fn test_query_all_notes() {
         let conn = test_conn();
-        let store = SqliteNoteStore::new(&conn);
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         store.create("wb_root", "A", None, None).unwrap();
         store.create("wb_root", "B", None, None).unwrap();
         store.create("other", "C", None, None).unwrap();
         let notes = store.query_all("wb_root").unwrap();
         assert_eq!(notes.len(), 2);
+    }
+
+    #[test]
+    fn test_sync_links_to_file_writes_note_link_frontmatter() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let note = store.create("wb_root", "Links", Some("body"), None).unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
+            params![note.id, "card_target"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
+            params![note.id, "sec_target"],
+        )
+        .unwrap();
+
+        store.sync_links_to_file(&note.id).unwrap();
+
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        let file = vfs.get_file(&file_path).unwrap();
+        assert!(file.contains("linkTo:\n  - card_target"));
+        assert!(file.contains("see-also:\n  - sec_target"));
+    }
+
+    #[test]
+    fn test_migrate_db_notes_to_files_creates_backups_and_files() {
+        let root = temp_root("migrate");
+        let vault_path = root.join("vault");
+        std::fs::create_dir_all(vault_path.join("whiteboard").join("rust")).unwrap();
+        std::fs::write(vault_path.join("whiteboard").join("existing.md"), "# existing").unwrap();
+
+        let db_path = root.join("keysight.db");
+        let conn = Connection::open(&db_path).unwrap();
+        init_db(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id, content, color) VALUES ('note_migrate01', 'note', 'Migrated', 'rust', 'body', 'amber')",
+            [],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES ('note_migrate01', 'card_aaa', 'note_link')",
+            [],
+        )
+        .unwrap();
+
+        let report = migrate_db_notes_to_files(&conn, &db_path, &vault_path).unwrap();
+
+        assert_eq!(report.migrated_notes, 1);
+        assert!(Path::new(&report.db_backup_path).exists());
+        assert!(Path::new(&report.whiteboard_backup_path).exists());
+
+        let file_path: String = conn
+            .query_row(
+                "SELECT file_path FROM entities WHERE id = 'note_migrate01'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let abs_note_file = vault_path.join(&file_path);
+        assert!(abs_note_file.exists());
+        let note_content = std::fs::read_to_string(abs_note_file).unwrap();
+        assert!(note_content.contains("# 【NOTE】Migrated"));
+        assert!(note_content.contains("color: amber"));
+
+        std::fs::remove_dir_all(root).unwrap();
     }
 }

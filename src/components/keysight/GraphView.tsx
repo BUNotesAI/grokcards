@@ -14,6 +14,7 @@ import { normalizeCardTitleForClipboard } from "@/components/keysight/lib/normal
 import { RenderedMarkdown } from "@/components/keysight/nodes/RenderedMarkdown";
 import { perfLog } from "@/lib/perf";
 import type {
+  AliasReference,
   EntityKind,
   EntityWithPosition,
   GraphSelection,
@@ -98,6 +99,10 @@ interface GraphViewProps {
   onSelectEntity?: (selection: GraphSelection | null) => void;
   highlightedEntityIds?: Set<string>;
   focusTarget?: GraphFocusTarget | null;
+  onShowOrphans?: () => void;
+  onSearchTag?: (tag: string) => void;
+  onOpenCard?: (cardId: string) => void;
+  onOpenAlias?: (aliasId: string) => void;
 }
 
 /**
@@ -191,12 +196,17 @@ export function GraphView({
   onSelectEntity,
   highlightedEntityIds,
   focusTarget = null,
+  onShowOrphans,
+  onSearchTag,
+  onOpenCard,
+  onOpenAlias,
 }: GraphViewProps) {
   const viewport = useViewport(currentWhiteboardId);
   const containerRef = useRef<HTMLDivElement>(null);
   const containerSize = useContainerSize(containerRef);
   const data = useWhiteboardData(currentWhiteboardId);
   const queryClient = useQueryClient();
+  const handledFocusNonceRef = useRef<number | null>(null);
 
   // 启动性能：mount + isLoading 转为 false 的时刻
   const mountedRef = useRef(false);
@@ -213,9 +223,6 @@ export function GraphView({
       );
     }
   }, [data.isLoading, data.cards.length, data.notes.length, data.sections.length, data.aliases.length, data.tasks.length, data.questions.length, data.positions]);
-
-  // 搜索状态
-  const [searchQuery, setSearchQuery] = useState("");
 
   // 拖拽状态：ref 存储启动时的位置/屏幕坐标 + 被拖拽节点的 DOM 引用
   // mousemove 时直接 imperative 更新 el.style.transform，绕过 React 重渲染延迟
@@ -248,6 +255,8 @@ export function GraphView({
 
   // 展开状态 — 同时只有一张卡片展开显示 body / 关联列表
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [creatingWhiteboard, setCreatingWhiteboard] = useState(false);
+  const [whiteboardDraft, setWhiteboardDraft] = useState("");
   const handleToggleExpand = useCallback((entityId: string) => {
     // click 之前如果发生了拖拽就不切换
     if (lastDidDragRef.current) {
@@ -271,12 +280,15 @@ export function GraphView({
   }, []);
 
   // 行内编辑状态：同时只能编辑一个字段
-  // field 区分：card-title / card-understanding / note-title / note-body
+  // field 区分：card-title / card-understanding / note-title / note-body / section-title
   type EditingField =
     | "card-title"
     | "card-understanding"
     | "note-title"
-    | "note-body";
+    | "note-body"
+    | "question-title"
+    | "question-body"
+    | "section-title";
   const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
 
   // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
@@ -324,9 +336,22 @@ export function GraphView({
           case "note-body":
             await unwrapCommand(commands.noteUpdate(id, null, value, null));
             break;
+          case "section-title":
+            await unwrapCommand(commands.sectionUpdate(id, value, null));
+            break;
+          case "question-title":
+            await unwrapCommand(commands.questionUpdate(id, value, null, null));
+            break;
+          case "question-body":
+            await unwrapCommand(commands.questionUpdate(id, null, value, null));
+            break;
         }
         if (field === "card-title" || field === "card-understanding") {
           queryClient.invalidateQueries({ queryKey: ["cards"] });
+        } else if (field === "section-title") {
+          queryClient.invalidateQueries({ queryKey: ["sections", currentWhiteboardId] });
+        } else if (field === "question-title" || field === "question-body") {
+          queryClient.invalidateQueries({ queryKey: ["questions", currentWhiteboardId] });
         } else {
           queryClient.invalidateQueries({ queryKey: ["notes", currentWhiteboardId] });
         }
@@ -657,16 +682,6 @@ export function GraphView({
     currentWhiteboardId,
   ]);
 
-  // 搜索过滤（简单 title 匹配）
-  const filteredEntities = useMemo(() => {
-    if (!searchQuery.trim()) return visibleEntities;
-    const q = searchQuery.toLowerCase();
-    return visibleEntities.filter((e) => {
-      const title = "entity" in e && "title" in e.entity ? (e.entity as any).title : "";
-      return title.toLowerCase().includes(q);
-    });
-  }, [visibleEntities, searchQuery]);
-
   // cardId → AtomicCard 全局映射（CardNode/AliasNode 渲染 related/linkTo 用）
   const cardsById = useMemo(() => {
     const map: Record<string, typeof data.cards[number]> = {};
@@ -679,13 +694,19 @@ export function GraphView({
   // aliases 反向索引：targetCardId → [{ aliasId, 所属 section 标题 }]
   // 旧 Obsidian 插件的 ALIASES 区域显示的是 "包含此 card 别名的 section 标题"
   const aliasesByTargetId = useMemo(() => {
-    const map: Record<string, Array<{ aliasId: string; aliasTitle: string }>> = {};
+    const map: Record<string, AliasReference[]> = {};
     for (const alias of data.aliases) {
       if (!map[alias.cardId]) map[alias.cardId] = [];
       // 查找包含此 alias 的 section
       const containingSection = data.sections.find((s) => s.cardIds.includes(alias.aliasId));
       const title = containingSection?.title ?? alias.aliasId;
-      map[alias.cardId].push({ aliasId: alias.aliasId, aliasTitle: title });
+      map[alias.cardId].push({
+        aliasId: alias.aliasId,
+        aliasTitle: title,
+        cardId: alias.cardId,
+        sectionId: containingSection?.id ?? null,
+        sectionTitle: containingSection?.title ?? null,
+      });
     }
     return map;
   }, [data.aliases, data.sections]);
@@ -793,11 +814,13 @@ export function GraphView({
       await unwrapCommand(
         commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
+      onSelectEntity?.({ id: result.id, kind: "section" });
+      setEditing({ id: result.id, field: "section-title" });
       queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 section 失败:", e);
     }
-  }, [allDimensions, allEntities, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [allDimensions, allEntities, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   // 创建 Note 回调
   const handleCreateNote = useCallback(async () => {
@@ -809,11 +832,57 @@ export function GraphView({
       await unwrapCommand(
         commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
+      onSelectEntity?.({ id: result.id, kind: "note" });
+      setEditing({ id: result.id, field: "note-body" });
       queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 note 失败:", e);
     }
-  }, [queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+
+  const handleCreateQuestion = useCallback(async () => {
+    try {
+      const result = await unwrapCommand(
+        commands.questionCreate(currentWhiteboardId, "New Question", null, null),
+      );
+      const pos = newEntityPositionAtCenter(320, 140);
+      await unwrapCommand(
+        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
+      );
+      onSelectEntity?.({ id: result.id, kind: "question" });
+      setEditing({ id: result.id, field: "question-body" });
+      queryClient.invalidateQueries();
+    } catch (e) {
+      console.error("创建 question 失败:", e);
+    }
+  }, [onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+
+  const handleCreateWhiteboard = useCallback(async () => {
+    if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
+    setWhiteboardDraft("");
+    setCreatingWhiteboard(true);
+  }, [currentWhiteboardId]);
+
+  const handleCancelCreateWhiteboard = useCallback(() => {
+    setCreatingWhiteboard(false);
+    setWhiteboardDraft("");
+  }, []);
+
+  const handleSubmitCreateWhiteboard = useCallback(async () => {
+    if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
+
+    const name = whiteboardDraft.trim();
+    setCreatingWhiteboard(false);
+    setWhiteboardDraft("");
+    if (!name) return;
+
+    try {
+      await unwrapCommand(commands.whiteboardCreate(name));
+      queryClient.invalidateQueries({ queryKey: ["whiteboards"] });
+    } catch (e) {
+      console.error("创建 whiteboard 失败:", e);
+    }
+  }, [currentWhiteboardId, queryClient, whiteboardDraft]);
 
   // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode，memo 比较依赖它不变
   // 依赖 data/viewport/queryClient，数据变化时整体替换（EntityNode 整体重渲染）
@@ -1032,11 +1101,12 @@ export function GraphView({
 
   useEffect(() => {
     if (!focusTarget || containerSize.width === 0 || containerSize.height === 0) return;
+    if (handledFocusNonceRef.current === focusTarget.nonce) return;
 
     const entity = allEntities.find((candidate) => candidate.id === focusTarget.id);
     if (entity) {
       const dim = allDimensions[entity.id];
-    viewport.actions.centerOn(
+      viewport.actions.centerOn(
         entity.position.x,
         entity.position.y,
         containerSize.width,
@@ -1044,13 +1114,14 @@ export function GraphView({
         dim?.width ?? 320,
         dim?.height ?? 160,
       );
+      handledFocusNonceRef.current = focusTarget.nonce;
       onSelectEntity?.({ id: entity.id, kind: entity.kind });
       return;
     }
 
     const whiteboard = whiteboardEntities.find((candidate) => `wb:${candidate.whiteboardId}` === focusTarget.id);
     if (whiteboard) {
-    viewport.actions.centerOn(
+      viewport.actions.centerOn(
         whiteboard.position.x,
         whiteboard.position.y,
         containerSize.width,
@@ -1058,6 +1129,7 @@ export function GraphView({
         320,
         130,
       );
+      handledFocusNonceRef.current = focusTarget.nonce;
     }
   }, [
     allDimensions,
@@ -1080,8 +1152,14 @@ export function GraphView({
         onSync={handleSync}
         onCreateSection={handleCreateSection}
         onCreateNote={handleCreateNote}
-        searchQuery={searchQuery}
-        onSearchChange={setSearchQuery}
+        onCreateQuestion={handleCreateQuestion}
+        onCreateWhiteboard={handleCreateWhiteboard}
+        creatingWhiteboard={creatingWhiteboard}
+        whiteboardDraft={whiteboardDraft}
+        onWhiteboardDraftChange={setWhiteboardDraft}
+        onSubmitWhiteboard={handleSubmitCreateWhiteboard}
+        onCancelWhiteboard={handleCancelCreateWhiteboard}
+        onShowOrphans={onShowOrphans}
         currentWhiteboardId={currentWhiteboardId}
         onNavigateBack={() => {
           setDrawingState(null);
@@ -1117,7 +1195,7 @@ export function GraphView({
             dimensions={allDimensions}
             opacity={hasExpandedSpotlight ? 0.08 : 1}
           />
-          {filteredEntities.map((e) => (
+          {visibleEntities.map((e) => (
             (() => {
               const highlightedDimmed = Boolean(
                 highlightedEntityIds &&
@@ -1150,6 +1228,9 @@ export function GraphView({
               menuHandlers={menuHandlers}
               menuSections={menuSections}
               currentSectionId={entityToSectionId[e.id] ?? null}
+              onOpenCard={onOpenCard}
+              onOpenAlias={onOpenAlias}
+              onSelectTag={onSearchTag}
             />
               );
             })()

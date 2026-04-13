@@ -25,7 +25,6 @@ import {
   Grid3x3,
   Settings,
   Zap,
-  Search,
 } from "lucide-react";
 
 const modules = [
@@ -142,14 +141,6 @@ function Topbar() {
   return (
     <header className="flex h-[52px] shrink-0 items-center gap-3 border-b bg-card px-4">
       <h1 className="font-heading text-[17px]">{title}</h1>
-      <div className="flex-1" />
-      <div className="flex items-center gap-2 rounded-lg border bg-background px-2.5 py-1.5 text-xs text-muted-foreground">
-        <Search className="size-3.5" />
-        <span>Search...</span>
-        <kbd className="ml-4 rounded border bg-muted px-1.5 py-0.5 font-mono text-[10px]">
-          ⌘K
-        </kbd>
-      </div>
     </header>
   );
 }
@@ -184,7 +175,7 @@ function ContentArea() {
 export default function AppShell() {
   return (
     <TooltipProvider>
-      <SidebarProvider>
+      <SidebarProvider defaultOpen={false}>
         <AppSidebar />
         <SidebarInset>
           <ContentArea />

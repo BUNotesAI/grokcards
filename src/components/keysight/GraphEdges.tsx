@@ -49,28 +49,6 @@ export const GraphEdges = memo(function GraphEdges({
         opacity,
       }}
     >
-      <defs>
-        <marker
-          id="ks-edge-arrow-link"
-          markerWidth="8"
-          markerHeight="8"
-          refX="7.5"
-          refY="4"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 8 4 L 0 8 Z" fill={COLOR_LINK} />
-        </marker>
-        <marker
-          id="ks-edge-arrow-note"
-          markerWidth="10"
-          markerHeight="10"
-          refX="9"
-          refY="5"
-          orient="auto-start-reverse"
-        >
-          <path d="M 0 0 L 10 5 L 0 10 Z" fill={COLOR_NOTE_LINK} />
-        </marker>
-      </defs>
       {edges.map((edge, i) => {
         const fromPos = positions[edge.from];
         const toPos = positions[edge.to];
@@ -96,19 +74,42 @@ export const GraphEdges = memo(function GraphEdges({
 
         const isLink = edge.kind === "link_to";
         const color = isLink ? COLOR_LINK : COLOR_NOTE_LINK;
-        const markerId = isLink ? "ks-edge-arrow-link" : "ks-edge-arrow-note";
+        const markerId = `${isLink ? "ks-edge-arrow-link" : "ks-edge-arrow-note"}-${edge.from}-${edge.to}-${i}`;
+        const markerSize = isLink ? 8 : 10;
+        const refX = isLink ? 7.5 : 9;
+        const refY = isLink ? 4 : 5;
 
         return (
-          <path
-            key={`${edge.from}->${edge.to}-${edge.kind}-${i}`}
-            data-edge-kind={edge.kind}
-            d={result.path}
-            stroke={color}
-            strokeWidth={2}
-            fill="none"
-            strokeDasharray={isLink ? undefined : "8 4"}
-            markerEnd={`url(#${markerId})`}
-          />
+          <g key={`${edge.from}->${edge.to}-${edge.kind}-${i}`}>
+            <defs>
+              <marker
+                id={markerId}
+                viewBox={`0 0 ${markerSize} ${markerSize}`}
+                markerWidth={markerSize}
+                markerHeight={markerSize}
+                refX={refX}
+                refY={refY}
+                orient="auto-start-reverse"
+                markerUnits="userSpaceOnUse"
+              >
+                <path
+                  d={
+                    isLink ? "M 0 0 L 8 4 L 0 8 Z" : "M 0 0 L 10 5 L 0 10 Z"
+                  }
+                  fill={color}
+                />
+              </marker>
+            </defs>
+            <path
+              data-edge-kind={edge.kind}
+              d={result.path}
+              stroke={color}
+              strokeWidth={2}
+              fill="none"
+              strokeDasharray={isLink ? undefined : "8 4"}
+              markerEnd={`url(#${markerId})`}
+            />
+          </g>
         );
       })}
     </svg>

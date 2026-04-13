@@ -21,8 +21,8 @@ describe("GraphEdges", () => {
     const { container } = render(
       <GraphEdges edges={[]} positions={positions} dimensions={dimensions} />,
     );
-    // <defs> 里的 marker path 不算
     expect(container.querySelectorAll("svg > path")).toHaveLength(0);
+    expect(container.querySelectorAll("svg marker")).toHaveLength(0);
   });
 
   it("link_to edge → 渲染一条实线 + link 颜色 marker", () => {
@@ -30,11 +30,13 @@ describe("GraphEdges", () => {
     const { container } = render(
       <GraphEdges edges={edges} positions={positions} dimensions={dimensions} />,
     );
-    const paths = container.querySelectorAll("svg > path");
+    const paths = container.querySelectorAll("svg g > path[data-edge-kind]");
+    const markers = container.querySelectorAll("svg marker");
     expect(paths).toHaveLength(1);
+    expect(markers).toHaveLength(1);
     expect(paths[0].getAttribute("data-edge-kind")).toBe("link_to");
     expect(paths[0].getAttribute("stroke-dasharray")).toBeNull();
-    expect(paths[0].getAttribute("marker-end")).toContain("ks-edge-arrow-link");
+    expect(paths[0].getAttribute("marker-end")).toContain("ks-edge-arrow-link-");
   });
 
   it("note_link edge → 渲染一条虚线 + note 颜色 marker", () => {
@@ -42,11 +44,13 @@ describe("GraphEdges", () => {
     const { container } = render(
       <GraphEdges edges={edges} positions={positions} dimensions={dimensions} />,
     );
-    const paths = container.querySelectorAll("svg > path");
+    const paths = container.querySelectorAll("svg g > path[data-edge-kind]");
+    const markers = container.querySelectorAll("svg marker");
     expect(paths).toHaveLength(1);
+    expect(markers).toHaveLength(1);
     expect(paths[0].getAttribute("data-edge-kind")).toBe("note_link");
     expect(paths[0].getAttribute("stroke-dasharray")).toBe("8 4");
-    expect(paths[0].getAttribute("marker-end")).toContain("ks-edge-arrow-note");
+    expect(paths[0].getAttribute("marker-end")).toContain("ks-edge-arrow-note-");
   });
 
   it("缺少 from 位置 → 跳过该 edge", () => {
@@ -57,7 +61,9 @@ describe("GraphEdges", () => {
     const { container } = render(
       <GraphEdges edges={edges} positions={positions} dimensions={dimensions} />,
     );
-    expect(container.querySelectorAll("svg > path")).toHaveLength(1);
+    expect(container.querySelectorAll("svg g > path[data-edge-kind]")).toHaveLength(
+      1,
+    );
   });
 
   it("混合多种 kind → 全部渲染", () => {
@@ -69,6 +75,9 @@ describe("GraphEdges", () => {
     const { container } = render(
       <GraphEdges edges={edges} positions={positions} dimensions={dimensions} />,
     );
-    expect(container.querySelectorAll("svg > path")).toHaveLength(3);
+    expect(container.querySelectorAll("svg g > path[data-edge-kind]")).toHaveLength(
+      3,
+    );
+    expect(container.querySelectorAll("svg marker")).toHaveLength(3);
   });
 });

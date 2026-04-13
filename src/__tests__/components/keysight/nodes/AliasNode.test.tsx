@@ -33,6 +33,37 @@ describe("AliasNode", () => {
     expect(screen.getByText("trait")).toBeInTheDocument();
   });
 
+  it("折叠状态下也显示目标卡片的 tags 和 related", () => {
+    render(
+      <AliasNode
+        alias={mockAlias}
+        targetCard={{
+          ...mockCard,
+          related: ["card_related"],
+        }}
+        cardsById={{
+          card_related: {
+            ...mockCard,
+            id: "card_related",
+            title: "Related Alias Card",
+          },
+        }}
+        aliasRefs={[
+          { aliasId: "alias_1", aliasTitle: "Trait Basics" },
+          { aliasId: "alias_2", aliasTitle: "Advanced Rust" },
+        ]}
+        style={{}}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: /rust/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /trait/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Related Alias Card/i })).toBeInTheDocument();
+    expect(screen.getByText("Aliases (2)")).toBeInTheDocument();
+    expect(screen.getAllByText("Trait Basics").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Advanced Rust").length).toBeGreaterThan(0);
+  });
+
   it("委托给 CardNode，使用目标卡片的 data-entity-id", () => {
     const { container } = render(
       <AliasNode alias={mockAlias} targetCard={mockCard} style={{}} />,

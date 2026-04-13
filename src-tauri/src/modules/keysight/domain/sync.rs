@@ -84,14 +84,14 @@ pub(in crate::modules::keysight) fn sync_file(
 
     let (updated, inserted) = if exists {
         conn.execute(
-            "UPDATE entities SET kind = ?1, title = ?2, whiteboard_id = ?3, file_path = ?4, content = ?5 WHERE id = ?6",
-            params![kind_str, parsed.title, wb_id, file_path, parsed.content, id],
+            "UPDATE entities SET kind = ?1, title = ?2, whiteboard_id = ?3, file_path = ?4, content = ?5, color = ?6 WHERE id = ?7",
+            params![kind_str, parsed.title, wb_id, file_path, parsed.content, parsed.color, id],
         )?;
         (1u32, 0u32)
     } else {
         conn.execute(
-            "INSERT INTO entities (id, kind, title, whiteboard_id, file_path, content) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
-            params![id, kind_str, parsed.title, wb_id, file_path, parsed.content],
+            "INSERT INTO entities (id, kind, title, whiteboard_id, file_path, content, color) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![id, kind_str, parsed.title, wb_id, file_path, parsed.content, parsed.color],
         )?;
         (0u32, 1u32)
     };
@@ -134,25 +134,34 @@ pub(in crate::modules::keysight) fn sync_file(
         )?;
     }
 
-    // 8. 全量替换 edges（从 frontmatter 的 link_to/related/see_also 重建）
+    // 8. 全量替换 edges（从 frontmatter 重建）
     conn.execute("DELETE FROM edges WHERE from_id = ?1", [&id])?;
-    for target in &parsed.link_to {
-        conn.execute(
-            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'link_to')",
-            params![id, target],
-        )?;
-    }
-    for target in &parsed.related {
-        conn.execute(
-            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'related')",
-            params![id, target],
-        )?;
-    }
-    for target in &parsed.see_also {
-        conn.execute(
-            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'see_also')",
-            params![id, target],
-        )?;
+    if kind_str == "note" {
+        for target in parsed.link_to.iter().chain(parsed.see_also.iter()) {
+            conn.execute(
+                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
+                params![id, target],
+            )?;
+        }
+    } else {
+        for target in &parsed.link_to {
+            conn.execute(
+                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'link_to')",
+                params![id, target],
+            )?;
+        }
+        for target in &parsed.related {
+            conn.execute(
+                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'related')",
+                params![id, target],
+            )?;
+        }
+        for target in &parsed.see_also {
+            conn.execute(
+                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'see_also')",
+                params![id, target],
+            )?;
+        }
     }
 
     // 8.5 同步 FTS 索引
@@ -369,6 +378,35 @@ see-also:
 Body content here.
 ";
 
+    const NOTE_MD: &str = "\
+---
+type: note
+id: note_test0001
+linkTo:
+  - card_other001
+  - note_other001
+see-also:
+  - sec_other001
+color: amber
+---
+
+# 【NOTE】Test Note
+
+Note body.
+";
+
+    const QUESTION_MD: &str = "\
+---
+type: question
+id: q_test00001
+status: doing
+---
+
+# 【QUE】Test Question
+
+Question body.
+";
+
     // --- sync_file ---
 
     #[test]
@@ -438,6 +476,46 @@ Body content here.
             )
             .unwrap();
         assert!((mtime - 1000.0).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_sync_note_maps_link_fields_to_note_link_edges_and_color() {
+        let conn = test_conn();
+        sync_file(&conn, "whiteboard/rust/note.md", NOTE_MD, 1000.0).unwrap();
+
+        let edge_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM edges WHERE from_id = 'note_test0001' AND edge_type = 'note_link'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let color: Option<String> = conn
+            .query_row(
+                "SELECT color FROM entities WHERE id = 'note_test0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(edge_count, 3);
+        assert_eq!(color, Some("amber".to_string()));
+    }
+
+    #[test]
+    fn test_sync_question_writes_question_fields() {
+        let conn = test_conn();
+        sync_file(&conn, "whiteboard/rust/question.md", QUESTION_MD, 1000.0).unwrap();
+
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM question_fields WHERE entity_id = 'q_test00001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        assert_eq!(status, "doing");
     }
 
     #[test]

@@ -1,21 +1,9 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { commands } from "@/bindings";
-import type { AtomicCard, GraphNote } from "@/bindings";
-import { unwrapCommand } from "@/lib/commandResult";
 import { GraphView, ROOT_WHITEBOARD, type GraphFocusTarget } from "@/components/keysight/GraphView";
 import { useWhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
-import type { GraphSelection } from "@/components/keysight/types";
+import type { AliasReference, GraphSelection } from "@/components/keysight/types";
 import { Sidebar } from "@/components/keysight/sidebar/Sidebar";
 import { CardsList } from "@/components/keysight/sidebar/CardsList";
-import { ReviewView } from "@/components/keysight/sidebar/ReviewView";
-import { FilterBar } from "@/components/keysight/sidebar/FilterBar";
-import { ExportPanel } from "@/components/keysight/sidebar/ExportPanel";
-import { FollowView } from "@/components/keysight/sidebar/FollowView";
-import { InsightCardDetail } from "@/components/keysight/sidebar/InsightCardDetail";
-import { ContextPanel } from "@/components/keysight/sidebar/ContextPanel";
-import { NoteEditor } from "@/components/keysight/sidebar/NoteEditor";
-import type { SidebarTab, SidebarTabItem } from "@/components/keysight/sidebar/types";
 
 const STORAGE_PREFIX = "keysight:sidebar:";
 const DEFAULT_WIDTH = 360;
@@ -39,23 +27,28 @@ function loadString(key: string, fallback: string): string {
   return localStorage.getItem(STORAGE_PREFIX + key) ?? fallback;
 }
 
-function matchesFilters(card: AtomicCard, selectedFolder: string | null, selectedTags: string[]) {
-  const folder = card.filePath.split("/")[0] || "root";
-  const folderMatch = !selectedFolder || folder === selectedFolder;
-  const tagsMatch = selectedTags.every((tag) => card.tags.includes(tag));
-  return folderMatch && tagsMatch;
+function deriveWhiteboardIdFromFilePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, "/");
+  if (!normalized.startsWith("whiteboard/")) {
+    return ROOT_WHITEBOARD;
+  }
+
+  const rest = normalized.slice("whiteboard/".length);
+  const [first, second] = rest.split("/", 2);
+  return second ? first : ROOT_WHITEBOARD;
 }
 
 export function KeysightView() {
   const [currentWhiteboardId, setCurrentWhiteboardId] = useState(ROOT_WHITEBOARD);
   const [selected, setSelected] = useState<GraphSelection | null>(null);
+  const [previewRequestKey, setPreviewRequestKey] = useState(0);
   const [focusTarget, setFocusTarget] = useState<GraphFocusTarget | null>(null);
   const [sidebarWidth, setSidebarWidth] = useState(() => loadNumber("width", DEFAULT_WIDTH));
   const [sidebarCollapsed, setSidebarCollapsed] = useState(() => loadBoolean("collapsed", false));
-  const [activeTab, setActiveTab] = useState<SidebarTab>(() => loadString("tab", "cards") as SidebarTab);
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
-  const [selectedTags, setSelectedTags] = useState<string[]>([]);
-  const [pinnedFilePath, setPinnedFilePath] = useState(() => loadString("follow-file", ""));
+  const [sidebarQuery, setSidebarQuery] = useState(() => loadString("query", ""));
+  const [sidebarMode, setSidebarMode] = useState<"all" | "orphans">(
+    () => (loadString("mode", "all") === "orphans" ? "orphans" : "all"),
+  );
   const boardData = useWhiteboardData(currentWhiteboardId);
 
   useEffect(() => {
@@ -67,114 +60,98 @@ export function KeysightView() {
   }, [sidebarCollapsed]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + "tab", activeTab);
-  }, [activeTab]);
+    localStorage.setItem(STORAGE_PREFIX + "query", sidebarQuery);
+  }, [sidebarQuery]);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_PREFIX + "follow-file", pinnedFilePath);
-  }, [pinnedFilePath]);
+    localStorage.setItem(STORAGE_PREFIX + "mode", sidebarMode);
+  }, [sidebarMode]);
 
-  const cardsById = useMemo(() => {
-    const map: Record<string, AtomicCard> = {};
-    for (const card of boardData.cards) {
-      map[card.id] = card;
+  const cardsById = useMemo(
+    () => Object.fromEntries(boardData.cards.map((card) => [card.id, card])),
+    [boardData.cards],
+  );
+  const aliasRefsByTargetId = useMemo(() => {
+    const map: Record<string, AliasReference[]> = {};
+    for (const alias of boardData.aliases) {
+      if (!map[alias.cardId]) {
+        map[alias.cardId] = [];
+      }
+      const containingSection = boardData.sections.find((section) => section.cardIds.includes(alias.aliasId));
+      map[alias.cardId].push({
+        aliasId: alias.aliasId,
+        aliasTitle: containingSection?.title ?? alias.aliasId,
+        cardId: alias.cardId,
+        sectionId: containingSection?.id ?? null,
+        sectionTitle: containingSection?.title ?? null,
+      });
     }
     return map;
-  }, [boardData.cards]);
+  }, [boardData.aliases, boardData.sections]);
+  const aliasesById = useMemo(() => {
+    const map: Record<string, AliasReference> = {};
+    for (const refs of Object.values(aliasRefsByTargetId)) {
+      for (const ref of refs) {
+        map[ref.aliasId] = ref;
+      }
+    }
+    return map;
+  }, [aliasRefsByTargetId]);
 
   const selectedAlias = useMemo(
-    () => selected?.kind === "alias"
-      ? boardData.aliases.find((alias) => alias.aliasId === selected.id) ?? null
-      : null,
-    [boardData.aliases, selected],
+    () => (selected?.kind === "alias" ? aliasesById[selected.id] ?? null : null),
+    [aliasesById, selected],
   );
 
   const selectedCard = useMemo(() => {
     if (!selected) return null;
     if (selected.kind === "card") return cardsById[selected.id] ?? null;
-    if (selected.kind === "alias") return selectedAlias ? cardsById[selectedAlias.cardId] ?? null : null;
+    if (selected.kind === "alias") return selectedAlias?.cardId ? cardsById[selectedAlias.cardId] ?? null : null;
     return null;
   }, [cardsById, selected, selectedAlias]);
-
-  const selectedNote = useMemo<GraphNote | null>(
-    () => selected?.kind === "note"
-      ? boardData.notes.find((note) => note.id === selected.id) ?? null
-      : null,
-    [boardData.notes, selected],
-  );
-
-  const selectedCardLinks = useQuery({
-    queryKey: ["card-links", selectedCard?.id],
-    enabled: selectedCard != null,
-    queryFn: () => {
-      if (!selectedCard) {
-        throw new Error("selectedCard is required");
-      }
-      return unwrapCommand(commands.cardQueryLinks(selectedCard.id));
-    },
-  });
-
-  const aliasRefs = useMemo(() => {
-    if (!selectedCard) return [];
-    return boardData.aliases
-      .filter((alias) => alias.cardId === selectedCard.id)
-      .map((alias) => {
-        const containingSection = boardData.sections.find((section) => section.cardIds.includes(alias.aliasId));
-        return {
-          aliasId: alias.aliasId,
-          aliasTitle: containingSection?.title ?? alias.aliasId,
-        };
-      });
-  }, [boardData.aliases, boardData.sections, selectedCard]);
-
-  const highlightedEntityIds = useMemo(() => {
-    if (!selectedFolder && selectedTags.length === 0) return undefined;
-    const ids = new Set<string>();
-    for (const card of boardData.cards) {
-      if (matchesFilters(card, selectedFolder, selectedTags)) {
-        ids.add(card.id);
-      }
-    }
-    for (const alias of boardData.aliases) {
-      if (ids.has(alias.cardId)) {
-        ids.add(alias.aliasId);
-      }
-    }
-    return ids;
-  }, [boardData.aliases, boardData.cards, selectedFolder, selectedTags]);
-
-  const currentWhiteboardCardIds = useMemo(() => {
-    const ids = new Set<string>();
-    for (const entityId of Object.keys(boardData.positions)) {
-      if (cardsById[entityId]) ids.add(entityId);
-      const alias = boardData.aliases.find((item) => item.aliasId === entityId);
-      if (alias) ids.add(alias.cardId);
-    }
-    return ids;
-  }, [boardData.aliases, boardData.positions, cardsById]);
-
-  useEffect(() => {
-    if (!selected) return;
-    if (selected.kind === "note") {
-      setActiveTab("note");
-    } else {
-      setActiveTab("details");
-    }
-  }, [selected]);
-
-  useEffect(() => {
-    if (!selected && (activeTab === "details" || activeTab === "context" || activeTab === "note")) {
-      setActiveTab("cards");
-    }
-  }, [activeTab, selected]);
 
   const handleWhiteboardChange = useCallback((whiteboardId: string) => {
     setCurrentWhiteboardId(whiteboardId);
     setSelected(null);
   }, []);
 
-  const handleFocusEntity = useCallback((entityId: string) => {
+  const handleFocusEntity = useCallback((entityId: string, kind: GraphSelection["kind"] = "card") => {
+    setSelected({ id: entityId, kind });
     setFocusTarget({ id: entityId, nonce: Date.now() });
+  }, []);
+
+  const handleRevealSelection = useCallback((selection: GraphSelection) => {
+    if (selection.kind === "card") {
+      const card = cardsById[selection.id];
+      if (card) {
+        const targetWhiteboardId = deriveWhiteboardIdFromFilePath(card.filePath);
+        if (targetWhiteboardId !== currentWhiteboardId) {
+          setCurrentWhiteboardId(targetWhiteboardId);
+        }
+      }
+      handleFocusEntity(selection.id, "card");
+      return;
+    }
+
+    if (selection.kind === "alias") {
+      handleFocusEntity(selection.id, "alias");
+      return;
+    }
+
+    handleFocusEntity(selection.id, selection.kind);
+  }, [cardsById, currentWhiteboardId, handleFocusEntity]);
+
+  const handlePreviewEntity = useCallback((entityId: string, kind: GraphSelection["kind"] = "card") => {
+    setSidebarCollapsed(false);
+    setSelected({ id: entityId, kind });
+    setPreviewRequestKey((prev) => prev + 1);
+  }, []);
+
+  const handleSelectEntity = useCallback((selection: GraphSelection | null) => {
+    if (selection) {
+      setSidebarCollapsed(false);
+    }
+    setSelected(selection);
   }, []);
 
   const handleResizeStart = useCallback((event: ReactMouseEvent<HTMLDivElement>) => {
@@ -195,41 +172,35 @@ export function KeysightView() {
     window.addEventListener("mouseup", onUp);
   }, [sidebarWidth]);
 
-  const selectedCardIds = selectedCard ? [selectedCard.id] : [];
-
-  const tabs = useMemo<SidebarTabItem[]>(() => {
-    const base: SidebarTabItem[] = [
-      { id: "follow", label: "Follow" },
-      { id: "cards", label: "Cards" },
-      { id: "review", label: "Review" },
-      { id: "filter", label: "Filter" },
-      { id: "export", label: "Export" },
-    ];
-
-    if (selected) {
-      base.push({ id: selected.kind === "note" ? "note" : "details", label: selected.kind === "note" ? "Note" : "Details" });
-      base.push({ id: "context", label: "Context" });
-    }
-
-    return base;
-  }, [selected]);
-
   const selectedEntityExists = useMemo(() => {
     if (!selected) return false;
     if (selected.kind === "card") return Boolean(cardsById[selected.id]);
     if (selected.kind === "alias") return Boolean(selectedAlias);
-    if (selected.kind === "note") return Boolean(selectedNote);
+    if (selected.kind === "note") return boardData.notes.some((note) => note.id === selected.id);
     if (selected.kind === "task") return boardData.tasks.some((task) => task.id === selected.id);
     if (selected.kind === "question") return boardData.questions.some((question) => question.id === selected.id);
     if (selected.kind === "section") return boardData.sections.some((section) => section.id === selected.id);
     return false;
-  }, [boardData.questions, boardData.sections, boardData.tasks, cardsById, selected, selectedAlias, selectedNote]);
+  }, [boardData.notes, boardData.questions, boardData.sections, boardData.tasks, cardsById, selected, selectedAlias]);
 
   useEffect(() => {
     if (selected && !selectedEntityExists) {
       setSelected(null);
     }
   }, [selected, selectedEntityExists]);
+
+  const handleSelectTag = useCallback((tag: string) => {
+    setSidebarCollapsed(false);
+    setSidebarMode("all");
+    setSidebarQuery(`#${tag}`);
+  }, []);
+
+  const handleShowOrphans = useCallback(() => {
+    setSidebarCollapsed(false);
+    setSidebarMode("orphans");
+    setSidebarQuery("");
+    setSelected(null);
+  }, []);
 
   return (
     <div className="flex h-full w-full overflow-hidden bg-[#f0eadf]">
@@ -238,73 +209,37 @@ export function KeysightView() {
           currentWhiteboardId={currentWhiteboardId}
           onWhiteboardChange={handleWhiteboardChange}
           selectedEntityId={selected?.id ?? null}
-          onSelectEntity={setSelected}
-          highlightedEntityIds={highlightedEntityIds}
+          onSelectEntity={handleSelectEntity}
           focusTarget={focusTarget}
+          onShowOrphans={handleShowOrphans}
+          onSearchTag={handleSelectTag}
+          onOpenCard={(cardId) => handlePreviewEntity(cardId, "card")}
+          onOpenAlias={(aliasId) => handlePreviewEntity(aliasId, "alias")}
         />
       </div>
 
       <Sidebar
         collapsed={sidebarCollapsed}
         width={sidebarWidth}
-        tabs={tabs}
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
+        title={currentWhiteboardId === ROOT_WHITEBOARD ? "Library" : currentWhiteboardId}
         onToggleCollapse={() => setSidebarCollapsed((prev) => !prev)}
         onResizeStart={handleResizeStart}
       >
-        {activeTab === "follow" && (
-          <FollowView
-            pinnedFilePath={pinnedFilePath}
-            onPinnedFilePathChange={setPinnedFilePath}
-            selectedCard={selectedCard}
-            onFocusCard={handleFocusEntity}
-          />
-        )}
-        {activeTab === "cards" && (
-          <CardsList cards={boardData.cards} selectedCardId={selectedCard?.id ?? null} onFocusCard={handleFocusEntity} />
-        )}
-        {activeTab === "review" && (
-          <ReviewView cards={boardData.cards} onFocusCard={handleFocusEntity} />
-        )}
-        {activeTab === "filter" && (
-          <FilterBar
-            cards={boardData.cards}
-            selectedFolder={selectedFolder}
-            selectedTags={selectedTags}
-            onFolderChange={setSelectedFolder}
-            onTagsChange={setSelectedTags}
-          />
-        )}
-        {activeTab === "export" && (
-          <ExportPanel
-            cards={boardData.cards}
-            currentWhiteboardId={currentWhiteboardId}
-            currentWhiteboardCardIds={currentWhiteboardCardIds}
-            selectedCardIds={selectedCardIds}
-          />
-        )}
-        {activeTab === "details" && (
-          <InsightCardDetail
-            selection={selected}
-            card={selectedCard}
-            note={selectedNote}
-            alias={selectedAlias}
-            cardsById={cardsById}
-            links={selectedCardLinks.data ?? null}
-            aliasRefs={aliasRefs}
-            onFocusEntity={handleFocusEntity}
-          />
-        )}
-        {activeTab === "context" && (
-          <ContextPanel
-            selection={selected}
-            card={selectedCard}
-            note={selectedNote}
-            onFocusEntity={handleFocusEntity}
-          />
-        )}
-        {activeTab === "note" && <NoteEditor note={selectedNote} />}
+        <CardsList
+          cards={boardData.cards}
+          sections={boardData.sections}
+          aliasRefsByTargetId={aliasRefsByTargetId}
+          selectedCard={selectedCard}
+          selectedAlias={selectedAlias}
+          previewRequestKey={previewRequestKey}
+          query={sidebarQuery}
+          mode={sidebarMode}
+          onQueryChange={setSidebarQuery}
+          onSelectCard={(cardId) => handlePreviewEntity(cardId, "card")}
+          onSelectAlias={(aliasId) => handlePreviewEntity(aliasId, "alias")}
+          onRevealSelection={handleRevealSelection}
+          onSelectTag={handleSelectTag}
+        />
       </Sidebar>
     </div>
   );
