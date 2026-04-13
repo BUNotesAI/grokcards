@@ -198,4 +198,25 @@ mod tests {
             "Task 目标应进 linked_task_ids"
         );
     }
+
+    #[test]
+    fn test_get_alias_fails_on_unknown_target_prefix() {
+        // 防火墙硬线:reader 遇到未知 entity id prefix 必须返 ParseError,
+        // 不得 silent drop。
+        let conn = test_conn();
+        let store = SqliteAliasStore::new(&conn);
+        let alias = store.create("wb_root", "card_aaa").unwrap();
+
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, 'xyz_garbage', 'alias_link')",
+            params![alias.alias_id],
+        )
+        .unwrap();
+
+        let err = store.get(&alias.alias_id).unwrap_err();
+        assert!(
+            matches!(err, KeysightError::ParseError(_)),
+            "未知 prefix 应让 reader 返 ParseError,实际: {err:?}"
+        );
+    }
 }

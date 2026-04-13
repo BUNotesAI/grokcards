@@ -771,4 +771,28 @@ mod tests {
         assert!(loaded.linked_note_ids.is_none());
         assert!(loaded.linked_section_ids.is_none());
     }
+
+    #[test]
+    fn test_get_note_fails_on_unknown_target_prefix() {
+        // 防火墙硬线:reader 遇到未知 entity id prefix 必须返 ParseError,
+        // 不得 silent drop。模拟 DB 脏数据/未来新 entity kind 的场景。
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let note = store
+            .create("wb_root", "Note Parse Err", Some("body"), None)
+            .unwrap();
+
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, 'xyz_garbage', 'note_link')",
+            params![note.id],
+        )
+        .unwrap();
+
+        let err = store.get(&note.id).unwrap_err();
+        assert!(
+            matches!(err, KeysightError::ParseError(_)),
+            "未知 prefix 应让 reader 返 ParseError 不允许 silent drop,实际: {err:?}"
+        );
+    }
 }
