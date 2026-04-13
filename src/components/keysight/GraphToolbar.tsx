@@ -43,7 +43,17 @@ interface GraphToolbarProps {
   onSync: () => void;
   onCreateSection: () => void;
   onCreateNote: () => void;
+  creatingNote?: boolean;
+  noteDraft?: string;
+  onNoteDraftChange?: (value: string) => void;
+  onSubmitNote?: () => void;
+  onCancelNote?: () => void;
   onCreateQuestion?: () => void;
+  creatingQuestion?: boolean;
+  questionDraft?: string;
+  onQuestionDraftChange?: (value: string) => void;
+  onSubmitQuestion?: () => void;
+  onCancelQuestion?: () => void;
   onCreateWhiteboard?: () => void;
   creatingWhiteboard?: boolean;
   whiteboardDraft?: string;
@@ -79,7 +89,17 @@ export function GraphToolbar({
   onSync,
   onCreateSection,
   onCreateNote,
+  creatingNote = false,
+  noteDraft = "",
+  onNoteDraftChange,
+  onSubmitNote,
+  onCancelNote,
   onCreateQuestion,
+  creatingQuestion = false,
+  questionDraft = "",
+  onQuestionDraftChange,
+  onSubmitQuestion,
+  onCancelQuestion,
   onCreateWhiteboard,
   creatingWhiteboard = false,
   whiteboardDraft = "",
@@ -152,14 +172,52 @@ export function GraphToolbar({
         <LibraryBig className="mr-1 h-4 w-4" />
         Section
       </Button>
-      <Button variant="outline" size="sm" onClick={onCreateNote} aria-label="Create Note">
-        <PenSquare className="mr-1 h-4 w-4" />
-        Note
-      </Button>
-      <Button variant="outline" size="sm" onClick={onCreateQuestion} aria-label="Create Question">
-        <CircleHelp className="mr-1 h-4 w-4" />
-        Question
-      </Button>
+      {creatingNote ? (
+        <Input
+          autoFocus
+          value={noteDraft}
+          placeholder="Note title…"
+          aria-label="Note title"
+          className="h-9 w-56 bg-white"
+          onChange={(event) => onNoteDraftChange?.(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+            if (event.key === "Escape") onCancelNote?.();
+          }}
+          onBlur={() => onSubmitNote?.()}
+        />
+      ) : (
+        <Button variant="outline" size="sm" onClick={onCreateNote} aria-label="Create Note">
+          <PenSquare className="mr-1 h-4 w-4" />
+          Note
+        </Button>
+      )}
+      {creatingQuestion ? (
+        <Input
+          autoFocus
+          value={questionDraft}
+          placeholder="Question title…"
+          aria-label="Question title"
+          className="h-9 w-56 bg-white"
+          onChange={(event) => onQuestionDraftChange?.(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key === "Enter") {
+              event.preventDefault();
+              event.currentTarget.blur();
+            }
+            if (event.key === "Escape") onCancelQuestion?.();
+          }}
+          onBlur={() => onSubmitQuestion?.()}
+        />
+      ) : (
+        <Button variant="outline" size="sm" onClick={onCreateQuestion} aria-label="Create Question">
+          <CircleHelp className="mr-1 h-4 w-4" />
+          Question
+        </Button>
+      )}
       {currentWhiteboardId === "wb_root" && (
         creatingWhiteboard ? (
           <Input

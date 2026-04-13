@@ -255,6 +255,10 @@ export function GraphView({
 
   // 展开状态 — 同时只有一张卡片展开显示 body / 关联列表
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [creatingNote, setCreatingNote] = useState(false);
+  const [noteDraft, setNoteDraft] = useState("");
+  const [creatingQuestion, setCreatingQuestion] = useState(false);
+  const [questionDraft, setQuestionDraft] = useState("");
   const [creatingWhiteboard, setCreatingWhiteboard] = useState(false);
   const [whiteboardDraft, setWhiteboardDraft] = useState("");
   const handleToggleExpand = useCallback((entityId: string) => {
@@ -823,10 +827,29 @@ export function GraphView({
   }, [allDimensions, allEntities, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   // 创建 Note 回调
-  const handleCreateNote = useCallback(async () => {
+  const handleCreateNote = useCallback(() => {
+    setCreatingWhiteboard(false);
+    setWhiteboardDraft("");
+    setCreatingQuestion(false);
+    setQuestionDraft("");
+    setNoteDraft("");
+    setCreatingNote(true);
+  }, []);
+
+  const handleCancelCreateNote = useCallback(() => {
+    setCreatingNote(false);
+    setNoteDraft("");
+  }, []);
+
+  const handleSubmitCreateNote = useCallback(async () => {
+    const title = noteDraft.trim();
+    setCreatingNote(false);
+    setNoteDraft("");
+    if (!title) return;
+
     try {
       const result = await unwrapCommand(
-        commands.noteCreate(currentWhiteboardId, "New Note", null, null),
+        commands.noteCreate(currentWhiteboardId, title, null, null),
       );
       const pos = newEntityPositionAtCenter(520, 180);
       await unwrapCommand(
@@ -838,12 +861,31 @@ export function GraphView({
     } catch (e) {
       console.error("创建 note 失败:", e);
     }
-  }, [onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [noteDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   const handleCreateQuestion = useCallback(async () => {
+    setCreatingWhiteboard(false);
+    setWhiteboardDraft("");
+    setCreatingNote(false);
+    setNoteDraft("");
+    setQuestionDraft("");
+    setCreatingQuestion(true);
+  }, []);
+
+  const handleCancelCreateQuestion = useCallback(() => {
+    setCreatingQuestion(false);
+    setQuestionDraft("");
+  }, []);
+
+  const handleSubmitCreateQuestion = useCallback(async () => {
+    const title = questionDraft.trim();
+    setCreatingQuestion(false);
+    setQuestionDraft("");
+    if (!title) return;
+
     try {
       const result = await unwrapCommand(
-        commands.questionCreate(currentWhiteboardId, "New Question", null, null),
+        commands.questionCreate(currentWhiteboardId, title, null, null),
       );
       const pos = newEntityPositionAtCenter(320, 140);
       await unwrapCommand(
@@ -855,10 +897,14 @@ export function GraphView({
     } catch (e) {
       console.error("创建 question 失败:", e);
     }
-  }, [onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [questionDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   const handleCreateWhiteboard = useCallback(async () => {
     if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
+    setCreatingNote(false);
+    setNoteDraft("");
+    setCreatingQuestion(false);
+    setQuestionDraft("");
     setWhiteboardDraft("");
     setCreatingWhiteboard(true);
   }, [currentWhiteboardId]);
@@ -1152,7 +1198,17 @@ export function GraphView({
         onSync={handleSync}
         onCreateSection={handleCreateSection}
         onCreateNote={handleCreateNote}
+        creatingNote={creatingNote}
+        noteDraft={noteDraft}
+        onNoteDraftChange={setNoteDraft}
+        onSubmitNote={handleSubmitCreateNote}
+        onCancelNote={handleCancelCreateNote}
         onCreateQuestion={handleCreateQuestion}
+        creatingQuestion={creatingQuestion}
+        questionDraft={questionDraft}
+        onQuestionDraftChange={setQuestionDraft}
+        onSubmitQuestion={handleSubmitCreateQuestion}
+        onCancelQuestion={handleCancelCreateQuestion}
         onCreateWhiteboard={handleCreateWhiteboard}
         creatingWhiteboard={creatingWhiteboard}
         whiteboardDraft={whiteboardDraft}

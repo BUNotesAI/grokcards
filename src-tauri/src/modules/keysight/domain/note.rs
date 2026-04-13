@@ -82,10 +82,12 @@ impl<'a> SqliteNoteStore<'a> {
 
     fn rewrite_note_file_from_state(&self, state: NoteFileState<'_>) -> Result<String, KeysightError> {
         let vault_fs = self.require_vault_fs("rewrite_note_file_from_state")?;
-        let relative_path = state.file_path
-            .filter(|path| !path.is_empty())
-            .map(|path| path.to_string())
-            .unwrap_or_else(|| note_relative_path(state.whiteboard_id, state.id, state.title));
+        let relative_path = desired_note_relative_path(
+            state.whiteboard_id,
+            state.id,
+            state.title,
+            state.file_path,
+        );
         let markdown = render_note_markdown(
             state.id,
             state.title,
@@ -97,6 +99,14 @@ impl<'a> SqliteNoteStore<'a> {
         );
         vault_fs.write_file(&relative_path, &markdown)?;
         sync::sync_file(self.conn, &relative_path, &markdown, current_mtime_ms())?;
+        if let Some(previous_path) = state.file_path
+            && !previous_path.is_empty()
+            && previous_path != relative_path
+        {
+            vault_fs.delete_file(previous_path)?;
+            self.conn
+                .execute("DELETE FROM file_mtimes WHERE filePath = ?1", [previous_path])?;
+        }
         Ok(relative_path)
     }
 
@@ -119,6 +129,7 @@ impl<'a> SqliteNoteStore<'a> {
 
 impl NoteStore for SqliteNoteStore<'_> {
     fn create(&self, whiteboard_id: &str, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError> {
+        let title = validate_title(title)?;
         let note_id = id::gen_note_id();
         let normalized_content = content
             .map(parser::normalize_legacy_toggle_syntax)
@@ -156,7 +167,10 @@ impl NoteStore for SqliteNoteStore<'_> {
 
     fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError> {
         let snapshot = self.current_snapshot(id)?;
-        let next_title = title.unwrap_or(&snapshot.title);
+        let next_title = match title {
+            Some(value) => validate_title(value)?,
+            None => snapshot.title.as_str(),
+        };
         let next_content = content
             .map(parser::normalize_legacy_toggle_syntax)
             .unwrap_or_else(|| snapshot.note.content.clone());
@@ -296,11 +310,24 @@ fn whiteboard_relative_dir(whiteboard_id: &str) -> String {
     }
 }
 
+fn validate_title(title: &str) -> Result<&str, KeysightError> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        Err(KeysightError::EmptyTitle)
+    } else {
+        Ok(trimmed)
+    }
+}
+
+fn filename_title_component(text: &str) -> String {
+    text.replace("**", "")
+}
+
 fn sanitize_file_component(text: &str) -> String {
-    let cleaned = text
+    let cleaned = filename_title_component(text)
         .chars()
         .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             _ => ch,
         })
         .collect::<String>()
@@ -310,6 +337,25 @@ fn sanitize_file_component(text: &str) -> String {
         "Untitled".to_string()
     } else {
         cleaned
+    }
+}
+
+fn desired_note_relative_path(
+    whiteboard_id: &str,
+    note_id: &str,
+    title: &str,
+    current_file_path: Option<&str>,
+) -> String {
+    let desired = note_relative_path(whiteboard_id, note_id, title);
+    match current_file_path {
+        Some(path) if !path.is_empty() => {
+            if path == desired {
+                path.to_string()
+            } else {
+                desired
+            }
+        }
+        _ => desired,
     }
 }
 
@@ -507,6 +553,45 @@ mod tests {
         assert!(file.contains("# 【NOTE】New"));
         assert!(file.contains("new content"));
         assert!(file.contains("color: blue"));
+    }
+
+    #[test]
+    fn test_create_note_sanitizes_filename_without_markdown_bold_or_special_chars() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+
+        let note = store
+            .create("wb_root", "**My** / Note", Some("Content"), None)
+            .unwrap();
+
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        assert!(file_path.ends_with("【NOTE】My _ Note.md"));
+    }
+
+    #[test]
+    fn test_update_note_renames_file_when_title_changes() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let note = store.create("wb_root", "Old", Some("body"), None).unwrap();
+        let old_file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+
+        store
+            .update(&note.id, Some("**Renamed** / Note"), None, None)
+            .unwrap();
+
+        let new_file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        assert_ne!(new_file_path, old_file_path);
+        assert!(new_file_path.ends_with("【NOTE】Renamed _ Note.md"));
+        assert!(vfs.get_file(&old_file_path).is_none());
+        assert!(vfs.get_file(&new_file_path).is_some());
     }
 
     #[test]

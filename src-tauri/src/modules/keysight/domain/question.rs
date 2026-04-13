@@ -50,6 +50,7 @@ pub(in crate::modules::keysight) fn create(
     content: Option<&str>,
     status: Option<&str>,
 ) -> Result<QuestionEntity, KeysightError> {
+    let title = validate_title(title)?;
     let question_id = id::gen_question_id();
     let question = QuestionEntity {
         id: question_id.clone(),
@@ -80,17 +81,25 @@ pub(in crate::modules::keysight) fn update(
 
     let next = QuestionEntity {
         id: current.id.clone(),
-        title: title.unwrap_or(&current.title).to_string(),
+        title: match title {
+            Some(value) => validate_title(value)?.to_string(),
+            None => current.title.clone(),
+        },
         content: content.unwrap_or(&current.content).to_string(),
         whiteboard_id: current.whiteboard_id.clone(),
         status: status.unwrap_or(&current.status).to_string(),
     };
-    let relative_path = file_path
-        .filter(|path| !path.is_empty())
-        .unwrap_or_else(|| question_relative_path(&next.whiteboard_id, id, &next.title));
+    let previous_path = file_path.filter(|path| !path.is_empty());
+    let relative_path = desired_question_relative_path(&next.whiteboard_id, id, &next.title, previous_path.as_deref());
     let markdown = render_question_markdown(&next);
     vault_fs.write_file(&relative_path, &markdown)?;
     sync::sync_file(conn, &relative_path, &markdown, current_mtime_ms())?;
+    if let Some(previous_path) = previous_path
+        && previous_path != relative_path
+    {
+        vault_fs.delete_file(&previous_path)?;
+        conn.execute("DELETE FROM file_mtimes WHERE filePath = ?1", [&previous_path])?;
+    }
     Ok(())
 }
 
@@ -175,11 +184,24 @@ fn whiteboard_relative_dir(whiteboard_id: &str) -> String {
     }
 }
 
+fn validate_title(title: &str) -> Result<&str, KeysightError> {
+    let trimmed = title.trim();
+    if trimmed.is_empty() {
+        Err(KeysightError::EmptyTitle)
+    } else {
+        Ok(trimmed)
+    }
+}
+
+fn filename_title_component(text: &str) -> String {
+    text.replace("**", "")
+}
+
 fn sanitize_file_component(text: &str) -> String {
-    let cleaned = text
+    let cleaned = filename_title_component(text)
         .chars()
         .map(|ch| match ch {
-            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '-',
+            '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|' => '_',
             _ => ch,
         })
         .collect::<String>()
@@ -189,6 +211,25 @@ fn sanitize_file_component(text: &str) -> String {
         "Untitled".to_string()
     } else {
         cleaned
+    }
+}
+
+fn desired_question_relative_path(
+    whiteboard_id: &str,
+    question_id: &str,
+    title: &str,
+    current_file_path: Option<&str>,
+) -> String {
+    let desired = question_relative_path(whiteboard_id, question_id, title);
+    match current_file_path {
+        Some(path) if !path.is_empty() => {
+            if path == desired {
+                path.to_string()
+            } else {
+                desired
+            }
+        }
+        _ => desired,
     }
 }
 
@@ -286,6 +327,39 @@ mod tests {
         assert_eq!(loaded.title, "New");
         assert_eq!(loaded.content, "Updated");
         assert_eq!(loaded.status, "done");
+    }
+
+    #[test]
+    fn test_create_question_sanitizes_filename_without_markdown_bold_or_special_chars() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+
+        let question = create(&conn, &vfs, "wb_root", "**Why** / Question", Some("Body"), None).unwrap();
+
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .unwrap();
+        assert!(file_path.ends_with("【QUE】Why _ Question.md"));
+    }
+
+    #[test]
+    fn test_update_question_renames_file_when_title_changes() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending")).unwrap();
+        let old_file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .unwrap();
+
+        update(&conn, &vfs, &question.id, Some("**New** / Question"), None, None).unwrap();
+
+        let new_file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .unwrap();
+        assert_ne!(new_file_path, old_file_path);
+        assert!(new_file_path.ends_with("【QUE】New _ Question.md"));
+        assert!(vfs.get_file(&old_file_path).is_none());
+        assert!(vfs.get_file(&new_file_path).is_some());
     }
 
     #[test]

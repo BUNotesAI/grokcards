@@ -176,6 +176,42 @@ describe("GraphToolbar", () => {
     expect(onCreateQuestion).toHaveBeenCalledTimes(1);
   });
 
+  it("创建 note 时显示内联输入框", () => {
+    const viewport = createTestViewport();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        creatingNote
+        noteDraft="My Note"
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: /note title/i })).toHaveValue("My Note");
+    expect(screen.queryByRole("button", { name: /create note/i })).not.toBeInTheDocument();
+  });
+
+  it("创建 question 时显示内联输入框", () => {
+    const viewport = createTestViewport();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        creatingQuestion
+        questionDraft="Why?"
+      />,
+    );
+
+    expect(screen.getByRole("textbox", { name: /question title/i })).toHaveValue("Why?");
+    expect(screen.queryByRole("button", { name: /create question/i })).not.toBeInTheDocument();
+  });
+
   it("根白板时显示 Whiteboard 按钮并调用 onCreateWhiteboard", () => {
     const viewport = createTestViewport();
     const onCreateWhiteboard = vi.fn();

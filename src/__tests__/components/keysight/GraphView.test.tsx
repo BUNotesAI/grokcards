@@ -407,7 +407,7 @@ describe("GraphView", () => {
     });
   });
 
-  it("创建 note 后直接进入 body 编辑", async () => {
+  it("创建 note 时先在工具栏输入 title，再进入 body 编辑", async () => {
     mockState.whiteboardData = {
       ...makeWhiteboardData(),
       cards: [],
@@ -424,9 +424,15 @@ describe("GraphView", () => {
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: /create note/i }));
     });
+    fireEvent.change(screen.getByRole("textbox", { name: /note title/i }), {
+      target: { value: "My **New**/Note" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /note title/i }), {
+      key: "Enter",
+    });
 
     await waitFor(() => {
-      expect(mockNoteCreate).toHaveBeenCalledWith("wb_root", "New Note", null, null);
+      expect(mockNoteCreate).toHaveBeenCalledWith("wb_root", "My **New**/Note", null, null);
     });
     await waitFor(() => {
       expect(mockLayoutSetPosition).toHaveBeenCalledWith(
@@ -438,7 +444,7 @@ describe("GraphView", () => {
     });
   });
 
-  it("创建 question 后直接进入 body 编辑", async () => {
+  it("创建 question 时先在工具栏输入 title，再进入 body 编辑", async () => {
     mockState.whiteboardData = {
       ...makeWhiteboardData(),
       cards: [],
@@ -455,9 +461,15 @@ describe("GraphView", () => {
     act(() => {
       fireEvent.click(screen.getByRole("button", { name: /create question/i }));
     });
+    fireEvent.change(screen.getByRole("textbox", { name: /question title/i }), {
+      target: { value: "Why Question" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /question title/i }), {
+      key: "Enter",
+    });
 
     await waitFor(() => {
-      expect(mockQuestionCreate).toHaveBeenCalledWith("wb_root", "New Question", null, null);
+      expect(mockQuestionCreate).toHaveBeenCalledWith("wb_root", "Why Question", null, null);
     });
     await waitFor(() => {
       expect(mockLayoutSetPosition).toHaveBeenCalledWith(

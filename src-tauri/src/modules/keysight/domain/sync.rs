@@ -194,12 +194,12 @@ pub(super) fn derive_whiteboard_id(file_path: &str) -> String {
         .strip_prefix("whiteboard/")
         .unwrap_or(file_path);
     // 如果 strip 成功，取第一个 / 之前的部分作为子白板 id
-    if path.len() < file_path.len() {
-        if let Some(slash_pos) = path.find('/') {
-            let sub_wb = &path[..slash_pos];
-            if !sub_wb.is_empty() {
-                return sub_wb.to_string();
-            }
+    if path.len() < file_path.len()
+        && let Some(slash_pos) = path.find('/')
+    {
+        let sub_wb = &path[..slash_pos];
+        if !sub_wb.is_empty() {
+            return sub_wb.to_string();
         }
     }
     "wb_root".to_string()
@@ -306,12 +306,12 @@ pub(in crate::modules::keysight) fn sync_vault(
 
     // 3. 遍历文件系统文件
     for (path, mtime) in &fs_files {
-        if let Some(db_mtime) = db_map.remove(path) {
-            if (db_mtime - mtime).abs() < f64::EPSILON {
-                // mtime 相同 → 跳过
-                skipped += 1;
-                continue;
-            }
+        if let Some(db_mtime) = db_map.remove(path)
+            && (db_mtime - mtime).abs() < f64::EPSILON
+        {
+            // mtime 相同 → 跳过
+            skipped += 1;
+            continue;
         }
         // new 或 changed → 同步
         let content = fs.read_file(path)?;

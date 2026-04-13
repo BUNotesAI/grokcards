@@ -160,13 +160,13 @@ impl SectionStore for SqliteSectionStore<'_> {
                 [other_id],
                 |r| r.get(0),
             );
-            if let Ok(wb) = other_wb {
-                if wb != target_whiteboard_id {
-                    self.conn.execute(
-                        "DELETE FROM edges WHERE from_id = ?1 AND to_id = ?2 AND edge_type = 'section_link'",
-                        params![from_id, to_id],
-                    )?;
-                }
+            if let Ok(wb) = other_wb
+                && wb != target_whiteboard_id
+            {
+                self.conn.execute(
+                    "DELETE FROM edges WHERE from_id = ?1 AND to_id = ?2 AND edge_type = 'section_link'",
+                    params![from_id, to_id],
+                )?;
             }
         }
 
