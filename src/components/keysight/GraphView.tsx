@@ -19,7 +19,7 @@ import type {
   EntityWithPosition,
   GraphSelection,
 } from "@/components/keysight/types";
-import type { EdgeType, Position } from "@/bindings";
+import type { Position } from "@/bindings";
 import type { NodeContextMenuHandlers } from "@/components/keysight/nodes/EntityNode";
 import type { SectionListItem } from "@/components/keysight/nodes/NodeContextMenu";
 import { unwrapCommand } from "@/lib/commandResult";
@@ -296,10 +296,11 @@ export function GraphView({
   const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
 
   // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
-  // 第一次点菜单设置 fromId；第二次点其他实体触发 entityConnect(LinkTo) + 清空
-  const [drawingState, setDrawingState] = useState<
-    { fromId: string; edgeType: EdgeType } | null
-  >(null);
+  // 第一次点菜单设置 fromId；第二次点其他实体触发 entityConnect + 清空。
+  // edgeType 已从 drawingState 移除：后端按 from_id 前缀强类型派发(sub-stage 2a)
+  const [drawingState, setDrawingState] = useState<{ fromId: string } | null>(
+    null,
+  );
   // Related picker — 对齐旧 Obsidian 交互：点击菜单后弹出候选列表，直接选择目标 card
   const [relatedPickerCardId, setRelatedPickerCardId] = useState<string | null>(null);
   const [relatedSearch, setRelatedSearch] = useState("");
@@ -940,11 +941,11 @@ export function GraphView({
         if (!card) return;
         void navigator.clipboard.writeText(normalizeCardTitleForClipboard(card.title));
       },
-      // Card/Alias: Draw connection → 进入 LinkTo 模式，等待下一次点击目标实体
+      // Card/Alias: Draw connection → 进入画连线模式，等待下一次点击目标实体
       onDrawConnectionFrom: (id) => {
         setRelatedPickerCardId(null);
         setRelatedSearch("");
-        setDrawingState({ fromId: id, edgeType: "LinkTo" });
+        setDrawingState({ fromId: id });
       },
       // Card: Related → 打开 source card 右侧的 picker
       onRelatedFrom: (id) => {
@@ -1143,15 +1144,13 @@ export function GraphView({
       }
       // 画连线模式：第一次点 ⋯ 菜单设置 drawingState，下一次点目标实体触发 entityConnect
       if (drawingState && drawingState.fromId !== selection.id) {
-        const { fromId, edgeType } = drawingState;
+        const { fromId } = drawingState;
         setDrawingState(null);
-        unwrapCommand(
-          commands.entityConnect(fromId, selection.id, edgeType, null, null),
-        )
+        unwrapCommand(commands.entityConnect(fromId, selection.id))
           .then(() => {
             queryClient.invalidateQueries();
           })
-          .catch((err) => console.error(`建立 ${edgeType} 边失败:`, err));
+          .catch((err) => console.error("建立连线失败:", err));
         return;
       }
       // 画连线模式下再点自己：取消 drawing 模式
@@ -1405,12 +1404,9 @@ export function GraphView({
                         setRelatedPickerCardId(null);
                         setRelatedSearch("");
                         unwrapCommand(
-                          commands.entityConnect(
+                          commands.entityRelate(
                             relatedPickerCardId,
                             card.id,
-                            "Related",
-                            null,
-                            null,
                           ),
                         )
                           .then(() => {

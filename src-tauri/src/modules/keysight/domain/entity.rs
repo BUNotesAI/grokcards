@@ -1,22 +1,27 @@
 #![allow(dead_code)]
 use rusqlite::Connection;
 
+use crate::modules::keysight::domain::edge::Edge;
 use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::{EdgeRow, EdgeStyle, EdgeType};
+use crate::modules::keysight::models::{EdgeRow, EdgeType};
 
 /// 实体图谱边操作契约。
 pub(in crate::modules::keysight) trait EntityGraph {
-    /// 连接两个实体。INSERT OR IGNORE — 重复连接幂等。
-    fn connect(
-        &self,
-        from_id: &str,
-        to_id: &str,
-        edge_type: EdgeType,
-        style: Option<EdgeStyle>,
-        label: Option<&str>,
-    ) -> Result<(), KeysightError>;
+    /// 按强类型 [`Edge`] 插入 edges 表。INSERT OR IGNORE — 重复连接幂等。
+    ///
+    /// 替代旧 `connect(from: &str, to: &str, edge_type: EdgeType, style, label)`
+    /// 五参数逃生舱口。参数已经是合法 [`Edge`]，调用方通过
+    /// [`crate::modules::keysight::domain::edge::user_draw_edge`] 或直接构造
+    /// 变体拿到 Edge。style / label 统一写 NULL —— 旧 API 的这两个参数已整体
+    /// 退役(TS 从未使用,生产代码从未设值,只有一条单测在测它们)。
+    fn connect(&self, edge: &Edge) -> Result<(), KeysightError>;
 
-    /// 断开两个实体的连接。
+    /// 断开两个实体的连接(按 DB 行原始键定位)。
+    ///
+    /// 子阶段 2a 保留旧字符串签名 —— disconnect 的语义是「删除一行 DB 记录」
+    /// 而不是「表达一个合法 Edge」,且 TS 侧目前无 disconnect 调用,类型化
+    /// 投入收益比不高。子阶段 2b 的 reader 能力到位后,本方法可统一升级到
+    /// `disconnect(edge: &Edge)`。
     fn disconnect(
         &self,
         from_id: &str,
@@ -24,10 +29,10 @@ pub(in crate::modules::keysight) trait EntityGraph {
         edge_type: EdgeType,
     ) -> Result<(), KeysightError>;
 
-    /// 查询某实体的所有出边。
+    /// 查询某实体的所有出边(返回 DB 行投影,未做类型安全校验)
     fn edges_from(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
 
-    /// 查询某实体的所有入边。
+    /// 查询某实体的所有入边(返回 DB 行投影,未做类型安全校验)
     fn edges_to(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
 }
 
@@ -41,44 +46,12 @@ impl<'a> SqliteEntityGraph<'a> {
     }
 }
 
-/// 把用户从 ⋯ 菜单 Draw connection 画线时 caller 传入的 edge_type
-/// 按 source 实体前缀归一化为 Rust 持久化层读写一致的值。
-///
-/// 背景：`NoteStore::get` / `AliasStore::get` 按 `note_link` / `alias_link`
-/// 回读 edges 表，若 entity_connect 写入时仍用 caller 传的 `LinkTo`，
-/// 边会真写入 DB 但在 note/alias 侧永远读不回，buildEdges 也就渲染不出。
-/// 所以在 Rust 入口按 from_id 前缀强制归一化，TS 侧可无脑传 `LinkTo`。
-///
-/// - `note_*` → [`EdgeType::NoteLink`]（覆盖 caller）
-/// - `alias_*` → [`EdgeType::AliasLink`]（覆盖 caller）
-/// - 其它（主要是 `card_*`）→ 保留 caller 传入值（支持 Related picker 的 Related / 历史 SeeAlso）
-pub(in crate::modules::keysight) fn resolve_user_drawn_edge_type(
-    from_id: &str,
-    caller_edge_type: EdgeType,
-) -> EdgeType {
-    if from_id.starts_with("note_") {
-        EdgeType::NoteLink
-    } else if from_id.starts_with("alias_") {
-        EdgeType::AliasLink
-    } else {
-        caller_edge_type
-    }
-}
-
 impl EntityGraph for SqliteEntityGraph<'_> {
-    fn connect(
-        &self,
-        from_id: &str,
-        to_id: &str,
-        edge_type: EdgeType,
-        style: Option<EdgeStyle>,
-        label: Option<&str>,
-    ) -> Result<(), KeysightError> {
-        let edge_type_str = edge_type.as_db_str();
-        let style_str = style.map(|s| s.as_db_str().to_string());
+    fn connect(&self, edge: &Edge) -> Result<(), KeysightError> {
+        let (from_id, to_id, edge_type_str) = edge.db_insert_values();
         self.conn.execute(
-            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, style, label) VALUES (?1, ?2, ?3, ?4, ?5)",
-            rusqlite::params![from_id, to_id, edge_type_str, style_str, label],
+            "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type, style, label) VALUES (?1, ?2, ?3, NULL, NULL)",
+            rusqlite::params![from_id, to_id, edge_type_str],
         )?;
         Ok(())
     }
@@ -138,6 +111,7 @@ impl EntityGraph for SqliteEntityGraph<'_> {
 mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
+    use crate::modules::keysight::domain::edge::{user_draw_edge, CardId, EntityId};
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -145,11 +119,29 @@ mod tests {
         conn
     }
 
+    /// 测试辅助:把字符串 id 解析成 [`CardId`],用于构造 `CardRelated` 等
+    /// 不经过 [`user_draw_edge`] 的 Edge 变体。
+    fn card_id(s: &str) -> CardId {
+        match EntityId::parse(s).unwrap() {
+            EntityId::Card(c) => c,
+            other => panic!("期望 card id,实际: {other:?}"),
+        }
+    }
+
+    /// 测试辅助:构造一条 card → card 的 [`Edge::CardLink`] fixture。
+    fn card_link(from: &str, to: &str) -> Edge {
+        user_draw_edge(
+            EntityId::parse(from).unwrap(),
+            EntityId::parse(to).unwrap(),
+        )
+        .unwrap()
+    }
+
     #[test]
     fn test_connect_creates_edge() {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.connect("card_aaa", "card_bbb", EdgeType::LinkTo, None, None).unwrap();
+        graph.connect(&card_link("card_aaa", "card_bbb")).unwrap();
 
         let edges = graph.edges_from("card_aaa").unwrap();
         assert_eq!(edges.len(), 1);
@@ -159,22 +151,12 @@ mod tests {
     }
 
     #[test]
-    fn test_connect_with_style_and_label() {
-        let conn = test_conn();
-        let graph = SqliteEntityGraph::new(&conn);
-        graph.connect("card_aaa", "card_bbb", EdgeType::Related, Some(EdgeStyle::Dashed), Some("参考")).unwrap();
-
-        let edges = graph.edges_from("card_aaa").unwrap();
-        assert_eq!(edges[0].style, Some("dashed".to_string()));
-        assert_eq!(edges[0].label, Some("参考".to_string()));
-    }
-
-    #[test]
     fn test_connect_idempotent() {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.connect("card_aaa", "card_bbb", EdgeType::LinkTo, None, None).unwrap();
-        graph.connect("card_aaa", "card_bbb", EdgeType::LinkTo, None, None).unwrap();
+        let edge = card_link("card_aaa", "card_bbb");
+        graph.connect(&edge).unwrap();
+        graph.connect(&edge).unwrap();
 
         let edges = graph.edges_from("card_aaa").unwrap();
         assert_eq!(edges.len(), 1, "重复连接应幂等");
@@ -184,8 +166,10 @@ mod tests {
     fn test_disconnect_removes_edge() {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.connect("card_aaa", "card_bbb", EdgeType::LinkTo, None, None).unwrap();
-        graph.disconnect("card_aaa", "card_bbb", EdgeType::LinkTo).unwrap();
+        graph.connect(&card_link("card_aaa", "card_bbb")).unwrap();
+        graph
+            .disconnect("card_aaa", "card_bbb", EdgeType::LinkTo)
+            .unwrap();
 
         let edges = graph.edges_from("card_aaa").unwrap();
         assert!(edges.is_empty(), "断开后应无边");
@@ -195,15 +179,22 @@ mod tests {
     fn test_disconnect_nonexistent_is_ok() {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.disconnect("card_aaa", "card_bbb", EdgeType::LinkTo).unwrap();
+        graph
+            .disconnect("card_aaa", "card_bbb", EdgeType::LinkTo)
+            .unwrap();
     }
 
     #[test]
     fn test_edges_to_returns_incoming() {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.connect("card_aaa", "card_bbb", EdgeType::LinkTo, None, None).unwrap();
-        graph.connect("card_ccc", "card_bbb", EdgeType::Related, None, None).unwrap();
+        graph.connect(&card_link("card_aaa", "card_bbb")).unwrap();
+        // card_ccc → card_bbb 通过 CardRelated(非 link_to,走独立变体)
+        let related = Edge::CardRelated {
+            from: card_id("card_ccc"),
+            to: card_id("card_bbb"),
+        };
+        graph.connect(&related).unwrap();
 
         let edges = graph.edges_to("card_bbb").unwrap();
         assert_eq!(edges.len(), 2);
@@ -213,57 +204,23 @@ mod tests {
     fn test_different_edge_types_coexist() {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.connect("card_aaa", "card_bbb", EdgeType::LinkTo, None, None).unwrap();
-        graph.connect("card_aaa", "card_bbb", EdgeType::Related, None, None).unwrap();
+        let card_a = card_id("card_aaa");
+        let card_b = card_id("card_bbb");
+
+        graph
+            .connect(&Edge::CardLink {
+                from: card_a.clone(),
+                to: EntityId::Card(card_b.clone()),
+            })
+            .unwrap();
+        graph
+            .connect(&Edge::CardRelated {
+                from: card_a,
+                to: card_b,
+            })
+            .unwrap();
 
         let edges = graph.edges_from("card_aaa").unwrap();
         assert_eq!(edges.len(), 2, "不同类型的边应共存");
-    }
-
-    // ============================================================
-    // resolve_user_drawn_edge_type — 前端 ⋯ 菜单 Draw connection 的归一化
-    // ============================================================
-    //
-    // 背景：TS 侧 onDrawConnectionFrom 不知道 Rust 持久化约定（Note 的
-    // linked_note_ids 只从 edge_type='note_link' 的 edge 读回，Alias 同理），
-    // 所以在 Rust 入口按 from_id 前缀强制归一化，让 TS 无脑传 LinkTo 即可。
-
-    #[test]
-    fn test_resolve_user_drawn_edge_type_note_source_forces_note_link() {
-        // note 源 — 不管 caller 传什么都应归一为 NoteLink
-        assert_eq!(
-            resolve_user_drawn_edge_type("note_aaa11111", EdgeType::LinkTo),
-            EdgeType::NoteLink
-        );
-        assert_eq!(
-            resolve_user_drawn_edge_type("note_aaa11111", EdgeType::Related),
-            EdgeType::NoteLink
-        );
-    }
-
-    #[test]
-    fn test_resolve_user_drawn_edge_type_alias_source_forces_alias_link() {
-        // alias 源 — 归一为 AliasLink
-        assert_eq!(
-            resolve_user_drawn_edge_type("alias_xxx22222", EdgeType::LinkTo),
-            EdgeType::AliasLink
-        );
-    }
-
-    #[test]
-    fn test_resolve_user_drawn_edge_type_card_source_preserves_caller() {
-        // card 源 — 保留 caller 传入，支持 Related picker 的 Related / 历史 SeeAlso
-        assert_eq!(
-            resolve_user_drawn_edge_type("card_xxx33333", EdgeType::LinkTo),
-            EdgeType::LinkTo
-        );
-        assert_eq!(
-            resolve_user_drawn_edge_type("card_xxx33333", EdgeType::Related),
-            EdgeType::Related
-        );
-        assert_eq!(
-            resolve_user_drawn_edge_type("card_xxx33333", EdgeType::SeeAlso),
-            EdgeType::SeeAlso
-        );
     }
 }

@@ -69,6 +69,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::entity_edges_from,
         modules::keysight::commands::entity_edges_to,
         modules::keysight::commands::entity_connect,
+        modules::keysight::commands::entity_relate,
         modules::keysight::commands::entity_disconnect,
         // keysight: sync
         modules::keysight::commands::sync_file,

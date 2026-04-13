@@ -122,6 +122,8 @@
 //! }
 //! ```
 
+use crate::modules::keysight::errors::KeysightError;
+
 // ====================================================================
 // Newtype id：每类实体一个强类型 wrapper
 // ====================================================================
@@ -391,6 +393,65 @@ pub(in crate::modules::keysight) enum Edge {
     CardToAlias { card: CardId, alias: AliasId },
 }
 
+impl Edge {
+    /// 把 [`Edge`] 变体拆成 DB `edges` 表一行的三个核心字段:
+    /// `(from_id_str, to_id_str, edge_type_str)`。
+    ///
+    /// 子阶段 2 [`crate::modules::keysight::domain::entity::SqliteEntityGraph::connect`]
+    /// 调用本方法落 SQL。style / label 当前统一写 NULL(旧 API 的 style/label
+    /// 参数已整体退役 —— TS 从未使用,生产代码从未设值)。
+    pub(in crate::modules::keysight) fn db_insert_values(&self) -> (&str, &str, &'static str) {
+        match self {
+            Self::CardLink { from, to } => (from.as_str(), to.as_str(), "link_to"),
+            Self::CardRelated { from, to } => (from.as_str(), to.as_str(), "related"),
+            Self::CardSeeAlso { from, to } => (from.as_str(), to.as_str(), "see_also"),
+            Self::NoteLink { from, to } => (from.as_str(), to.as_str(), "note_link"),
+            Self::NoteSeeAlso { from, to } => (from.as_str(), to.as_str(), "note_see_also"),
+            Self::AliasLink { from, to } => (from.as_str(), to.as_str(), "alias_link"),
+            Self::QuestionLink { from, to } => (from.as_str(), to.as_str(), "question_link"),
+            Self::CardToAlias { card, alias } => (card.as_str(), alias.as_str(), "card_to_alias"),
+        }
+    }
+}
+
+// ====================================================================
+// 意图函数：将用户意图（画箭头 / Related / SeeAlso）映射为合法 Edge
+// ====================================================================
+
+/// 把用户「从画布节点 A 画箭头到节点 B」的意图映射为合法 [`Edge`]。
+///
+/// 这是替代旧 `commands.rs::entity_connect(from: &str, to: &str, edge_type: EdgeType)`
+/// 三参数逃生舱口的强类型入口 —— 参数已经是 [`EntityId`]（调用方必须先跑
+/// [`EntityId::parse`]），从 kind 决定返回哪种 `*Link` 变体，编译器强制穷尽 match。
+///
+/// 业务规则：
+/// - `Card` / `Note` / `Alias` / `Question` 作为 from → 对应 `*Link` 变体 +
+///   `to: EntityId` 保留全部 6 类 entity 目标
+/// - `Section` / `Task` 作为 from → [`KeysightError::ConnectionNotAllowed`]
+///   （section / task 不主动发边，防火墙原则 1）
+///
+/// 本函数**不处理** Related picker 和 SeeAlso 的用户意图：
+/// - `Edge::CardRelated` 由 commands 层直接构造（意图来自 Related picker UI）
+/// - `Edge::CardSeeAlso` / `Edge::NoteSeeAlso` 由 commands 层直接构造
+///   （意图来自 SeeAlso 面板 UI，to 是 [`ObsidianLink`] 不是 [`EntityId`]）
+pub(in crate::modules::keysight) fn user_draw_edge(
+    from: EntityId,
+    to: EntityId,
+) -> Result<Edge, KeysightError> {
+    match from {
+        EntityId::Card(c) => Ok(Edge::CardLink { from: c, to }),
+        EntityId::Note(n) => Ok(Edge::NoteLink { from: n, to }),
+        EntityId::Alias(a) => Ok(Edge::AliasLink { from: a, to }),
+        EntityId::Question(q) => Ok(Edge::QuestionLink { from: q, to }),
+        EntityId::Section(_) => Err(KeysightError::ConnectionNotAllowed {
+            from_kind: "section",
+        }),
+        EntityId::Task(_) => Err(KeysightError::ConnectionNotAllowed {
+            from_kind: "task",
+        }),
+    }
+}
+
 // ====================================================================
 // IdError：parse 边界的错误类型
 // ====================================================================
@@ -451,5 +512,87 @@ mod tests {
     fn parse_unknown_prefix_returns_error() {
         let err = EntityId::parse("xyz_garbage").unwrap_err();
         assert_eq!(err, IdError::UnknownPrefix("xyz_garbage".to_string()));
+    }
+
+    // --------------------------------------------------------------
+    // user_draw_edge：6 种 from kind 全覆盖
+    // --------------------------------------------------------------
+
+    #[test]
+    fn user_draw_edge_card_source_returns_card_link() {
+        let from = EntityId::parse("card_aaaa1111").unwrap();
+        let to = EntityId::parse("note_bbbb2222").unwrap();
+        let edge = user_draw_edge(from, to).unwrap();
+        match edge {
+            Edge::CardLink { from, to } => {
+                assert_eq!(from.as_str(), "card_aaaa1111");
+                assert!(matches!(to, EntityId::Note(ref n) if n.as_str() == "note_bbbb2222"));
+            }
+            other => panic!("期望 Edge::CardLink，实际: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn user_draw_edge_note_source_returns_note_link() {
+        let from = EntityId::parse("note_aaaa1111").unwrap();
+        let to = EntityId::parse("q_bbbb2222").unwrap();
+        let edge = user_draw_edge(from, to).unwrap();
+        match edge {
+            Edge::NoteLink { from, to } => {
+                assert_eq!(from.as_str(), "note_aaaa1111");
+                assert!(matches!(to, EntityId::Question(ref q) if q.as_str() == "q_bbbb2222"));
+            }
+            other => panic!("期望 Edge::NoteLink，实际: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn user_draw_edge_alias_source_returns_alias_link() {
+        let from = EntityId::parse("alias_aaaa1111").unwrap();
+        let to = EntityId::parse("task_bbbb2222").unwrap();
+        let edge = user_draw_edge(from, to).unwrap();
+        match edge {
+            Edge::AliasLink { from, to } => {
+                assert_eq!(from.as_str(), "alias_aaaa1111");
+                assert!(matches!(to, EntityId::Task(ref t) if t.as_str() == "task_bbbb2222"));
+            }
+            other => panic!("期望 Edge::AliasLink，实际: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn user_draw_edge_question_source_returns_question_link() {
+        let from = EntityId::parse("q_aaaa1111").unwrap();
+        let to = EntityId::parse("card_bbbb2222").unwrap();
+        let edge = user_draw_edge(from, to).unwrap();
+        match edge {
+            Edge::QuestionLink { from, to } => {
+                assert_eq!(from.as_str(), "q_aaaa1111");
+                assert!(matches!(to, EntityId::Card(ref c) if c.as_str() == "card_bbbb2222"));
+            }
+            other => panic!("期望 Edge::QuestionLink，实际: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn user_draw_edge_section_source_returns_not_allowed() {
+        let from = EntityId::parse("sec_aaaa1111").unwrap();
+        let to = EntityId::parse("card_bbbb2222").unwrap();
+        let err = user_draw_edge(from, to).unwrap_err();
+        assert!(matches!(
+            err,
+            KeysightError::ConnectionNotAllowed { from_kind: "section" }
+        ));
+    }
+
+    #[test]
+    fn user_draw_edge_task_source_returns_not_allowed() {
+        let from = EntityId::parse("task_aaaa1111").unwrap();
+        let to = EntityId::parse("card_bbbb2222").unwrap();
+        let err = user_draw_edge(from, to).unwrap_err();
+        assert!(matches!(
+            err,
+            KeysightError::ConnectionNotAllowed { from_kind: "task" }
+        ));
     }
 }

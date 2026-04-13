@@ -5,14 +5,15 @@ use tauri::State;
 
 use super::domain::alias::{AliasStore, SqliteAliasStore};
 use super::domain::card::{CardStore, SqliteCardStore};
-use super::domain::entity::{resolve_user_drawn_edge_type, EntityGraph, SqliteEntityGraph};
+use super::domain::edge::{user_draw_edge, Edge, EntityId};
+use super::domain::entity::{EntityGraph, SqliteEntityGraph};
 use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
 use super::domain::section::{SectionStore, SqliteSectionStore};
 use super::domain::{overview, question, sync, task, whiteboard};
 use super::models::{
-    AtomicCard, CardAlias, CardLinksResponse, EdgeRow, EdgeStyle, EdgeType, GraphNote,
+    AtomicCard, CardAlias, CardLinksResponse, EdgeRow, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, NoteFileMigrationReport, Position,
     QuestionEntity, StatsResponse, SyncFileResponse, SyncVaultReport, TaskEntity,
     VaultInfoResponse, WhiteboardSummary,
@@ -822,43 +823,132 @@ pub fn entity_edges_to(
 
 /// # entity_connect
 ///
+/// 「用户从画布节点 A 画箭头到节点 B」的强类型入口。替代旧的 5 参数 stringly
+/// typed 版本(edge_type / style / label 参数已整体退役)。
+///
 /// ## 前置条件
-/// - from_id 和 to_id 对应的实体应存在（不强制校验）
+/// - from_id 和 to_id 都必须是合法 entity id(prefix 匹配 card_/note_/alias_/
+///   sec_/q_/task_),否则 parse 失败返 `AppError::Keysight`
+/// - from 不能是 section / task (业务规则:这两类不主动发边),否则返
+///   `KeysightError::ConnectionNotAllowed`
 ///
 /// ## 执行效果
-/// 1. 插入 edges 表
+/// 1. [`EntityId::parse`] 两端字符串 → 强类型
+/// 2. [`user_draw_edge`] 派发为具体 [`Edge`] 变体(CardLink/NoteLink/AliasLink/
+///    QuestionLink)
+/// 3. [`SqliteEntityGraph::connect`] 落 DB
+/// 4. 按 edge 变体穷尽 match 决定是否需要同步 source 的 md 文件
+///
+/// ## 不做的事
+/// - 不处理 Related picker (用 [`entity_relate`])
+/// - 不处理 SeeAlso 创建 (子阶段 2b 或后续 feature 单独添加 command)
 ///
 /// ## 幂等性
-/// 幂等 — 相同边重复插入无额外效果（主键约束）
+/// 幂等 — 相同边重复插入无额外效果(主键约束)
 ///
 /// ## 关联操作
-/// - [`entity_disconnect`] — 删除边（逆操作）
+/// - [`entity_relate`] — 建立 card→card Related 关系
+/// - [`entity_disconnect`] — 删除边(逆操作)
 #[tauri::command]
 #[specta::specta]
 pub fn entity_connect(
     state: State<'_, KeysightState>,
     from_id: String,
     to_id: String,
-    edge_type: EdgeType,
-    style: Option<EdgeStyle>,
-    label: Option<String>,
 ) -> Result<(), AppError> {
     let conn = state.db.lock().unwrap();
-    // 按 source 实体前缀归一化 edge_type — TS 侧无需感知 note_link/alias_link 约定
-    let edge_type = resolve_user_drawn_edge_type(&from_id, edge_type);
-    let graph = SqliteEntityGraph::new(&conn);
-    graph
-        .connect(&from_id, &to_id, edge_type, style, label.as_deref())
-        .map_err(AppError::from)?;
 
+    let from = EntityId::parse(&from_id)
+        .map_err(|e| AppError::Keysight(format!("from_id 解析失败: {e}")))?;
+    let to = EntityId::parse(&to_id)
+        .map_err(|e| AppError::Keysight(format!("to_id 解析失败: {e}")))?;
+
+    let edge = user_draw_edge(from, to).map_err(AppError::from)?;
+
+    let graph = SqliteEntityGraph::new(&conn);
+    graph.connect(&edge).map_err(AppError::from)?;
+
+    // 文件同步路由:按 Edge 变体穷尽 match 派发(防火墙原则 — 禁止 _ 通配)
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
-    if from_id.starts_with("card_") && matches!(edge_type, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso) {
-        let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
-        store.sync_edges_to_file(&from_id).map_err(AppError::from)?;
-    } else if from_id.starts_with("note_") && edge_type == EdgeType::NoteLink {
-        let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
-        store.sync_links_to_file(&from_id).map_err(AppError::from)?;
+    match &edge {
+        Edge::CardLink { from, .. }
+        | Edge::CardRelated { from, .. }
+        | Edge::CardSeeAlso { from, .. } => {
+            let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
+            store.sync_edges_to_file(from.as_str()).map_err(AppError::from)?;
+        }
+        Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
+            let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
+            store.sync_links_to_file(from.as_str()).map_err(AppError::from)?;
+        }
+        Edge::AliasLink { .. } => {
+            // alias 无独立文件内容(继承 owning card),不 sync
+        }
+        Edge::QuestionLink { .. } => {
+            // TODO(sub-stage 2b): question 的 file sync 待补(currently question
+            // 没有 sync_links_to_file,UI 扩展到位后可添加)
+        }
+        Edge::CardToAlias { .. } => {
+            // alias 定义关系的反查路径,不单独写回 card file
+        }
     }
+
+    Ok(())
+}
+
+/// # entity_relate
+///
+/// 「用户在 Related picker 里选了目标 card」的强类型入口。与 [`entity_connect`]
+/// 不同,本命令只接受 card → card 关系,建立 [`Edge::CardRelated`] 边(DB
+/// edge_type = `related`)。
+///
+/// ## 前置条件
+/// - from_card_id / to_card_id 必须都是 `card_*` 前缀的合法 id
+///
+/// ## 执行效果
+/// 1. 构造 [`Edge::CardRelated`] 并 [`SqliteEntityGraph::connect`] 落 DB
+/// 2. 同步 source card 的 md 文件
+///
+/// ## 幂等性
+/// 幂等 — 主键约束
+///
+/// ## 关联操作
+/// - [`entity_connect`] — 建立 LinkTo 类 edge(不同意图,用于 ⋯ 菜单的
+///   Draw connection)
+#[tauri::command]
+#[specta::specta]
+pub fn entity_relate(
+    state: State<'_, KeysightState>,
+    from_card_id: String,
+    to_card_id: String,
+) -> Result<(), AppError> {
+    let conn = state.db.lock().unwrap();
+
+    let from_entity = EntityId::parse(&from_card_id)
+        .map_err(|e| AppError::Keysight(format!("from_card_id 解析失败: {e}")))?;
+    let to_entity = EntityId::parse(&to_card_id)
+        .map_err(|e| AppError::Keysight(format!("to_card_id 解析失败: {e}")))?;
+
+    let (from, to) = match (from_entity, to_entity) {
+        (EntityId::Card(a), EntityId::Card(b)) => (a, b),
+        _ => {
+            return Err(AppError::Keysight(
+                "entity_relate 只接受 card → card 关系".to_string(),
+            ))
+        }
+    };
+
+    let edge = Edge::CardRelated {
+        from: from.clone(),
+        to,
+    };
+    let graph = SqliteEntityGraph::new(&conn);
+    graph.connect(&edge).map_err(AppError::from)?;
+
+    // Related 是 card→card,source card 需要同步文件
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
+    store.sync_edges_to_file(from.as_str()).map_err(AppError::from)?;
 
     Ok(())
 }

@@ -179,7 +179,6 @@ mod tests {
     use super::*;
     use crate::modules::keysight::db::init_db;
     use crate::modules::keysight::domain::entity::{EntityGraph, SqliteEntityGraph};
-    use crate::modules::keysight::models::EdgeType;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -295,9 +294,14 @@ mod tests {
         let sec1 = store.create("wb_root", "Sec1", None).unwrap();
         let sec2 = store.create("wb_root", "Sec2", None).unwrap();
 
-        // sec1 → sec2 section_link
+        // sec1 → sec2 section_link ——通过原始 SQL 模拟历史遗留数据。新 Edge
+        // 枚举不含 SectionLink 变体(业务:section 不主动发边),所以无法通过
+        // graph.connect 建立,但 move_to_whiteboard 仍需清理旧数据。
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'section_link')",
+            rusqlite::params![&sec1.id, &sec2.id],
+        ).unwrap();
         let graph = SqliteEntityGraph::new(&conn);
-        graph.connect(&sec1.id, &sec2.id, EdgeType::SectionLink, None, None).unwrap();
 
         // 移 sec1 到另一个白板
         store.move_to_whiteboard(&sec1.id, "wb_other").unwrap();

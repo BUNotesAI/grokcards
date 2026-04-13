@@ -20,6 +20,10 @@ pub(in crate::modules::keysight) enum KeysightError {
     #[error("文件操作失败: {0}")]
     FileError(String),
 
+    /// 用户尝试从不允许主动发 edge 的 entity kind 画出箭头(当前 section / task)
+    #[error("连接不合法: {from_kind} 不能作为 edge 的 from (业务规则)")]
+    ConnectionNotAllowed { from_kind: &'static str },
+
     #[error("数据库错误: {0}")]
     Database(#[from] rusqlite::Error),
 }

@@ -6,6 +6,7 @@ import { GraphView } from "@/components/keysight/GraphView";
 import type { WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
 
 const mockEntityConnect = vi.fn();
+const mockEntityRelate = vi.fn();
 const mockSectionCreate = vi.fn();
 const mockNoteCreate = vi.fn();
 const mockQuestionCreate = vi.fn();
@@ -110,6 +111,7 @@ const mockState = vi.hoisted(() => ({
 vi.mock("@/bindings", () => ({
   commands: {
     entityConnect: (...args: unknown[]) => mockEntityConnect(...args),
+    entityRelate: (...args: unknown[]) => mockEntityRelate(...args),
     sectionCreate: (...args: unknown[]) => mockSectionCreate(...args),
     noteCreate: (...args: unknown[]) => mockNoteCreate(...args),
     questionCreate: (...args: unknown[]) => mockQuestionCreate(...args),
@@ -160,6 +162,8 @@ describe("GraphView", () => {
   beforeEach(() => {
     mockEntityConnect.mockReset();
     mockEntityConnect.mockResolvedValue({ status: "ok", data: null });
+    mockEntityRelate.mockReset();
+    mockEntityRelate.mockResolvedValue({ status: "ok", data: null });
     mockSectionCreate.mockReset();
     mockSectionCreate.mockResolvedValue({ status: "ok", data: { id: "sec_new001" } });
     mockNoteCreate.mockReset();
@@ -242,13 +246,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(mockEntityConnect).toHaveBeenCalledWith(
-        "card_a",
-        "card_b",
-        "Related",
-        null,
-        null,
-      );
+      expect(mockEntityRelate).toHaveBeenCalledWith("card_a", "card_b");
     });
     await waitFor(() => {
       expect(screen.queryByPlaceholderText("Search cards...")).not.toBeInTheDocument();
