@@ -227,10 +227,17 @@ pub struct GraphNote {
     pub color: Option<String>,
     #[serde(default)]
     pub linked_section_ids: Option<Vec<String>>,
+    /// 历史字段：card + alias 混装(alias 视觉上按 card 渲染)。保持原语义不变。
     #[serde(default)]
     pub linked_card_ids: Option<Vec<String>>,
     #[serde(default)]
     pub linked_note_ids: Option<Vec<String>>,
+    /// Phase A 子阶段 2b 新增:允许 Note 的 `note_link` edge 指向 Question entity。
+    #[serde(default)]
+    pub linked_question_ids: Option<Vec<String>>,
+    /// Phase A 子阶段 2b 新增:允许 Note 的 `note_link` edge 指向 Task entity。
+    #[serde(default)]
+    pub linked_task_ids: Option<Vec<String>>,
 }
 
 /// 卡片别名。
@@ -239,12 +246,19 @@ pub struct GraphNote {
 pub struct CardAlias {
     pub alias_id: String,
     pub card_id: String,
+    /// 历史字段：card + alias 混装(alias 视觉上按 card 渲染)。保持原语义不变。
     #[serde(default)]
     pub linked_card_ids: Option<Vec<String>>,
     #[serde(default)]
     pub linked_section_ids: Option<Vec<String>>,
     #[serde(default)]
     pub linked_note_ids: Option<Vec<String>>,
+    /// Phase A 子阶段 2b 新增:允许 Alias 的 `alias_link` edge 指向 Question entity。
+    #[serde(default)]
+    pub linked_question_ids: Option<Vec<String>>,
+    /// Phase A 子阶段 2b 新增:允许 Alias 的 `alias_link` edge 指向 Task entity。
+    #[serde(default)]
+    pub linked_task_ids: Option<Vec<String>>,
     #[serde(default)]
     pub incoming_card_ids: Option<Vec<String>>,
 }

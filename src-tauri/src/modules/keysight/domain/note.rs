@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension};
 
+use crate::modules::keysight::domain::edge::EntityId;
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
 use crate::modules::keysight::models::{GraphNote, NoteFileMigrationReport};
@@ -213,16 +214,28 @@ impl NoteStore for SqliteNoteStore<'_> {
         let targets: Vec<String> = stmt.query_map([id], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        // 穷尽 match EntityId 所有 6 个 variant —— 禁止 `_` 通配,踩坑样例 1
+        // 的新防御核心:任何未知 kind 让编译器 + 运行时同时抛错,而不是 silent drop。
+        // 旧 if-else 链只识别 card/alias/sec/note 前缀,把 q_/task_ 目标静默丢弃,
+        // 导致 DB 有 orphan edge 但 UI 读不回来(踩坑样例 1 的元凶)。
         let mut linked_card_ids = Vec::new();
         let mut linked_section_ids = Vec::new();
         let mut linked_note_ids = Vec::new();
-        for target in targets {
-            if target.starts_with("card_") || target.starts_with("alias_") {
-                linked_card_ids.push(target);
-            } else if target.starts_with("sec_") {
-                linked_section_ids.push(target);
-            } else if target.starts_with("note_") {
-                linked_note_ids.push(target);
+        let mut linked_question_ids = Vec::new();
+        let mut linked_task_ids = Vec::new();
+        for target_str in targets {
+            let entity_id = EntityId::parse(&target_str).map_err(|e| {
+                KeysightError::ParseError(format!(
+                    "note_link target 无法 parse 为 EntityId: {target_str} ({e})"
+                ))
+            })?;
+            match entity_id {
+                // card 和 alias 历史上合并在 linked_card_ids 里(alias 视觉按 card 渲染)
+                EntityId::Card(_) | EntityId::Alias(_) => linked_card_ids.push(target_str),
+                EntityId::Section(_) => linked_section_ids.push(target_str),
+                EntityId::Note(_) => linked_note_ids.push(target_str),
+                EntityId::Question(_) => linked_question_ids.push(target_str),
+                EntityId::Task(_) => linked_task_ids.push(target_str),
             }
         }
 
@@ -234,6 +247,8 @@ impl NoteStore for SqliteNoteStore<'_> {
             linked_section_ids: if linked_section_ids.is_empty() { None } else { Some(linked_section_ids) },
             linked_card_ids: if linked_card_ids.is_empty() { None } else { Some(linked_card_ids) },
             linked_note_ids: if linked_note_ids.is_empty() { None } else { Some(linked_note_ids) },
+            linked_question_ids: if linked_question_ids.is_empty() { None } else { Some(linked_question_ids) },
+            linked_task_ids: if linked_task_ids.is_empty() { None } else { Some(linked_task_ids) },
         })
     }
 
@@ -711,5 +726,49 @@ mod tests {
         assert!(note_content.contains("color: amber"));
 
         std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn test_get_note_reads_question_and_task_linked_ids() {
+        // Phase A 2b 防火墙验证:reader 穷尽 match EntityId 6 个 variant,
+        // Note→Question / Note→Task 目标不再 silent drop(踩坑样例 1 的回归锁)
+        use crate::modules::keysight::domain::edge::{user_draw_edge, EntityId};
+        use crate::modules::keysight::domain::entity::{EntityGraph, SqliteEntityGraph};
+
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let note = store
+            .create("wb_root", "Note With Q/T", Some("body"), None)
+            .unwrap();
+
+        let graph = SqliteEntityGraph::new(&conn);
+        let to_question = user_draw_edge(
+            EntityId::parse(&note.id).unwrap(),
+            EntityId::parse("q_abc12345").unwrap(),
+        )
+        .unwrap();
+        let to_task = user_draw_edge(
+            EntityId::parse(&note.id).unwrap(),
+            EntityId::parse("task_def67890").unwrap(),
+        )
+        .unwrap();
+        graph.connect(&to_question).unwrap();
+        graph.connect(&to_task).unwrap();
+
+        let loaded = store.get(&note.id).unwrap();
+        assert_eq!(
+            loaded.linked_question_ids.clone().unwrap(),
+            vec!["q_abc12345".to_string()],
+            "Question 目标应进 linked_question_ids"
+        );
+        assert_eq!(
+            loaded.linked_task_ids.clone().unwrap(),
+            vec!["task_def67890".to_string()],
+            "Task 目标应进 linked_task_ids"
+        );
+        assert!(loaded.linked_card_ids.is_none());
+        assert!(loaded.linked_note_ids.is_none());
+        assert!(loaded.linked_section_ids.is_none());
     }
 }

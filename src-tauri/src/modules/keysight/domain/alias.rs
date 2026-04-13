@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection};
 
+use crate::modules::keysight::domain::edge::EntityId;
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
 use crate::modules::keysight::models::CardAlias;
@@ -39,6 +40,8 @@ impl AliasStore for SqliteAliasStore<'_> {
             linked_card_ids: None,
             linked_section_ids: None,
             linked_note_ids: None,
+            linked_question_ids: None,
+            linked_task_ids: None,
             incoming_card_ids: None,
         })
     }
@@ -68,16 +71,24 @@ impl AliasStore for SqliteAliasStore<'_> {
         let targets: Vec<String> = stmt.query_map([id], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
+        // 穷尽 match EntityId 所有 6 个 variant —— 禁止 `_` 通配(同 note.rs::get 的防御)。
         let mut linked_card_ids = Vec::new();
         let mut linked_section_ids = Vec::new();
         let mut linked_note_ids = Vec::new();
-        for target in targets {
-            if target.starts_with("card_") || target.starts_with("alias_") {
-                linked_card_ids.push(target);
-            } else if target.starts_with("sec_") {
-                linked_section_ids.push(target);
-            } else if target.starts_with("note_") {
-                linked_note_ids.push(target);
+        let mut linked_question_ids = Vec::new();
+        let mut linked_task_ids = Vec::new();
+        for target_str in targets {
+            let entity_id = EntityId::parse(&target_str).map_err(|e| {
+                KeysightError::ParseError(format!(
+                    "alias_link target 无法 parse 为 EntityId: {target_str} ({e})"
+                ))
+            })?;
+            match entity_id {
+                EntityId::Card(_) | EntityId::Alias(_) => linked_card_ids.push(target_str),
+                EntityId::Section(_) => linked_section_ids.push(target_str),
+                EntityId::Note(_) => linked_note_ids.push(target_str),
+                EntityId::Question(_) => linked_question_ids.push(target_str),
+                EntityId::Task(_) => linked_task_ids.push(target_str),
             }
         }
 
@@ -94,6 +105,8 @@ impl AliasStore for SqliteAliasStore<'_> {
             linked_card_ids: if linked_card_ids.is_empty() { None } else { Some(linked_card_ids) },
             linked_section_ids: if linked_section_ids.is_empty() { None } else { Some(linked_section_ids) },
             linked_note_ids: if linked_note_ids.is_empty() { None } else { Some(linked_note_ids) },
+            linked_question_ids: if linked_question_ids.is_empty() { None } else { Some(linked_question_ids) },
+            linked_task_ids: if linked_task_ids.is_empty() { None } else { Some(linked_task_ids) },
             incoming_card_ids: if incoming.is_empty() { None } else { Some(incoming) },
         })
     }
@@ -146,5 +159,43 @@ mod tests {
         store.create("other", "card_ccc").unwrap();
         let aliases = store.query_all("wb_root").unwrap();
         assert_eq!(aliases.len(), 2);
+    }
+
+    #[test]
+    fn test_get_alias_reads_question_and_task_linked_ids() {
+        // Phase A 2b 防火墙验证:reader 穷尽 match EntityId 6 个 variant,
+        // Alias→Question / Alias→Task 目标不再 silent drop
+        use crate::modules::keysight::domain::edge::{user_draw_edge, EntityId};
+        use crate::modules::keysight::domain::entity::{EntityGraph, SqliteEntityGraph};
+
+        let conn = test_conn();
+        let store = SqliteAliasStore::new(&conn);
+        let alias = store.create("wb_root", "card_aaa").unwrap();
+
+        let graph = SqliteEntityGraph::new(&conn);
+        let to_question = user_draw_edge(
+            EntityId::parse(&alias.alias_id).unwrap(),
+            EntityId::parse("q_qqq11111").unwrap(),
+        )
+        .unwrap();
+        let to_task = user_draw_edge(
+            EntityId::parse(&alias.alias_id).unwrap(),
+            EntityId::parse("task_ttt22222").unwrap(),
+        )
+        .unwrap();
+        graph.connect(&to_question).unwrap();
+        graph.connect(&to_task).unwrap();
+
+        let loaded = store.get(&alias.alias_id).unwrap();
+        assert_eq!(
+            loaded.linked_question_ids.clone().unwrap(),
+            vec!["q_qqq11111".to_string()],
+            "Question 目标应进 linked_question_ids"
+        );
+        assert_eq!(
+            loaded.linked_task_ids.clone().unwrap(),
+            vec!["task_ttt22222".to_string()],
+            "Task 目标应进 linked_task_ids"
+        );
     }
 }

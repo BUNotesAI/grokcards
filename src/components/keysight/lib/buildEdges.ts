@@ -14,8 +14,8 @@ export interface RenderEdge {
  *
  * 包含的 edge 类型：
  * - card.linkTo → link_to edge（橙色实线）
- * - note.linkedCardIds / linkedNoteIds / linkedSectionIds → note_link edge（青色虚线）
- * - alias.linkedCardIds / linkedNoteIds / linkedSectionIds → alias_link edge（青色虚线）
+ * - note.linkedCardIds / linkedNoteIds / linkedSectionIds / linkedQuestionIds / linkedTaskIds → note_link edge（青色虚线）
+ * - alias.linkedCardIds / linkedNoteIds / linkedSectionIds / linkedQuestionIds / linkedTaskIds → alias_link edge（青色虚线）
  *
  * 不包含：
  * - card.related — 通过 picker 添加，只在卡片展开后的 Related 列表里显示
@@ -45,6 +45,8 @@ export function buildEdges(
       ...(note.linkedCardIds ?? []),
       ...(note.linkedNoteIds ?? []),
       ...(note.linkedSectionIds ?? []),
+      ...(note.linkedQuestionIds ?? []),
+      ...(note.linkedTaskIds ?? []),
     ];
     for (const target of targets) {
       if (target === note.id || !entitySet.has(target)) continue;
@@ -59,6 +61,8 @@ export function buildEdges(
       ...(alias.linkedCardIds ?? []),
       ...(alias.linkedNoteIds ?? []),
       ...(alias.linkedSectionIds ?? []),
+      ...(alias.linkedQuestionIds ?? []),
+      ...(alias.linkedTaskIds ?? []),
     ];
     for (const target of targets) {
       if (target === alias.aliasId || !entitySet.has(target)) continue;
