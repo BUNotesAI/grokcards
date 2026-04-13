@@ -12,7 +12,7 @@ use super::domain::note::{NoteStore, SqliteNoteStore};
 use super::domain::section::{SectionStore, SqliteSectionStore};
 use super::domain::{overview, question, sync, task, whiteboard};
 use super::models::{
-    AtomicCard, CardAlias, CardLinksResponse, Edge, EdgeStyle, EdgeType, GraphNote,
+    AtomicCard, CardAlias, CardLinksResponse, EdgeRow, EdgeStyle, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, NoteFileMigrationReport, Position,
     QuestionEntity, StatsResponse, SyncFileResponse, SyncVaultReport, TaskEntity,
     VaultInfoResponse, WhiteboardSummary,
@@ -802,7 +802,7 @@ pub fn layout_remove_position(
 pub fn entity_edges_from(
     state: State<'_, KeysightState>,
     entity_id: String,
-) -> Result<Vec<Edge>, AppError> {
+) -> Result<Vec<EdgeRow>, AppError> {
     let conn = state.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
     graph.edges_from(&entity_id).map_err(Into::into)
@@ -814,7 +814,7 @@ pub fn entity_edges_from(
 pub fn entity_edges_to(
     state: State<'_, KeysightState>,
     entity_id: String,
-) -> Result<Vec<Edge>, AppError> {
+) -> Result<Vec<EdgeRow>, AppError> {
     let conn = state.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
     graph.edges_to(&entity_id).map_err(Into::into)

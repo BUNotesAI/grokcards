@@ -2,7 +2,7 @@
 use rusqlite::Connection;
 
 use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::{Edge, EdgeStyle, EdgeType};
+use crate::modules::keysight::models::{EdgeRow, EdgeStyle, EdgeType};
 
 /// 实体图谱边操作契约。
 pub(in crate::modules::keysight) trait EntityGraph {
@@ -25,10 +25,10 @@ pub(in crate::modules::keysight) trait EntityGraph {
     ) -> Result<(), KeysightError>;
 
     /// 查询某实体的所有出边。
-    fn edges_from(&self, entity_id: &str) -> Result<Vec<Edge>, KeysightError>;
+    fn edges_from(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
 
     /// 查询某实体的所有入边。
-    fn edges_to(&self, entity_id: &str) -> Result<Vec<Edge>, KeysightError>;
+    fn edges_to(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
 }
 
 pub(in crate::modules::keysight) struct SqliteEntityGraph<'a> {
@@ -97,13 +97,13 @@ impl EntityGraph for SqliteEntityGraph<'_> {
         Ok(())
     }
 
-    fn edges_from(&self, entity_id: &str) -> Result<Vec<Edge>, KeysightError> {
+    fn edges_from(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT from_id, to_id, edge_type, style, label FROM edges WHERE from_id = ?1",
         )?;
         let edges = stmt
             .query_map(rusqlite::params![entity_id], |row| {
-                Ok(Edge {
+                Ok(EdgeRow {
                     from_id: row.get(0)?,
                     to_id: row.get(1)?,
                     edge_type: row.get(2)?,
@@ -115,13 +115,13 @@ impl EntityGraph for SqliteEntityGraph<'_> {
         Ok(edges)
     }
 
-    fn edges_to(&self, entity_id: &str) -> Result<Vec<Edge>, KeysightError> {
+    fn edges_to(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT from_id, to_id, edge_type, style, label FROM edges WHERE to_id = ?1",
         )?;
         let edges = stmt
             .query_map(rusqlite::params![entity_id], |row| {
-                Ok(Edge {
+                Ok(EdgeRow {
                     from_id: row.get(0)?,
                     to_id: row.get(1)?,
                     edge_type: row.get(2)?,
