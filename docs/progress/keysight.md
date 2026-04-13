@@ -60,12 +60,8 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 | └ Sidecar 进程 → Tauri 内嵌 | 不再需要子进程管理 | ✅ 1 |
 
 ## Active
-- [ ] Phase 5f + 6 第一轮落地：
-  - Quadtree 替换 `useVisibleEntities` 的 O(N) culling
-  - `useViewport` 暴露 `lodLevel` + `centerOn`
-  - Card/Note/Alias/Task/Question 节点接入 LOD 与选中/高亮态
-  - `KeysightView` + Sidebar 容器 + Follow/Cards/Review/Filter/Export/Details/Context/Note 面板已接入
-  - 仍需收敛：侧边栏细节交互、Export 真正落盘、Follow 文件选择器、图上更多详情联动
+
+（无）
 
 ## Next
 - [ ] Phase 5d 收尾：edge 的白板级过滤、交互和视觉收敛
@@ -74,8 +70,21 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
   - Export 接到 Tauri save dialog / 原生写文件路径
   - InsightCard/Context/NoteEditor 细节交互继续补全
   - Cards 列表多选与批量操作补 hook
+- [ ] ⋯ 菜单后续增强：
+  - Draw connection / Related 模式的视觉反馈（source 高亮 + 光标样式）
+  - Create alias 成功后自动 centerOn 新建 alias
+  - Move to Section 的 UX 优化（section 为空时禁用菜单项）
 
 ## Done
+
+### 2026-04-13
+- [x] Phase 6 ⋯ 三点菜单：Card/Note/Alias 三种节点右上角菜单 + NodeContextMenu 组件 + GraphView drawingState 两阶段点击 + Move to Section 嵌套子菜单 + Note 7 色便签色板，19 新 TS 测试（141 total），1 commit (0d21e45)
+
+### 2026-04-12
+- [x] Phase 5f Quadtree 视口裁剪 + LOD 三级渲染（0/1/2 zoom 阈值），节点 selected/highlighted/dimmed 视觉态，commit 25e91c3
+- [x] Phase 6 Sidebar + KeysightView 双栏布局 + 10 个 sidebar 面板占位 + GraphView 受控化 + 视口中心创建新实体，commit e4adcd2
+- [x] Toolbar Sections/Boards 跳转下拉菜单（base-ui render prop），commit 821880d
+- [x] LoAF observer + visibility tracking 冻结诊断探针，commit 33dd312
 
 - [x] Phase 5e: 多白板 — WhiteboardSummary + list_whiteboards + per-whiteboard viewport persist + WhiteboardNode + GraphToolbar 导航 + 自动布局，9 tasks 全部落地，16 commits（含手动验证阶段的卡片样式/拖拽/折叠/箭头等收敛 fix）
 - [x] Phase 5c: 交互（拖拽定位）— EntityNode wrapper + dragInfoRef + memo 比较器 + CSS transform3d，后续追加 imperative DOM transform fast path 解决 React render 延迟（session 7eb1770c）
