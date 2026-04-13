@@ -2,6 +2,11 @@ import { memo, type CSSProperties } from "react";
 import type { GraphNote } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
 import { RenderedMarkdown } from "./RenderedMarkdown";
+import {
+  NodeContextMenu,
+  type NoteMenuConfig,
+  type SectionListItem,
+} from "./NodeContextMenu";
 
 /** Note 行内编辑可选字段 */
 type NoteEditField = "note-title" | "note-body";
@@ -21,6 +26,12 @@ interface NoteNodeProps {
   onCommitEdit?: (id: string, field: NoteEditField, value: string) => void;
   /** 取消编辑回调（Escape） */
   onCancelEdit?: () => void;
+  /** ⋯ 菜单配置；null/undefined 时不渲染菜单 */
+  contextMenu?: NoteMenuConfig | null;
+  /** 可选择加入的 sections（当前白板） */
+  menuSections?: SectionListItem[];
+  /** 当前 note 所属 section；null 表示未在任何 section */
+  currentSectionId?: string | null;
 }
 
 /**
@@ -44,6 +55,9 @@ export const NoteNode = memo(function NoteNode({
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
+  contextMenu = null,
+  menuSections = [],
+  currentSectionId = null,
 }: NoteNodeProps) {
   const isEditingTitle = editingField === "note-title";
   const isEditingBody = editingField === "note-body";
@@ -255,6 +269,13 @@ export const NoteNode = memo(function NoteNode({
             note.title
           )}
         </div>
+        {contextMenu && (
+          <NodeContextMenu
+            menu={contextMenu}
+            sections={menuSections}
+            currentSectionId={currentSectionId}
+          />
+        )}
       </div>
 
       {/* 正文（markdown）— 双击进入编辑模式；空内容也允许编辑 */}

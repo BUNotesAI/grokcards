@@ -1,4 +1,4 @@
-import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
+import { memo, useMemo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "react";
 import type {
   EntityKind,
   EntityWithPosition,
@@ -12,6 +12,35 @@ import { QuestionNode } from "./QuestionNode";
 import { NoteNode } from "./NoteNode";
 import { SectionNode } from "./SectionNode";
 import { AliasNode } from "./AliasNode";
+import type {
+  AliasMenuConfig,
+  CardMenuConfig,
+  NoteMenuConfig,
+  SectionListItem,
+} from "./NodeContextMenu";
+
+/**
+ * 节点菜单回调集合 — 所有回调都以 entityId 为首参数，保持 stable reference
+ * 方便 EntityNode 的 memo 比较。
+ */
+export interface NodeContextMenuHandlers {
+  /** Card 菜单 */
+  onCopyCardTitle: (id: string) => void;
+  onDrawConnectionFrom: (id: string) => void;
+  onRelatedFrom: (id: string) => void;
+  onCreateAlias: (cardId: string) => void;
+  /** Alias 菜单 */
+  onJumpToSourceCard: (aliasId: string) => void;
+  onDeleteAlias: (aliasId: string) => void;
+  /** Note 菜单 */
+  onCopyNoteUuidTitle: (noteId: string) => void;
+  onEditNoteTitle: (noteId: string) => void;
+  onDeleteNote: (noteId: string) => void;
+  onSetNoteColor: (noteId: string, color: string) => void;
+  /** 共享 */
+  onMoveToSection: (entityId: string, sectionId: string) => void;
+  onRemoveFromGroup: (entityId: string) => void;
+}
 
 /** 当前实体正在编辑的字段；null 表示该实体未在编辑 */
 export type EditingField =
@@ -52,6 +81,12 @@ interface EntityNodeProps {
   ) => void;
   /** 取消编辑回调（Escape） */
   onCancelEdit?: () => void;
+  /** ⋯ 菜单回调集合；null 表示不渲染菜单 */
+  menuHandlers?: NodeContextMenuHandlers | null;
+  /** 当前白板的 sections 列表（给 Move to Section 子菜单用） */
+  menuSections?: SectionListItem[];
+  /** 此实体所属 section id；null 表示未在任何 section */
+  currentSectionId?: string | null;
 }
 
 /**
@@ -78,7 +113,50 @@ function EntityNodeImpl({
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
+  menuHandlers = null,
+  menuSections = [],
+  currentSectionId = null,
 }: EntityNodeProps) {
+  // 按 entity.kind 派发构造对应类型的菜单配置
+  // 回调闭合 entity.id，这样 NodeContextMenu 内无需感知 id
+  const cardMenu = useMemo<CardMenuConfig | null>(() => {
+    if (!menuHandlers || entity.kind !== "card") return null;
+    return {
+      kind: "card",
+      onCopyTitle: () => menuHandlers.onCopyCardTitle(entity.id),
+      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+      onRelated: () => menuHandlers.onRelatedFrom(entity.id),
+      onCreateAlias: () => menuHandlers.onCreateAlias(entity.id),
+      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
+    };
+  }, [menuHandlers, entity.id, entity.kind]);
+
+  const noteMenu = useMemo<NoteMenuConfig | null>(() => {
+    if (!menuHandlers || entity.kind !== "note") return null;
+    return {
+      kind: "note",
+      onCopyUuidTitle: () => menuHandlers.onCopyNoteUuidTitle(entity.id),
+      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+      onEditTitle: () => menuHandlers.onEditNoteTitle(entity.id),
+      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
+      onDelete: () => menuHandlers.onDeleteNote(entity.id),
+      onSetColor: (color) => menuHandlers.onSetNoteColor(entity.id, color),
+    };
+  }, [menuHandlers, entity.id, entity.kind]);
+
+  const aliasMenu = useMemo<AliasMenuConfig | null>(() => {
+    if (!menuHandlers || entity.kind !== "alias") return null;
+    return {
+      kind: "alias",
+      onJumpToSourceCard: () => menuHandlers.onJumpToSourceCard(entity.id),
+      onDrawConnection: () => menuHandlers.onDrawConnectionFrom(entity.id),
+      onMoveToSection: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+      onRemoveFromGroup: () => menuHandlers.onRemoveFromGroup(entity.id),
+      onDelete: () => menuHandlers.onDeleteAlias(entity.id),
+    };
+  }, [menuHandlers, entity.id, entity.kind]);
   // 使用 transform 而非 left/top — GPU 合成，避免 layout reflow，拖拽更丝滑
   const wrapperStyle: CSSProperties = {
     position: "absolute",
@@ -140,6 +218,9 @@ function EntityNodeImpl({
             onStartEdit={onStartEdit}
             onCommitEdit={onCommitEdit}
             onCancelEdit={onCancelEdit}
+            contextMenu={cardMenu}
+            menuSections={menuSections}
+            currentSectionId={currentSectionId}
             style={innerStyle}
           />
         </div>
@@ -183,6 +264,9 @@ function EntityNodeImpl({
             onStartEdit={onStartEdit}
             onCommitEdit={onCommitEdit}
             onCancelEdit={onCancelEdit}
+            contextMenu={noteMenu}
+            menuSections={menuSections}
+            currentSectionId={currentSectionId}
             style={innerStyle}
           />
         </div>
@@ -211,6 +295,9 @@ function EntityNodeImpl({
             dimmed={dimmed}
             isExpanded={isExpanded}
             onToggleExpand={handleToggle}
+            contextMenu={aliasMenu}
+            menuSections={menuSections}
+            currentSectionId={currentSectionId}
             style={innerStyle}
           />
         </div>
@@ -247,5 +334,8 @@ export const EntityNode = memo(EntityNodeImpl, (prev, next) => {
   if (prev.onStartEdit !== next.onStartEdit) return false;
   if (prev.onCommitEdit !== next.onCommitEdit) return false;
   if (prev.onCancelEdit !== next.onCancelEdit) return false;
+  if (prev.menuHandlers !== next.menuHandlers) return false;
+  if (prev.menuSections !== next.menuSections) return false;
+  if (prev.currentSectionId !== next.currentSectionId) return false;
   return true;
 });

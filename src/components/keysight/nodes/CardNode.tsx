@@ -2,6 +2,11 @@ import { memo, type CSSProperties, type MouseEvent as ReactMouseEvent } from "re
 import type { AtomicCard } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
 import { RenderedMarkdown } from "./RenderedMarkdown";
+import {
+  NodeContextMenu,
+  type NodeMenuConfig,
+  type SectionListItem,
+} from "./NodeContextMenu";
 
 /** Card 行内编辑可选字段 */
 type CardEditField = "card-title" | "card-understanding";
@@ -31,6 +36,12 @@ interface CardNodeProps {
   onCommitEdit?: (id: string, field: CardEditField, value: string) => void;
   /** 取消编辑回调（Escape） */
   onCancelEdit?: () => void;
+  /** ⋯ 菜单配置；null/undefined 时不渲染菜单 */
+  contextMenu?: NodeMenuConfig | null;
+  /** 可选择加入的 sections（当前白板） */
+  menuSections?: SectionListItem[];
+  /** 当前 card/alias 所属 section；null 表示未在任何 section */
+  currentSectionId?: string | null;
 }
 
 /** 区域标题（LINKED / RELATED / ALIASES / SEE ALSO） */
@@ -105,6 +116,9 @@ export const CardNode = memo(function CardNode({
   onStartEdit,
   onCommitEdit,
   onCancelEdit,
+  contextMenu = null,
+  menuSections = [],
+  currentSectionId = null,
 }: CardNodeProps) {
   const isAlias = variant === "alias";
   const isEditingTitle = editingField === "card-title";
@@ -325,6 +339,13 @@ export const CardNode = memo(function CardNode({
             <RenderedMarkdown markdown={card.title} variant="title" />
           )}
         </div>
+        {contextMenu && (
+          <NodeContextMenu
+            menu={contextMenu}
+            sections={menuSections}
+            currentSectionId={currentSectionId}
+          />
+        )}
       </div>
 
       {/* Understanding 字段 — 双击进入编辑模式；空内容也允许编辑（双击占位区） */}

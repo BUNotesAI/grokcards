@@ -2,6 +2,7 @@ import type { CSSProperties, MouseEvent as ReactMouseEvent } from "react";
 import type { AtomicCard, CardAlias } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
 import { CardNode } from "./CardNode";
+import type { AliasMenuConfig, SectionListItem } from "./NodeContextMenu";
 
 interface AliasNodeProps {
   alias: CardAlias;
@@ -16,6 +17,12 @@ interface AliasNodeProps {
   dimmed?: boolean;
   isExpanded?: boolean;
   onToggleExpand?: (e: ReactMouseEvent) => void;
+  /** ⋯ 菜单配置；null/undefined 时不渲染菜单 */
+  contextMenu?: AliasMenuConfig | null;
+  /** 可选择加入的 sections（当前白板） */
+  menuSections?: SectionListItem[];
+  /** 当前 alias 所属 section；null 表示未在任何 section */
+  currentSectionId?: string | null;
 }
 
 /**
@@ -35,6 +42,9 @@ export function AliasNode({
   dimmed = false,
   isExpanded = false,
   onToggleExpand,
+  contextMenu = null,
+  menuSections = [],
+  currentSectionId = null,
 }: AliasNodeProps) {
   if (!targetCard) {
     return (
@@ -78,6 +88,9 @@ export function AliasNode({
       dimmed={dimmed}
       isExpanded={isExpanded}
       onToggleExpand={onToggleExpand}
+      contextMenu={contextMenu}
+      menuSections={menuSections}
+      currentSectionId={currentSectionId}
     />
   );
 }

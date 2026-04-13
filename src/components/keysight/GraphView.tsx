@@ -16,7 +16,9 @@ import type {
   EntityWithPosition,
   GraphSelection,
 } from "@/components/keysight/types";
-import type { Position } from "@/bindings";
+import type { EdgeType, Position } from "@/bindings";
+import type { NodeContextMenuHandlers } from "@/components/keysight/nodes/EntityNode";
+import type { SectionListItem } from "@/components/keysight/nodes/NodeContextMenu";
 import { unwrapCommand } from "@/lib/commandResult";
 import { commands } from "@/bindings";
 import { useQueryClient } from "@tanstack/react-query";
@@ -211,6 +213,12 @@ export function GraphView({
     | "note-body";
   const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
 
+  // 画连线状态 — ⋯ 菜单 Draw connection / Related 后进入两阶段点击模式
+  // 第一次点菜单设置 fromId + edgeType；第二次点其他实体触发 entityConnect + 清空
+  const [drawingState, setDrawingState] = useState<
+    { fromId: string; edgeType: EdgeType } | null
+  >(null);
+
   const handleStartEdit = useCallback((id: string, field: EditingField) => {
     if (lastDidDragRef.current) {
       lastDidDragRef.current = false;
@@ -253,6 +261,24 @@ export function GraphView({
       }
     },
     [queryClient, currentWhiteboardId],
+  );
+
+  // entityId → 所在 section id 的反向索引
+  // 用于 ⋯ 菜单判断 "Remove from group" 是否显示
+  const entityToSectionId = useMemo(() => {
+    const map: Record<string, string> = {};
+    for (const section of data.sections) {
+      for (const memberId of section.cardIds) {
+        map[memberId] = section.id;
+      }
+    }
+    return map;
+  }, [data.sections]);
+
+  // 当前白板的 sections 精简列表（Move to Section 子菜单用）
+  const menuSections = useMemo<SectionListItem[]>(
+    () => data.sections.map((s) => ({ id: s.id, title: s.title })),
+    [data.sections],
   );
 
   // 有效位置 = 服务器位置 + 本地覆盖（拖拽中的实时位置）
@@ -610,6 +636,133 @@ export function GraphView({
     }
   }, [queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
+  // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode，memo 比较依赖它不变
+  // 依赖 data/viewport/queryClient，数据变化时整体替换（EntityNode 整体重渲染）
+  const menuHandlers = useMemo<NodeContextMenuHandlers>(
+    () => ({
+      // Card: Copy title → 复制到剪贴板（去掉 markdown 加粗 + 转义反斜杠）
+      onCopyCardTitle: (id) => {
+        const card = data.cards.find((c) => c.id === id);
+        if (!card) return;
+        const clean = card.title.replace(/\*\*/g, "").replace(/\\([<>])/g, "$1");
+        void navigator.clipboard.writeText(clean);
+      },
+      // Card/Alias: Draw connection → 进入 LinkTo 模式，等待下一次点击目标实体
+      onDrawConnectionFrom: (id) => setDrawingState({ fromId: id, edgeType: "LinkTo" }),
+      // Card: Related → 进入 Related 模式
+      onRelatedFrom: (id) => setDrawingState({ fromId: id, edgeType: "Related" }),
+      // Card: Create alias → 在原卡右侧 540px 位置创建 alias
+      onCreateAlias: async (cardId) => {
+        try {
+          const cardPos = data.positions[cardId];
+          const alias = await unwrapCommand(
+            commands.aliasCreate(currentWhiteboardId, cardId),
+          );
+          if (cardPos) {
+            await unwrapCommand(
+              commands.layoutSetPosition(
+                currentWhiteboardId,
+                alias.aliasId,
+                cardPos.x + 540,
+                cardPos.y,
+              ),
+            );
+          }
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("创建 alias 失败:", e);
+        }
+      },
+      // Alias: Jump to source card → 居中到目标 card
+      onJumpToSourceCard: (aliasId) => {
+        const alias = data.aliases.find((a) => a.aliasId === aliasId);
+        if (!alias) return;
+        const cardPos = data.positions[alias.cardId];
+        if (!cardPos) return;
+        const dim = allDimensions[alias.cardId];
+        viewport.actions.centerOn(
+          cardPos.x,
+          cardPos.y,
+          containerSize.width,
+          containerSize.height,
+          dim?.width ?? 520,
+          dim?.height ?? 220,
+        );
+      },
+      // Alias: Delete alias
+      onDeleteAlias: async (aliasId) => {
+        try {
+          await unwrapCommand(commands.aliasDelete(aliasId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("删除 alias 失败:", e);
+        }
+      },
+      // Note: Copy UUID + title
+      onCopyNoteUuidTitle: (noteId) => {
+        const note = data.notes.find((n) => n.id === noteId);
+        if (!note) return;
+        void navigator.clipboard.writeText(`UUID:${note.id} ${note.title}`);
+      },
+      // Note: Edit title → 复用已有 inline 编辑
+      onEditNoteTitle: (noteId) => setEditing({ id: noteId, field: "note-title" }),
+      // Note: Delete
+      onDeleteNote: async (noteId) => {
+        try {
+          await unwrapCommand(commands.noteDelete(noteId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("删除 note 失败:", e);
+        }
+      },
+      // Note: Set background color
+      onSetNoteColor: async (noteId, color) => {
+        try {
+          await unwrapCommand(commands.noteUpdate(noteId, null, null, color));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("更新 note 颜色失败:", e);
+        }
+      },
+      // 共享: Move to Section — 先从旧 section 移除再加入新 section
+      onMoveToSection: async (entityId, sectionId) => {
+        try {
+          const prevSection = entityToSectionId[entityId];
+          if (prevSection && prevSection !== sectionId) {
+            await unwrapCommand(commands.sectionRemoveMember(prevSection, entityId));
+          }
+          await unwrapCommand(commands.sectionAddMember(sectionId, entityId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("移动到 section 失败:", e);
+        }
+      },
+      // 共享: Remove from group — 从当前所属 section 移除
+      onRemoveFromGroup: async (entityId) => {
+        try {
+          const sectionId = entityToSectionId[entityId];
+          if (!sectionId) return;
+          await unwrapCommand(commands.sectionRemoveMember(sectionId, entityId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("从 section 移除失败:", e);
+        }
+      },
+    }),
+    [
+      data.cards,
+      data.notes,
+      data.aliases,
+      data.positions,
+      entityToSectionId,
+      allDimensions,
+      containerSize,
+      viewport.actions,
+      currentWhiteboardId,
+      queryClient,
+    ],
+  );
+
   // Sync 回调
   // 跳转到指定 section — 用 allDimensions 算出真实尺寸后调 viewport.centerOn
   const handleJumpToSection = useCallback(
@@ -644,13 +797,34 @@ export function GraphView({
     data.syncVault.mutate();
   }, [data.syncVault]);
 
-  const handleSelectEntity = useCallback((selection: GraphSelection) => {
-    if (lastDidDragRef.current) {
-      lastDidDragRef.current = false;
-      return;
-    }
-    onSelectEntity?.(selection);
-  }, [onSelectEntity]);
+  const handleSelectEntity = useCallback(
+    (selection: GraphSelection) => {
+      if (lastDidDragRef.current) {
+        lastDidDragRef.current = false;
+        return;
+      }
+      // 画连线模式：第一次点 ⋯ 菜单设置 drawingState，下一次点目标实体触发 entityConnect
+      if (drawingState && drawingState.fromId !== selection.id) {
+        const { fromId, edgeType } = drawingState;
+        setDrawingState(null);
+        unwrapCommand(
+          commands.entityConnect(fromId, selection.id, edgeType, null, null),
+        )
+          .then(() => {
+            queryClient.invalidateQueries();
+          })
+          .catch((err) => console.error(`建立 ${edgeType} 边失败:`, err));
+        return;
+      }
+      // 画连线模式下再点自己：取消 drawing 模式
+      if (drawingState && drawingState.fromId === selection.id) {
+        setDrawingState(null);
+        return;
+      }
+      onSelectEntity?.(selection);
+    },
+    [onSelectEntity, drawingState, queryClient],
+  );
 
   useEffect(() => {
     if (!focusTarget || containerSize.width === 0 || containerSize.height === 0) return;
@@ -744,6 +918,9 @@ export function GraphView({
               onStartEdit={handleStartEdit}
               onCommitEdit={handleCommitEdit}
               onCancelEdit={handleCancelEdit}
+              menuHandlers={menuHandlers}
+              menuSections={menuSections}
+              currentSectionId={entityToSectionId[e.id] ?? null}
             />
           ))}
           {whiteboardEntities.map((wb) => {
