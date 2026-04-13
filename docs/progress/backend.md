@@ -2,11 +2,12 @@
 
 ## Active
 
-- [ ] **Keysight 节点菜单能力类型化（Phase B）** — Card/Note/Alias/Question/Task 五类节点的 ⋯ 菜单能力做成强类型 catalog（共享能力 vs 专属能力分离）。当前 `NodeContextMenu` 的菜单项按 kind 分散硬编码在五个分支里，五类菜单到底有什么能力没有统一视图，能力空白（Question 之前完全没菜单）和能力重复（Move to Section / Remove from group 散在四份）都看不出来。
+- [ ] **Keysight 节点菜单能力类型化（Phase B1）** — Card/Alias/Note/Question/Section 五类节点的 ⋯ 菜单能力做成强类型 catalog：判别联合 + applies_to: Set&lt;NodeKind&gt; + ui_kind (plain/submenu/custom) + 可见性规则 + order。当前 `NodeContextMenu` 的菜单项按 kind 分散硬编码在五个分支里，能力空白（Task 是渲染节点但完全无菜单）和能力重复（Move to Section / Remove from group 散在四份）都看不出来。**B1 scope 纯 TS**：复用现有 Rust command，不动 schema。**B1 真实 UX 新增**：Card/Alias/Section 菜单新增 `Copy UUID + title`（统一 normalized pipeline `UUID:{id} {normalize(title)}`），砍掉 Card 原有纯 `Copy title`。Task 是第 6 个渲染节点但 B1 不接线——NodeKind union 不含 "task"，类型层面预留，接入留给后续独立 task。`set_color` 扩张到 Card/Question/Task 留 B2（Rust schema 变更）。
 
 ## Next
 
-（无）
+- [ ] **Keysight 节点菜单 Phase B2** — 扩 Card/Question/Task 的 `color` schema：`entities` 表 color 列 + migration、`card_set_color` / `question_set_color` / `task_set_color` commands，然后把 catalog 的 `set_color` `applies_to` 扩到全集。依赖 B1 完成。涉及 Rust schema 变更,风险面较大,要独立 task 做。
+- [ ] **Keysight Task 节点菜单接入** — 把 Task 作为第 6 个 NodeKind 加到 catalog，接入 `copy_uuid_title` / `draw_connection` / `edit_title` / `move_to_section` / `remove_from_group` / `delete`（复用现有 `task_update` / `task_delete` 等 command）。依赖 B1 完成，是纯 TS 工作。
 
 ## Done
 
