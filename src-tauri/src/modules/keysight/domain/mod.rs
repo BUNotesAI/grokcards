@@ -2,6 +2,7 @@ pub(in crate::modules::keysight) mod alias;
 pub(in crate::modules::keysight) mod card;
 pub(in crate::modules::keysight) mod entity;
 pub(in crate::modules::keysight) mod layout;
+pub(in crate::modules::keysight) mod migration;
 pub(in crate::modules::keysight) mod note;
 pub(in crate::modules::keysight) mod overview;
 pub(in crate::modules::keysight) mod question;

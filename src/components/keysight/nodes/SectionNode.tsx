@@ -8,12 +8,14 @@ import {
   computeSectionBounds,
   type SectionMember,
 } from "@/components/keysight/lib/sectionBounds";
+import { NodeContextMenu, type SectionMenuConfig } from "./NodeContextMenu";
 
 interface SectionNodeProps {
   section: GraphSection;
   memberPositions: Record<string, Position>;
   /** member id → kind 映射，用于查询每个 member 的真实渲染尺寸 */
   memberKinds: Record<string, EntityKind>;
+  contextMenu?: SectionMenuConfig | null;
   style: CSSProperties;
 }
 
@@ -71,6 +73,7 @@ export function SectionNode({
   section,
   memberPositions,
   memberKinds,
+  contextMenu = null,
   style,
 }: SectionNodeProps) {
   const colors =
@@ -91,7 +94,7 @@ export function SectionNode({
   return (
     <div
       data-entity-id={section.id}
-      className={`select-none rounded-2xl border-2 border-dashed ${colors.border} ${colors.bg}`}
+      className={`relative select-none rounded-2xl border-2 border-dashed ${colors.border} ${colors.bg}`}
       style={{
         ...style,
         width: bounds.width,
@@ -100,6 +103,11 @@ export function SectionNode({
         minHeight: 100,
       }}
     >
+      {contextMenu ? (
+        <div className="absolute right-3 top-2 z-10">
+          <NodeContextMenu menu={contextMenu} sections={[]} currentSectionId={null} />
+        </div>
+      ) : null}
       <div className="px-3 pt-2">
         <h3
           className={`text-xs font-bold uppercase tracking-wide ${colors.text}`}

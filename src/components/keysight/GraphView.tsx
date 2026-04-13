@@ -10,6 +10,8 @@ import { EntityNode } from "@/components/keysight/nodes/EntityNode";
 import { WhiteboardNode } from "@/components/keysight/nodes/WhiteboardNode";
 import { buildEdges } from "@/components/keysight/lib/buildEdges";
 import { buildEntityDimensions } from "@/components/keysight/lib/buildEntityDimensions";
+import { normalizeCardTitleForClipboard } from "@/components/keysight/lib/normalizeCardTitleForClipboard";
+import { RenderedMarkdown } from "@/components/keysight/nodes/RenderedMarkdown";
 import { perfLog } from "@/lib/perf";
 import type {
   EntityKind,
@@ -43,9 +45,50 @@ function viewportCenterWorld(
   };
 }
 
+interface Rect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+function rectsOverlap(a: Rect, b: Rect): boolean {
+  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
+}
+
+function avoidSectionOverlap(
+  preferred: { x: number; y: number },
+  size: { width: number; height: number },
+  existingRects: Rect[],
+  gap = 40,
+): { x: number; y: number } {
+  let next = { ...preferred };
+
+  for (let i = 0; i < existingRects.length * 2 + 1; i += 1) {
+    const candidate: Rect = {
+      left: next.x,
+      top: next.y,
+      right: next.x + size.width,
+      bottom: next.y + size.height,
+    };
+    const hit = existingRects.find((rect) => rectsOverlap(candidate, rect));
+    if (!hit) return next;
+    next = {
+      x: hit.right + gap,
+      y: hit.top,
+    };
+  }
+
+  return next;
+}
+
 export interface GraphFocusTarget {
   id: string;
   nonce: number;
+}
+
+function drawingHint(): string {
+  return "Draw connection mode: click another node to create the edge";
 }
 
 interface GraphViewProps {
@@ -180,12 +223,22 @@ export function GraphView({
   const dragInfoRef = useRef<
     | null
     | {
+        kind: "single";
         id: string;
         el: HTMLElement;
         startX: number;
         startY: number;
         origX: number;
         origY: number;
+        didDrag: boolean;
+      }
+    | {
+        kind: "section";
+        id: string;
+        startX: number;
+        startY: number;
+        origPositions: Record<string, Position>;
+        movedIds: string[];
         didDrag: boolean;
       }
   >(null);
@@ -204,6 +257,19 @@ export function GraphView({
     setExpandedId((prev) => (prev === entityId ? null : entityId));
   }, []);
 
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") return;
+      if (event.defaultPrevented) return;
+      setExpandedId((prev) => (prev === null ? prev : null));
+    };
+
+    window.addEventListener("keydown", onKeyDown);
+    return () => {
+      window.removeEventListener("keydown", onKeyDown);
+    };
+  }, []);
+
   // 行内编辑状态：同时只能编辑一个字段
   // field 区分：card-title / card-understanding / note-title / note-body
   type EditingField =
@@ -213,11 +279,21 @@ export function GraphView({
     | "note-body";
   const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
 
-  // 画连线状态 — ⋯ 菜单 Draw connection / Related 后进入两阶段点击模式
-  // 第一次点菜单设置 fromId + edgeType；第二次点其他实体触发 entityConnect + 清空
+  // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
+  // 第一次点菜单设置 fromId；第二次点其他实体触发 entityConnect(LinkTo) + 清空
   const [drawingState, setDrawingState] = useState<
     { fromId: string; edgeType: EdgeType } | null
   >(null);
+  // Related picker — 对齐旧 Obsidian 交互：点击菜单后弹出候选列表，直接选择目标 card
+  const [relatedPickerCardId, setRelatedPickerCardId] = useState<string | null>(null);
+  const [relatedSearch, setRelatedSearch] = useState("");
+
+  // 白板切换时终止画线模式，避免跨白板残留到下一次点击。
+  useEffect(() => {
+    setDrawingState(null);
+    setRelatedPickerCardId(null);
+    setRelatedSearch("");
+  }, [currentWhiteboardId]);
 
   const handleStartEdit = useCallback((id: string, field: EditingField) => {
     if (lastDidDragRef.current) {
@@ -368,8 +444,9 @@ export function GraphView({
     if (expandedId) ids.add(expandedId);
     if (editing?.id) ids.add(editing.id);
     if (selectedEntityId) ids.add(selectedEntityId);
+    if (relatedPickerCardId) ids.add(relatedPickerCardId);
     return ids;
-  }, [editing, expandedId, selectedEntityId]);
+  }, [editing, expandedId, selectedEntityId, relatedPickerCardId]);
 
   const visibleEntities = useVisibleEntities(
     allEntities,
@@ -397,12 +474,48 @@ export function GraphView({
     effectivePositionsRef.current = effectivePositions;
   }, [effectivePositions]);
 
+  const allKindsRef = useRef(allKinds);
+  useEffect(() => {
+    allKindsRef.current = allKinds;
+  }, [allKinds]);
+
+  const sectionsRef = useRef(data.sections);
+  useEffect(() => {
+    sectionsRef.current = data.sections;
+  }, [data.sections]);
+
   // 拖拽：节点 mousedown 触发（stable reference）
   // 捕获被拖动节点的 wrapper DOM（e.currentTarget），mousemove 时直接更新它的 transform
   const handleDragStart = useCallback((e: ReactMouseEvent, entityId: string) => {
+    if (allKindsRef.current[entityId] === "section") {
+      const section = sectionsRef.current.find((item) => item.id === entityId);
+      if (!section) return;
+
+      const movedIds = section.cardIds.filter((id) => effectivePositionsRef.current[id] != null);
+      const effectiveMovedIds = movedIds.length > 0 ? movedIds : [entityId];
+      const origPositions: Record<string, Position> = {};
+      for (const id of effectiveMovedIds) {
+        const pos = effectivePositionsRef.current[id];
+        if (pos) origPositions[id] = pos;
+      }
+      if (Object.keys(origPositions).length === 0) return;
+
+      dragInfoRef.current = {
+        kind: "section",
+        id: entityId,
+        startX: e.clientX,
+        startY: e.clientY,
+        origPositions,
+        movedIds: Object.keys(origPositions),
+        didDrag: false,
+      };
+      return;
+    }
+
     const pos = effectivePositionsRef.current[entityId];
     if (!pos) return;
     dragInfoRef.current = {
+      kind: "single",
       id: entityId,
       el: e.currentTarget as HTMLElement,
       startX: e.clientX,
@@ -428,16 +541,31 @@ export function GraphView({
       const zoom = viewport.state.zoom;
       const dx = rawDx / zoom;
       const dy = rawDy / zoom;
-      const newX = info.origX + dx;
-      const newY = info.origY + dy;
-      // Fast path：直接更新 DOM transform，每帧都立即响应
-      // 不依赖 React 的 render 调度，避免任何 batching/scheduling 延迟导致视觉滞后
-      info.el.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
-      // Slow path：同步更新 React state 让其他依赖（section bounds 等）跟上
-      setLocalPositions((prev) => ({
-        ...prev,
-        [info.id]: { x: newX, y: newY },
-      }));
+      if (info.kind === "single") {
+        const newX = info.origX + dx;
+        const newY = info.origY + dy;
+        // Fast path：直接更新 DOM transform，每帧都立即响应
+        // 不依赖 React 的 render 调度，避免任何 batching/scheduling 延迟导致视觉滞后
+        info.el.style.transform = `translate3d(${newX}px, ${newY}px, 0)`;
+        // Slow path：同步更新 React state 让其他依赖（section bounds 等）跟上
+        setLocalPositions((prev) => ({
+          ...prev,
+          [info.id]: { x: newX, y: newY },
+        }));
+        return;
+      }
+
+      setLocalPositions((prev) => {
+        const next = { ...prev };
+        for (const id of info.movedIds) {
+          const orig = info.origPositions[id];
+          next[id] = {
+            x: orig.x + dx,
+            y: orig.y + dy,
+          };
+        }
+        return next;
+      });
     };
 
     const onUp = () => {
@@ -448,11 +576,20 @@ export function GraphView({
       if (!info.didDrag) return; // 没移动足够距离 — click 不持久化
       // 持久化到 DB — 使用 setLocalPositions 的回调拿到最新值
       setLocalPositions((prev) => {
-        const pos = prev[info.id];
-        if (pos) {
-          unwrapCommand(
-            commands.layoutSetPosition(currentWhiteboardId, info.id, pos.x, pos.y),
-          )
+        const persistIds = info.kind === "single" ? [info.id] : info.movedIds;
+        const writes: Promise<unknown>[] = [];
+        for (const id of persistIds) {
+          const pos = prev[id];
+          if (!pos) continue;
+          writes.push(
+            unwrapCommand(
+              commands.layoutSetPosition(currentWhiteboardId, id, pos.x, pos.y),
+            ),
+          );
+        }
+
+        if (writes.length > 0) {
+          Promise.all(writes)
             .then(() => {
               queryClient.invalidateQueries({
                 queryKey: ["positions", currentWhiteboardId],
@@ -563,6 +700,36 @@ export function GraphView({
     return buildEdges(data.cards, data.notes, data.aliases, entitySet);
   }, [data.cards, data.notes, data.aliases, allKinds]);
 
+  const hasExpandedSpotlight = expandedId !== null;
+
+  const relatedPickerCandidates = useMemo(() => {
+    if (!relatedPickerCardId) return [];
+
+    const sourceCard = data.cards.find((card) => card.id === relatedPickerCardId);
+    if (!sourceCard) return [];
+
+    const excludedIds = new Set<string>([relatedPickerCardId]);
+    for (const targetId of sourceCard.related ?? []) {
+      excludedIds.add(targetId);
+    }
+    for (const card of data.cards) {
+      if (card.related?.includes(relatedPickerCardId)) {
+        excludedIds.add(card.id);
+      }
+    }
+
+    const words = relatedSearch.toLowerCase().split(/\s+/).filter(Boolean);
+    return data.cards
+      .filter((card) => {
+        if (excludedIds.has(card.id)) return false;
+        if (words.length === 0) return true;
+        const title = card.title.toLowerCase();
+        const content = card.content.toLowerCase();
+        return words.every((word) => title.includes(word) || content.includes(word));
+      })
+      .slice(0, 10);
+  }, [data.cards, relatedPickerCardId, relatedSearch]);
+
   // 实体计数
   const entityCounts: EntityCounts = useMemo(
     () => ({
@@ -610,7 +777,19 @@ export function GraphView({
       const result = await unwrapCommand(
         commands.sectionCreate(currentWhiteboardId, "New Section", null),
       );
-      const pos = newEntityPositionAtCenter(400, 300);
+      const preferredPos = newEntityPositionAtCenter(400, 300);
+      const existingSectionRects = allEntities
+        .filter((entity) => entity.kind === "section")
+        .map((entity) => {
+          const dim = allDimensions[entity.id] ?? { width: 400, height: 300 };
+          return {
+            left: entity.position.x,
+            top: entity.position.y,
+            right: entity.position.x + dim.width,
+            bottom: entity.position.y + dim.height,
+          };
+        });
+      const pos = avoidSectionOverlap(preferredPos, { width: 400, height: 300 }, existingSectionRects);
       await unwrapCommand(
         commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
       );
@@ -618,7 +797,7 @@ export function GraphView({
     } catch (e) {
       console.error("创建 section 失败:", e);
     }
-  }, [queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [allDimensions, allEntities, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
   // 创建 Note 回调
   const handleCreateNote = useCallback(async () => {
@@ -644,17 +823,24 @@ export function GraphView({
       onCopyCardTitle: (id) => {
         const card = data.cards.find((c) => c.id === id);
         if (!card) return;
-        const clean = card.title.replace(/\*\*/g, "").replace(/\\([<>])/g, "$1");
-        void navigator.clipboard.writeText(clean);
+        void navigator.clipboard.writeText(normalizeCardTitleForClipboard(card.title));
       },
       // Card/Alias: Draw connection → 进入 LinkTo 模式，等待下一次点击目标实体
-      onDrawConnectionFrom: (id) => setDrawingState({ fromId: id, edgeType: "LinkTo" }),
-      // Card: Related → 进入 Related 模式
-      onRelatedFrom: (id) => setDrawingState({ fromId: id, edgeType: "Related" }),
+      onDrawConnectionFrom: (id) => {
+        setRelatedPickerCardId(null);
+        setRelatedSearch("");
+        setDrawingState({ fromId: id, edgeType: "LinkTo" });
+      },
+      // Card: Related → 打开 source card 右侧的 picker
+      onRelatedFrom: (id) => {
+        setDrawingState(null);
+        setRelatedSearch("");
+        setRelatedPickerCardId(id);
+      },
       // Card: Create alias → 在原卡右侧 540px 位置创建 alias
       onCreateAlias: async (cardId) => {
         try {
-          const cardPos = data.positions[cardId];
+          const cardPos = effectivePositions[cardId];
           const alias = await unwrapCommand(
             commands.aliasCreate(currentWhiteboardId, cardId),
           );
@@ -677,7 +863,7 @@ export function GraphView({
       onJumpToSourceCard: (aliasId) => {
         const alias = data.aliases.find((a) => a.aliasId === aliasId);
         if (!alias) return;
-        const cardPos = data.positions[alias.cardId];
+        const cardPos = effectivePositions[alias.cardId];
         if (!cardPos) return;
         const dim = allDimensions[alias.cardId];
         viewport.actions.centerOn(
@@ -724,6 +910,15 @@ export function GraphView({
           console.error("更新 note 颜色失败:", e);
         }
       },
+      // Section: Delete
+      onDeleteSection: async (sectionId) => {
+        try {
+          await unwrapCommand(commands.sectionDelete(sectionId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("删除 section 失败:", e);
+        }
+      },
       // 共享: Move to Section — 先从旧 section 移除再加入新 section
       onMoveToSection: async (entityId, sectionId) => {
         try {
@@ -753,13 +948,15 @@ export function GraphView({
       data.cards,
       data.notes,
       data.aliases,
-      data.positions,
+      effectivePositions,
       entityToSectionId,
       allDimensions,
       containerSize,
       viewport.actions,
       currentWhiteboardId,
       queryClient,
+      setRelatedPickerCardId,
+      setRelatedSearch,
     ],
   );
 
@@ -788,6 +985,9 @@ export function GraphView({
   // 跳转到指定白板 — 直接切 currentWhiteboardId
   const handleJumpToBoard = useCallback(
     (whiteboardId: string) => {
+      setDrawingState(null);
+      setRelatedPickerCardId(null);
+      setRelatedSearch("");
       onWhiteboardChange(whiteboardId);
     },
     [onWhiteboardChange],
@@ -802,6 +1002,10 @@ export function GraphView({
       if (lastDidDragRef.current) {
         lastDidDragRef.current = false;
         return;
+      }
+      if (relatedPickerCardId) {
+        setRelatedPickerCardId(null);
+        setRelatedSearch("");
       }
       // 画连线模式：第一次点 ⋯ 菜单设置 drawingState，下一次点目标实体触发 entityConnect
       if (drawingState && drawingState.fromId !== selection.id) {
@@ -823,7 +1027,7 @@ export function GraphView({
       }
       onSelectEntity?.(selection);
     },
-    [onSelectEntity, drawingState, queryClient],
+    [onSelectEntity, drawingState, queryClient, relatedPickerCardId],
   );
 
   useEffect(() => {
@@ -879,7 +1083,12 @@ export function GraphView({
         searchQuery={searchQuery}
         onSearchChange={setSearchQuery}
         currentWhiteboardId={currentWhiteboardId}
-        onNavigateBack={() => onWhiteboardChange(ROOT_WHITEBOARD)}
+        onNavigateBack={() => {
+          setDrawingState(null);
+          setRelatedPickerCardId(null);
+          setRelatedSearch("");
+          onWhiteboardChange(ROOT_WHITEBOARD);
+        }}
         sections={data.sections}
         whiteboards={whiteboards}
         onJumpToSection={handleJumpToSection}
@@ -891,14 +1100,33 @@ export function GraphView({
         </div>
       )}
       <div className="relative flex-1 overflow-hidden">
-        <GraphCanvas viewport={viewport}>
+        {drawingState && (
+          <div className="pointer-events-none absolute left-4 top-3 z-40 rounded-md border border-sky-200 bg-sky-50/95 px-3 py-1.5 text-xs font-medium text-sky-900 shadow-sm">
+            {drawingHint()}
+          </div>
+        )}
+        <GraphCanvas
+          viewport={viewport}
+          cursor={drawingState ? "crosshair" : "grab"}
+          backgroundColor={hasExpandedSpotlight ? "#2c2c2e" : undefined}
+        >
           {/* edges 渲染在 entity 节点之下作为背景层 */}
           <GraphEdges
             edges={renderEdges}
             positions={allPositions}
             dimensions={allDimensions}
+            opacity={hasExpandedSpotlight ? 0.08 : 1}
           />
           {filteredEntities.map((e) => (
+            (() => {
+              const highlightedDimmed = Boolean(
+                highlightedEntityIds &&
+                highlightedEntityIds.size > 0 &&
+                !highlightedEntityIds.has(e.id) &&
+                selectedEntityId !== e.id,
+              );
+              const spotlightDimmed = hasExpandedSpotlight && expandedId !== e.id;
+              return (
             <EntityNode
               key={e.id}
               entity={e}
@@ -909,7 +1137,8 @@ export function GraphView({
               lodLevel={viewport.lodLevel}
               selected={selectedEntityId === e.id}
               highlighted={highlightedEntityIds?.has(e.id) ?? false}
-              dimmed={Boolean(highlightedEntityIds && highlightedEntityIds.size > 0 && !highlightedEntityIds.has(e.id) && selectedEntityId !== e.id)}
+              dimmed={highlightedDimmed}
+              spotlightDimmed={spotlightDimmed}
               onDragStart={handleDragStart}
               onSelect={handleSelectEntity}
               isExpanded={expandedId === e.id}
@@ -922,6 +1151,8 @@ export function GraphView({
               menuSections={menuSections}
               currentSectionId={entityToSectionId[e.id] ?? null}
             />
+              );
+            })()
           ))}
           {whiteboardEntities.map((wb) => {
             const summary = whiteboards.find((s) => s.whiteboardId === wb.whiteboardId);
@@ -936,6 +1167,7 @@ export function GraphView({
                   top: 0,
                   transform: `translate3d(${wb.position.x}px, ${wb.position.y}px, 0)`,
                   willChange: "transform",
+                  opacity: hasExpandedSpotlight ? 0.1 : 1,
                 }}
                 onMouseDown={(e) => {
                   if (e.button !== 0) return;
@@ -948,6 +1180,9 @@ export function GraphView({
                     return;
                   }
                   e.stopPropagation();
+                  setDrawingState(null);
+                  setRelatedPickerCardId(null);
+                  setRelatedSearch("");
                   onWhiteboardChange(wb.whiteboardId);
                 }}
               >
@@ -959,6 +1194,111 @@ export function GraphView({
               </div>
             );
           })}
+          {relatedPickerCardId && (() => {
+            const sourcePos = effectivePositions[relatedPickerCardId];
+            if (!sourcePos) return null;
+
+            return (
+              <div
+                data-testid="related-picker"
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  top: 0,
+                  width: 320,
+                  maxHeight: 320,
+                  transform: `translate3d(${sourcePos.x + 528}px, ${sourcePos.y}px, 0)`,
+                  borderRadius: 10,
+                  border: "1px solid rgba(15, 23, 42, 0.12)",
+                  background: "rgba(255, 255, 255, 0.98)",
+                  boxShadow: "0 18px 40px rgba(15, 23, 42, 0.16)",
+                  overflow: "hidden",
+                  pointerEvents: "auto",
+                }}
+                onMouseDown={(e) => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <input
+                  autoFocus
+                  placeholder="Search cards..."
+                  value={relatedSearch}
+                  onChange={(e) => setRelatedSearch(e.currentTarget.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") {
+                      setRelatedPickerCardId(null);
+                      setRelatedSearch("");
+                    }
+                  }}
+                  style={{
+                    width: "100%",
+                    border: "none",
+                    borderBottom: "1px solid rgba(15, 23, 42, 0.08)",
+                    padding: "10px 12px",
+                    fontSize: 13,
+                    outline: "none",
+                    background: "transparent",
+                  }}
+                />
+                <div style={{ maxHeight: 272, overflowY: "auto" }}>
+                  {relatedPickerCandidates.map((card) => (
+                    <button
+                      key={card.id}
+                      data-testid={`related-picker-item-${card.id}`}
+                      type="button"
+                      onClick={() => {
+                        setRelatedPickerCardId(null);
+                        setRelatedSearch("");
+                        unwrapCommand(
+                          commands.entityConnect(
+                            relatedPickerCardId,
+                            card.id,
+                            "Related",
+                            null,
+                            null,
+                          ),
+                        )
+                          .then(() => {
+                            queryClient.invalidateQueries();
+                          })
+                          .catch((err) => console.error("建立 Related 失败:", err));
+                      }}
+                      style={{
+                        display: "block",
+                        width: "100%",
+                        border: "none",
+                        borderBottom: "1px solid rgba(15, 23, 42, 0.05)",
+                        padding: "10px 12px",
+                        textAlign: "left",
+                        background: "transparent",
+                        cursor: "pointer",
+                      }}
+                    >
+                      <div
+                        style={{
+                          fontSize: 13,
+                          fontWeight: 600,
+                          color: "#1f2937",
+                        }}
+                      >
+                        <RenderedMarkdown markdown={card.title} variant="title" />
+                      </div>
+                    </button>
+                  ))}
+                  {relatedPickerCandidates.length === 0 && (
+                    <div
+                      style={{
+                        padding: "12px",
+                        fontSize: 12,
+                        color: "#6b7280",
+                      }}
+                    >
+                      No matches
+                    </div>
+                  )}
+                </div>
+              </div>
+            );
+          })()}
         </GraphCanvas>
       </div>
     </div>

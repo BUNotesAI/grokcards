@@ -158,6 +158,72 @@ pub(super) fn normalize_title_markdown_escapes(title: &str) -> String {
     normalized
 }
 
+/// 把历史 `<details><summary>...</summary>...</details>` 规范化成 `?>> / ?<<`。
+pub(super) fn normalize_legacy_toggle_syntax(markdown: &str) -> String {
+    let lines: Vec<&str> = markdown.lines().collect();
+    let mut result = Vec::with_capacity(lines.len());
+    let had_trailing_newline = markdown.ends_with('\n');
+    let mut i = 0usize;
+
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim();
+
+        if !trimmed.starts_with("<details") {
+            result.push(line.to_string());
+            i += 1;
+            continue;
+        }
+
+        let Some(summary_line) = lines.get(i + 1) else {
+            result.push(line.to_string());
+            i += 1;
+            continue;
+        };
+        let summary_trimmed = summary_line.trim();
+        let Some(summary_inner) = summary_trimmed
+            .strip_prefix("<summary>")
+            .and_then(|rest| rest.strip_suffix("</summary>"))
+        else {
+            result.push(line.to_string());
+            i += 1;
+            continue;
+        };
+
+        let mut cursor = i + 2;
+        while cursor < lines.len() && lines[cursor].trim().is_empty() {
+            cursor += 1;
+        }
+
+        let mut content_lines = Vec::new();
+        while cursor < lines.len() && lines[cursor].trim() != "</details>" {
+            content_lines.push(lines[cursor]);
+            cursor += 1;
+        }
+
+        if cursor >= lines.len() {
+            result.push(line.to_string());
+            i += 1;
+            continue;
+        }
+
+        while matches!(content_lines.last(), Some(line) if line.trim().is_empty()) {
+            content_lines.pop();
+        }
+
+        result.push(format!("?>> {}", summary_inner.trim()));
+        result.extend(content_lines.into_iter().map(str::to_string));
+        result.push("?<<".to_string());
+        i = cursor + 1;
+    }
+
+    let mut normalized = result.join("\n");
+    if had_trailing_newline && !normalized.is_empty() {
+        normalized.push('\n');
+    }
+    normalized
+}
+
 /// 解析 markdown 文件为多类型实体。
 pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
     let fm_str = extract_frontmatter(markdown)?;
@@ -170,6 +236,7 @@ pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
 
     let after_fm = skip_frontmatter(markdown);
     let (raw_title, content) = extract_title_and_body(after_fm);
+    let content = normalize_legacy_toggle_syntax(&content);
     let title = if entity_type == "atomic-card" {
         normalize_title_markdown_escapes(&raw_title)
     } else {
@@ -458,6 +525,32 @@ id: card_escape002
 
         let parsed = parse_entity(md).expect("应成功解析");
         assert_eq!(parsed.title, "保留字面反斜杠星号 \\\\* 和双反斜杠 \\\\\\\\");
+    }
+
+    #[test]
+    fn test_parse_card_normalizes_legacy_details_summary_to_toggle_syntax() {
+        let md = "\
+---
+type: atomic-card
+id: card_toggle001
+---
+
+# 【ATC】Toggle Card
+
+before
+<details>
+<summary>折叠标题</summary>
+
+这里是详细内容
+</details>
+after
+";
+
+        let parsed = parse_entity(md).expect("应成功解析");
+        assert_eq!(
+            parsed.content,
+            "before\n?>> 折叠标题\n这里是详细内容\n?<<\nafter\n"
+        );
     }
 
     // --- extract_frontmatter ---

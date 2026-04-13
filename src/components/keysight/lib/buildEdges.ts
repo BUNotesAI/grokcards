@@ -18,7 +18,7 @@ export interface RenderEdge {
  * - alias.linkedCardIds / linkedNoteIds / linkedSectionIds → alias_link edge（青色虚线）
  *
  * 不包含：
- * - card.related — 旧 Obsidian 也只在卡片展开后的"Related"列表里显示，不画连线
+ * - card.related — 通过 picker 添加，只在卡片展开后的 Related 列表里显示
  * - card.seeAlso — see-also 指向 vault 文件而非实体，画线没意义
  *
  * 过滤：from 和 to 必须都在 entitySet 中，避免渲染断头连线（指向不存在的实体）。

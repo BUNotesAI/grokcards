@@ -16,6 +16,7 @@ import type {
   AliasMenuConfig,
   CardMenuConfig,
   NoteMenuConfig,
+  SectionMenuConfig,
   SectionListItem,
 } from "./NodeContextMenu";
 
@@ -37,6 +38,8 @@ export interface NodeContextMenuHandlers {
   onEditNoteTitle: (noteId: string) => void;
   onDeleteNote: (noteId: string) => void;
   onSetNoteColor: (noteId: string, color: string) => void;
+  /** Section 菜单 */
+  onDeleteSection: (sectionId: string) => void;
   /** 共享 */
   onMoveToSection: (entityId: string, sectionId: string) => void;
   onRemoveFromGroup: (entityId: string) => void;
@@ -61,6 +64,7 @@ interface EntityNodeProps {
   selected?: boolean;
   highlighted?: boolean;
   dimmed?: boolean;
+  spotlightDimmed?: boolean;
   /** 拖拽起始回调 — 按下鼠标左键时触发 */
   onDragStart?: (e: ReactMouseEvent, entityId: string) => void;
   /** 单击选中实体 */
@@ -105,6 +109,7 @@ function EntityNodeImpl({
   selected = false,
   highlighted = false,
   dimmed = false,
+  spotlightDimmed = false,
   onDragStart,
   onSelect,
   isExpanded = false,
@@ -157,6 +162,15 @@ function EntityNodeImpl({
       onDelete: () => menuHandlers.onDeleteAlias(entity.id),
     };
   }, [menuHandlers, entity.id, entity.kind]);
+
+  const sectionMenu = useMemo<SectionMenuConfig | null>(() => {
+    if (!menuHandlers || entity.kind !== "section") return null;
+    return {
+      kind: "section",
+      onDelete: () => menuHandlers.onDeleteSection(entity.id),
+    };
+  }, [menuHandlers, entity.id, entity.kind]);
+
   // 使用 transform 而非 left/top — GPU 合成，避免 layout reflow，拖拽更丝滑
   const wrapperStyle: CSSProperties = {
     position: "absolute",
@@ -164,13 +178,12 @@ function EntityNodeImpl({
     top: 0,
     transform: `translate3d(${entity.position.x}px, ${entity.position.y}px, 0)`,
     willChange: "transform",
+    opacity: spotlightDimmed ? 0.15 : 1,
   };
 
   const handleMouseDown = onDragStart
     ? (e: ReactMouseEvent) => {
         if (e.button !== 0) return;
-        // 对于 section，不允许通过它拖动（它是背景层）
-        if (entity.kind === "section") return;
         e.stopPropagation();
         onDragStart(e, entity.id);
       }
@@ -273,12 +286,19 @@ function EntityNodeImpl({
       );
     case "section":
       return (
-        <SectionNode
-          section={entity.entity}
-          memberPositions={allPositions}
-          memberKinds={allKinds}
-          style={wrapperStyle}
-        />
+        <div
+          style={{ ...wrapperStyle, opacity: spotlightDimmed ? 0.1 : 1 }}
+          onMouseDown={handleMouseDown}
+          onClick={handleClick}
+        >
+          <SectionNode
+            section={entity.entity}
+            memberPositions={allPositions}
+            memberKinds={allKinds}
+            contextMenu={sectionMenu}
+            style={{}}
+          />
+        </div>
       );
     case "alias": {
       const target = cardsById[entity.entity.cardId] ?? null;
@@ -326,6 +346,7 @@ export const EntityNode = memo(EntityNodeImpl, (prev, next) => {
   if (prev.selected !== next.selected) return false;
   if (prev.highlighted !== next.highlighted) return false;
   if (prev.dimmed !== next.dimmed) return false;
+  if (prev.spotlightDimmed !== next.spotlightDimmed) return false;
   if (prev.onDragStart !== next.onDragStart) return false;
   if (prev.onSelect !== next.onSelect) return false;
   if (prev.isExpanded !== next.isExpanded) return false;

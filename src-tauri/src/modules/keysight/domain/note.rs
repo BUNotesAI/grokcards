@@ -4,6 +4,7 @@ use rusqlite::{params, Connection};
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
 use crate::modules::keysight::models::GraphNote;
+use crate::modules::keysight::parser;
 
 /// 笔记存储契约。
 pub(in crate::modules::keysight) trait NoteStore {
@@ -25,14 +26,17 @@ impl<'a> SqliteNoteStore<'a> {
 impl NoteStore for SqliteNoteStore<'_> {
     fn create(&self, whiteboard_id: &str, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError> {
         let note_id = id::gen_note_id();
+        let normalized_content = content
+            .map(parser::normalize_legacy_toggle_syntax)
+            .unwrap_or_default();
         self.conn.execute(
             "INSERT INTO entities (id, kind, title, whiteboard_id, content, color) VALUES (?1, 'note', ?2, ?3, ?4, ?5)",
-            params![note_id, title, whiteboard_id, content.unwrap_or(""), color],
+            params![note_id, title, whiteboard_id, normalized_content, color],
         )?;
         Ok(GraphNote {
             id: note_id,
             title: title.to_string(),
-            content: content.unwrap_or("").to_string(),
+            content: normalized_content,
             color: color.map(|s| s.to_string()),
             linked_section_ids: None,
             linked_card_ids: None,
@@ -52,7 +56,8 @@ impl NoteStore for SqliteNoteStore<'_> {
             self.conn.execute("UPDATE entities SET title = ?1 WHERE id = ?2", params![t, id])?;
         }
         if let Some(c) = content {
-            self.conn.execute("UPDATE entities SET content = ?1 WHERE id = ?2", params![c, id])?;
+            let normalized = parser::normalize_legacy_toggle_syntax(c);
+            self.conn.execute("UPDATE entities SET content = ?1 WHERE id = ?2", params![normalized, id])?;
         }
         if let Some(c) = color {
             let c_val: Option<&str> = if c == "default" { None } else { Some(c) };
@@ -62,7 +67,7 @@ impl NoteStore for SqliteNoteStore<'_> {
     }
 
     fn get(&self, id: &str) -> Result<GraphNote, KeysightError> {
-        let (title, content, color): (String, String, Option<String>) = self.conn.query_row(
+        let (title, raw_content, color): (String, String, Option<String>) = self.conn.query_row(
             "SELECT title, COALESCE(content, ''), color FROM entities WHERE id = ?1 AND kind = 'note'",
             [id],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
@@ -70,6 +75,7 @@ impl NoteStore for SqliteNoteStore<'_> {
             rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
             other => KeysightError::Database(other),
         })?;
+        let content = parser::normalize_legacy_toggle_syntax(&raw_content);
 
         // 加载 note_link edges，按目标 id 前缀分组
         let mut stmt = self.conn.prepare(
@@ -152,6 +158,42 @@ mod tests {
         let loaded = store.get(&note.id).unwrap();
         assert_eq!(loaded.title, "New");
         assert_eq!(loaded.content, "new content");
+    }
+
+    #[test]
+    fn test_update_note_normalizes_legacy_details_summary_to_toggle_syntax() {
+        let conn = test_conn();
+        let store = SqliteNoteStore::new(&conn);
+        let note = store.create("wb_root", "Old", Some("old"), None).unwrap();
+        store
+            .update(
+                &note.id,
+                None,
+                Some("<details>\n<summary>折叠标题</summary>\n\n这里是详细内容\n</details>"),
+                None,
+            )
+            .unwrap();
+
+        let loaded = store.get(&note.id).unwrap();
+        assert_eq!(loaded.content, "?>> 折叠标题\n这里是详细内容\n?<<");
+    }
+
+    #[test]
+    fn test_get_note_normalizes_legacy_details_summary_to_toggle_syntax() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id, content) VALUES (?1, 'note', ?2, ?3, ?4)",
+            params![
+                "note_toggle001",
+                "Legacy Toggle",
+                "wb_root",
+                "<details>\n<summary>折叠标题</summary>\n\n这里是详细内容\n</details>"
+            ],
+        ).unwrap();
+
+        let store = SqliteNoteStore::new(&conn);
+        let loaded = store.get("note_toggle001").unwrap();
+        assert_eq!(loaded.content, "?>> 折叠标题\n这里是详细内容\n?<<");
     }
 
     #[test]

@@ -11,6 +11,7 @@ interface GraphEdgesProps {
   positions: Record<string, Position>;
   /** 实体 id → 真实渲染尺寸（计算 clipToRect 用） */
   dimensions: Record<string, { width: number; height: number }>;
+  opacity?: number;
 }
 
 /** link_to 边颜色 — Heptabase coral，对齐旧 Obsidian */
@@ -33,6 +34,7 @@ export const GraphEdges = memo(function GraphEdges({
   edges,
   positions,
   dimensions,
+  opacity = 1,
 }: GraphEdgesProps) {
   return (
     <svg
@@ -44,6 +46,7 @@ export const GraphEdges = memo(function GraphEdges({
         height: 1,
         overflow: "visible",
         pointerEvents: "none",
+        opacity,
       }}
     >
       <defs>

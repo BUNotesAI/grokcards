@@ -98,6 +98,19 @@ describe("NoteNode", () => {
       expect(onCancelEdit).toHaveBeenCalled();
     });
 
+    it("body textarea Cmd/Ctrl+B → 选中文本包成 markdown 加粗", () => {
+      render(<NoteNode note={mockNote} style={{}} editingField="note-body" />);
+      const textarea = screen.getByDisplayValue("笔记内容详情") as HTMLTextAreaElement;
+      textarea.focus();
+      textarea.setSelectionRange(0, 2);
+
+      fireEvent.keyDown(textarea, { key: "b", ctrlKey: true });
+
+      expect(textarea.value).toBe("**笔记**内容详情");
+      expect(textarea.selectionStart).toBe(2);
+      expect(textarea.selectionEnd).toBe(4);
+    });
+
     it("空 body 时也能进入编辑（双击占位区，双击应触发 onStartEdit）", () => {
       // 空 content 的 note，editingField 设为 'note-body' → textarea 渲染（哪怕 content 为空）
       const emptyNote: GraphNote = { ...mockNote, content: "" };

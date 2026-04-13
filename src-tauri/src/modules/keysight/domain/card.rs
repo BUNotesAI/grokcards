@@ -406,6 +406,7 @@ impl CardStore for SqliteCardStore<'_> {
         let vault_fs = self.vault_fs.ok_or_else(|| {
             KeysightError::FileError("edit_body 需要 VaultFs".to_string())
         })?;
+        let new_body = parser::normalize_legacy_toggle_syntax(new_body);
 
         let file_path: String = self.conn.query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
@@ -920,6 +921,29 @@ Dirty body content.
         assert!(file.contains("# 【ATC】Test Card")); // H1 保留
         assert!(file.contains("type: atomic-card")); // frontmatter 保留
         assert!(!file.contains("Body content.")); // 旧 body 消失
+    }
+
+    #[test]
+    fn test_edit_body_normalizes_legacy_details_summary_to_toggle_syntax() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        store
+            .edit_body(
+                "card_test0001",
+                "<details>\n<summary>折叠标题</summary>\n\n这里是详细内容\n</details>",
+            )
+            .unwrap();
+
+        let card = store.get("card_test0001").unwrap();
+        assert_eq!(card.content, "?>> 折叠标题\n这里是详细内容\n?<<");
+
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
+        assert!(file.contains("?>> 折叠标题"));
+        assert!(file.contains("?<<"));
+        assert!(!file.contains("<details>"));
+        assert!(!file.contains("<summary>"));
     }
 
     #[test]

@@ -1,6 +1,7 @@
 import { memo, type CSSProperties } from "react";
 import type { GraphNote } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
+import { applyMarkdownBold } from "@/components/keysight/lib/applyMarkdownBold";
 import { RenderedMarkdown } from "./RenderedMarkdown";
 import {
   NodeContextMenu,
@@ -247,6 +248,9 @@ export const NoteNode = memo(function NoteNode({
                 if (e.key === "Enter") {
                   e.preventDefault();
                   e.currentTarget.blur();
+                } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+                  e.preventDefault();
+                  applyMarkdownBold(e.currentTarget);
                 } else if (e.key === "Escape") {
                   e.preventDefault();
                   onCancelEdit?.();
@@ -308,6 +312,9 @@ export const NoteNode = memo(function NoteNode({
                 if (e.key === "Escape") {
                   e.preventDefault();
                   onCancelEdit?.();
+                } else if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "b") {
+                  e.preventDefault();
+                  applyMarkdownBold(e.currentTarget);
                 } else if ((e.metaKey || e.ctrlKey) && e.key === "Enter") {
                   e.preventDefault();
                   e.currentTarget.blur();

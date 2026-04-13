@@ -78,6 +78,12 @@ KeySight 功能从 Obsidian 插件迁移到 Tauri 独立应用。
 ## Done
 
 ### 2026-04-13
+- [x] Section 交互修复：新建 section 会避让当前白板已有 section，section 节点恢复拖拽，右上角补回菜单和 Delete section；新增 5 条 TS 回归测试并通过 `pnpm build`
+- [x] Toggle list 历史数据迁移：新增 `migrate_toggle_syntax` 一次性维护入口，真实执行后将 vault 中 7 个 markdown 文件和 DB 中 11 条无文件 note 从 legacy `<details>/<summary>` 改写为 `?>> / ?<<`，并先备份 `keysight.db`
+- [x] Toggle list 语法恢复：`?>> 标题 ... ?<<` 默认折叠渲染回归，legacy `<details>/<summary>` 读出/编辑时规范化成新语法，新增 5 条 TS/Rust 回归测试
+- [x] 编辑态 `Cmd/Ctrl+B` 快捷键修复：输入框内不再触发全局 sidebar 切换，Card/Note 编辑支持把选区包成 `**bold**` markdown，加 3 条 TS 回归测试
+- [x] GraphCanvas 缩放崩溃修复：`Cmd/Ctrl + wheel` 改为原生 non-passive wheel 监听接管缩放，避免浏览器默认 page zoom 干扰；补 2 条 TS 回归测试
+- [x] GraphView 展开态恢复机制：卡片展开 spotlight 模式支持 `Escape` 退出并回到普通未展开态，补 1 条 TS 回归测试
 - [x] Phase 6 ⋯ 三点菜单：Card/Note/Alias 三种节点右上角菜单 + NodeContextMenu 组件 + GraphView drawingState 两阶段点击 + Move to Section 嵌套子菜单 + Note 7 色便签色板，19 新 TS 测试（141 total），1 commit (0d21e45)
 
 ### 2026-04-12

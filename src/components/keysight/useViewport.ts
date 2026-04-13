@@ -11,6 +11,17 @@ export interface ViewportState {
   panY: number;
 }
 
+interface ViewportWheelEvent {
+  metaKey: boolean;
+  ctrlKey: boolean;
+  deltaX: number;
+  deltaY: number;
+  clientX: number;
+  clientY: number;
+  currentTarget: Element;
+  preventDefault: () => void;
+}
+
 export function getLodLevel(zoom: number): LodLevel {
   if (zoom <= 0.1) return 2;
   if (zoom <= 0.4) return 1;
@@ -206,15 +217,15 @@ export function useViewport(whiteboardId: string) {
   }, []);
 
   // Zoom: Cmd/Ctrl + wheel = zoom（鼠标中心）；普通 wheel = pan
-  const onWheel = useCallback((e: React.WheelEvent) => {
+  const onWheel = useCallback((e: ViewportWheelEvent) => {
     if (e.metaKey || e.ctrlKey) {
       e.preventDefault();
+      const rect = e.currentTarget.getBoundingClientRect();
+      const mouseX = e.clientX - rect.left;
+      const mouseY = e.clientY - rect.top;
       setState((s) => {
         const newZoom = clampZoom(s.zoom * (1 - e.deltaY * 0.001));
         const ratio = newZoom / s.zoom;
-        const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
-        const mouseX = e.clientX - rect.left;
-        const mouseY = e.clientY - rect.top;
         return {
           zoom: newZoom,
           panX: mouseX - (mouseX - s.panX) * ratio,

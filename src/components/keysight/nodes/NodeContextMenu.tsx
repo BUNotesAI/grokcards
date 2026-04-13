@@ -1,4 +1,4 @@
-import type { MouseEvent as ReactMouseEvent } from "react";
+import type { MouseEventHandler } from "react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -54,8 +54,14 @@ export interface NoteMenuConfig {
   onSetColor: (color: string) => void;
 }
 
-/** 节点菜单判别联合 — 区分 Card / Alias / Note 三类菜单项 */
-export type NodeMenuConfig = CardMenuConfig | AliasMenuConfig | NoteMenuConfig;
+/** Section 节点菜单配置 */
+export interface SectionMenuConfig {
+  kind: "section";
+  onDelete: () => void;
+}
+
+/** 节点菜单判别联合 — 区分 Card / Alias / Note / Section 四类菜单项 */
+export type NodeMenuConfig = CardMenuConfig | AliasMenuConfig | NoteMenuConfig | SectionMenuConfig;
 
 /** 当前白板的 section 精简列表（供 Move to Section 子菜单使用） */
 export interface SectionListItem {
@@ -70,9 +76,14 @@ interface NodeContextMenuProps {
   currentSectionId: string | null;
 }
 
-/** 拦截菜单触发按钮的鼠标事件，避免触发节点拖拽或 click-select */
-function stopBubble(e: ReactMouseEvent) {
-  e.stopPropagation();
+/** 包装 Base UI trigger handler，同时阻止事件冒泡到节点 wrapper。 */
+function withStopBubble<T extends HTMLElement>(
+  handler?: MouseEventHandler<T>,
+): MouseEventHandler<T> {
+  return (event) => {
+    event.stopPropagation();
+    handler?.(event);
+  };
 }
 
 /** 共享的 "Move to Section" 子菜单 — 所有变体通用 */
@@ -126,6 +137,7 @@ function NoteColorRow({ onSetColor }: { onSetColor: (color: string) => void }) {
  * - card: Copy title / Draw connection / Related / Create alias / Move to Section / Remove from group
  * - alias: Remove from group / Jump to source card / Draw connection / Move to Section / Delete alias
  * - note: Copy UUID+title / Draw connection / Edit title / Move to Section / Remove from group / Delete / 7 色块
+ * - section: Delete section
  */
 export function NodeContextMenu({
   menu,
@@ -137,18 +149,21 @@ export function NodeContextMenu({
   return (
     <DropdownMenu>
       <DropdownMenuTrigger
-        render={(props) => (
-          <button
-            type="button"
-            aria-label="Open menu"
-            onMouseDown={stopBubble}
-            onClick={stopBubble}
-            {...(props as React.ButtonHTMLAttributes<HTMLButtonElement>)}
-            className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border-none bg-transparent text-[16px] leading-none text-foreground/45 transition-colors hover:bg-foreground/10 hover:text-foreground"
-          >
-            ⋯
-          </button>
-        )}
+        render={(props) => {
+          const triggerProps = props as React.ButtonHTMLAttributes<HTMLButtonElement>;
+          return (
+            <button
+              type="button"
+              aria-label="Open menu"
+              {...triggerProps}
+              onMouseDown={withStopBubble(triggerProps.onMouseDown)}
+              onClick={withStopBubble(triggerProps.onClick)}
+              className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-md border-none bg-transparent text-[16px] leading-none text-foreground/45 transition-colors hover:bg-foreground/10 hover:text-foreground"
+            >
+              ⋯
+            </button>
+          );
+        }}
       />
       <DropdownMenuContent
         align="end"
@@ -217,6 +232,12 @@ export function NodeContextMenu({
             <DropdownMenuSeparator />
             <NoteColorRow onSetColor={menu.onSetColor} />
           </>
+        )}
+
+        {menu.kind === "section" && (
+          <DropdownMenuItem variant="destructive" onClick={menu.onDelete}>
+            Delete section
+          </DropdownMenuItem>
         )}
       </DropdownMenuContent>
     </DropdownMenu>

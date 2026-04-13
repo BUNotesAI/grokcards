@@ -1,5 +1,6 @@
 import { render, screen } from "@testing-library/react";
 import { renderHook } from "@testing-library/react";
+import { vi } from "vitest";
 import { GraphCanvas } from "@/components/keysight/GraphCanvas";
 import { useViewport } from "@/components/keysight/useViewport";
 
@@ -35,5 +36,24 @@ describe("GraphCanvas", () => {
     expect(screen.getByTestId("child-node")).toBeInTheDocument();
     const canvas = screen.getByTestId("graph-canvas");
     expect(canvas).toContainElement(screen.getByTestId("child-node"));
+  });
+
+  it("为 wheel 注册 non-passive 原生监听，避免 Cmd/Ctrl + wheel 落回浏览器默认缩放", () => {
+    const viewport = createTestViewport();
+    const addEventListenerSpy = vi.spyOn(HTMLElement.prototype, "addEventListener");
+
+    render(<GraphCanvas viewport={viewport} />);
+
+    const hasNonPassiveWheelListener = addEventListenerSpy.mock.calls.some(
+      ([type, listener, options]) =>
+        type === "wheel" &&
+        typeof listener === "function" &&
+        typeof options === "object" &&
+        options !== null &&
+        "passive" in options &&
+        options.passive === false,
+    );
+
+    expect(hasNonPassiveWheelListener).toBe(true);
   });
 });

@@ -38,6 +38,27 @@ describe("NodeContextMenu", () => {
       expect(screen.getByRole("button", { name: /open menu/i })).toBeInTheDocument();
     });
 
+    it("点击 ⋯ 按钮不会冒泡到父节点", () => {
+      const onParentClick = vi.fn();
+      const onParentMouseDown = vi.fn();
+
+      render(
+        <div onClick={onParentClick} onMouseDown={onParentMouseDown}>
+          <NodeContextMenu menu={cardConfig} sections={baseSections} currentSectionId={null} />
+        </div>,
+      );
+
+      const trigger = screen.getByRole("button", { name: /open menu/i });
+      act(() => {
+        fireEvent.mouseDown(trigger);
+        fireEvent.click(trigger);
+      });
+
+      expect(onParentMouseDown).not.toHaveBeenCalled();
+      expect(onParentClick).not.toHaveBeenCalled();
+      expect(screen.getByText("Copy title")).toBeInTheDocument();
+    });
+
     it("打开菜单 → 显示 Card 的 5 个基础菜单项", () => {
       render(
         <NodeContextMenu menu={cardConfig} sections={baseSections} currentSectionId={null} />,
@@ -244,6 +265,34 @@ describe("NodeContextMenu", () => {
       act(() => openMenu());
       act(() => fireEvent.click(screen.getByText("Delete alias")));
       expect(aliasConfig.onDelete).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  describe("variant='section'", () => {
+    const sectionConfig: Extract<NodeMenuConfig, { kind: "section" }> = {
+      kind: "section",
+      onDelete: vi.fn(),
+    };
+
+    beforeEach(() => {
+      vi.mocked(sectionConfig.onDelete).mockClear();
+    });
+
+    it("打开菜单 → 显示 Delete section", () => {
+      render(
+        <NodeContextMenu menu={sectionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Delete section")).toBeInTheDocument();
+    });
+
+    it("点击 Delete section → onDelete 被调用", () => {
+      render(
+        <NodeContextMenu menu={sectionConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Delete section")));
+      expect(sectionConfig.onDelete).toHaveBeenCalledTimes(1);
     });
   });
 });

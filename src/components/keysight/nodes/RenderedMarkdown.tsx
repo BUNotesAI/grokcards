@@ -1,8 +1,13 @@
-import { memo, useMemo, type CSSProperties } from "react";
+import { memo, useMemo, useState, type CSSProperties } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import remarkBreaks from "remark-breaks";
 import { normalizeBoldMarkdown } from "@/components/keysight/lib/normalizeBoldMarkdown";
+import {
+  normalizeLegacyToggleSyntax,
+  parseToggleBlocks,
+  type ToggleBlock,
+} from "@/components/keysight/lib/toggleMarkdown";
 
 interface Props {
   markdown: string;
@@ -21,9 +26,16 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
   markdown,
   variant = "body",
 }: Props) {
-  // 预处理 obsidian 风格的宽松 strong 标记（**X **）让 react-markdown 也能识别
-  const normalized = useMemo(() => normalizeBoldMarkdown(markdown ?? ""), [markdown]);
+  // 预处理：
+  // 1. 把历史 <details>/<summary> 统一转成 ?>> / ?<<
+  // 2. 修复 Obsidian 风格的宽松 **strong** 标记
+  const normalized = useMemo(
+    () => normalizeBoldMarkdown(normalizeLegacyToggleSyntax(markdown ?? "")),
+    [markdown],
+  );
   if (!normalized) return null;
+
+  const blocks = useMemo(() => parseToggleBlocks(normalized), [normalized]);
 
   // 每个 variant 的基础容器样式
   const containerStyle: CSSProperties = (() => {
@@ -37,8 +49,98 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
     }
   })();
 
+  if (!(blocks.length === 1 && typeof blocks[0] === "string")) {
+    return (
+      <div className="ks-rendered" style={containerStyle}>
+        {blocks.map((block, index) =>
+          typeof block === "string" ? (
+            <MarkdownContent
+              key={index}
+              markdown={block}
+              variant={variant}
+              containerStyle={containerStyle}
+            />
+          ) : (
+            <ToggleBlockView key={index} block={block} variant={variant} />
+          ),
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="ks-rendered" style={containerStyle}>
+    <MarkdownContent
+      markdown={blocks[0]}
+      variant={variant}
+      containerStyle={containerStyle}
+      wrap
+    />
+  );
+});
+
+function ToggleBlockView({
+  block,
+  variant,
+}: {
+  block: ToggleBlock;
+  variant: NonNullable<Props["variant"]>;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div
+      style={{
+        margin: "6px 0",
+        borderRadius: 8,
+        border: "1px solid rgba(29, 158, 117, 0.16)",
+        background: variant === "understanding" ? "rgba(249, 248, 245, 0.7)" : "#fafaf8",
+      }}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        aria-label={block.title}
+        onClick={() => setOpen((prev) => !prev)}
+        style={{
+          display: "flex",
+          width: "100%",
+          alignItems: "center",
+          gap: 8,
+          border: "none",
+          background: "transparent",
+          padding: "8px 10px",
+          textAlign: "left",
+          color: "#2C2C2A",
+          cursor: "pointer",
+          fontSize: 13,
+          fontWeight: 600,
+        }}
+      >
+        <span style={{ flexShrink: 0, color: "#1D9E75" }}>{open ? "▾" : "›"}</span>
+        <span>{block.title}</span>
+      </button>
+      {open && (
+        <div style={{ padding: "0 10px 10px 28px" }}>
+          <RenderedMarkdown markdown={block.content} variant={variant} />
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MarkdownContent({
+  markdown,
+  variant,
+  containerStyle,
+  wrap = false,
+}: {
+  markdown: string;
+  variant: NonNullable<Props["variant"]>;
+  containerStyle: CSSProperties;
+  wrap?: boolean;
+}) {
+  return (
+    <div className={wrap ? "ks-rendered" : undefined} style={wrap ? containerStyle : undefined}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm, remarkBreaks]}
         components={{
@@ -146,8 +248,8 @@ export const RenderedMarkdown = memo(function RenderedMarkdown({
           },
         }}
       >
-        {normalized}
+        {markdown}
       </ReactMarkdown>
     </div>
   );
-});
+}

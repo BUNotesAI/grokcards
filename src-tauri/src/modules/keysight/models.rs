@@ -315,6 +315,14 @@ pub struct SyncVaultReport {
     pub backfilled: u32,
 }
 
+/// Legacy details/summary → ?>> / ?<< 迁移报告。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ToggleSyntaxMigrationReport {
+    pub files_updated: u32,
+    pub db_notes_updated: u32,
+}
+
 /// 统计信息。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

@@ -33,6 +33,27 @@ describe("CardNode", () => {
     expect(screen.getByText("testing")).toBeInTheDocument();
   });
 
+  it("展开时关联列表保留 markdown 渲染", () => {
+    render(
+      <CardNode
+        card={{ ...mockCard, related: ["card_related"] }}
+        cardsById={{
+          card_related: {
+            ...mockCard,
+            id: "card_related",
+            title: "**加粗标题** 普通文本",
+          },
+        }}
+        aliasRefs={[{ aliasId: "alias_1", aliasTitle: "**别名标题** 普通文本" }]}
+        style={{}}
+        isExpanded
+      />,
+    );
+
+    expect(screen.getByText("加粗标题", { selector: "strong" })).toBeInTheDocument();
+    expect(screen.getByText("别名标题", { selector: "strong" })).toBeInTheDocument();
+  });
+
   it("折叠状态下不显示 content 和 tags", () => {
     render(<CardNode card={mockCard} style={{}} />);
     expect(screen.queryByText(/这是卡片的正文内容/)).not.toBeInTheDocument();
@@ -94,6 +115,45 @@ describe("CardNode", () => {
       const input = screen.getByDisplayValue("测试卡片标题") as HTMLInputElement;
       fireEvent.keyDown(input, { key: "Escape" });
       expect(onCancelEdit).toHaveBeenCalled();
+    });
+
+    it("title input Cmd/Ctrl+B → 选中文本包成 markdown 加粗", () => {
+      render(
+        <CardNode
+          card={mockCard}
+          style={{}}
+          editingField="card-title"
+        />,
+      );
+      const input = screen.getByDisplayValue("测试卡片标题") as HTMLInputElement;
+      input.focus();
+      input.setSelectionRange(0, 2);
+
+      fireEvent.keyDown(input, { key: "b", metaKey: true });
+
+      expect(input.value).toBe("**测试**卡片标题");
+      expect(input.selectionStart).toBe(2);
+      expect(input.selectionEnd).toBe(4);
+    });
+
+    it("title input 对同一选区连续按两次 Cmd/Ctrl+B → 第二次撤销前一次加粗", () => {
+      render(
+        <CardNode
+          card={mockCard}
+          style={{}}
+          editingField="card-title"
+        />,
+      );
+      const input = screen.getByDisplayValue("测试卡片标题") as HTMLInputElement;
+      input.focus();
+      input.setSelectionRange(0, 2);
+
+      fireEvent.keyDown(input, { key: "b", metaKey: true });
+      fireEvent.keyDown(input, { key: "b", metaKey: true });
+
+      expect(input.value).toBe("测试卡片标题");
+      expect(input.selectionStart).toBe(0);
+      expect(input.selectionEnd).toBe(2);
     });
 
     it("understanding 为空时也能进入编辑（双击占位区）", () => {

@@ -123,6 +123,16 @@ pub fn cleanup_card_title_escapes(
     modules::keysight::cleanup_card_title_escapes(&conn, vault_path)
 }
 
+/// 供一次性维护脚本调用：把 legacy details/summary 迁移到 ?>> / ?<<。
+pub fn migrate_toggle_syntax(
+    db_path: &std::path::Path,
+    vault_path: &std::path::Path,
+) -> Result<modules::keysight::models::ToggleSyntaxMigrationReport, String> {
+    let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
+    modules::keysight::init(&conn).map_err(|e| e.to_string())?;
+    modules::keysight::migrate_toggle_syntax(&conn, vault_path)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let builder = make_builder();
