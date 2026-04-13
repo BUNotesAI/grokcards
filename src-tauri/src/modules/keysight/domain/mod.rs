@@ -1,5 +1,6 @@
 pub(in crate::modules::keysight) mod alias;
 pub(in crate::modules::keysight) mod card;
+pub(in crate::modules::keysight) mod edge;
 pub(in crate::modules::keysight) mod entity;
 pub(in crate::modules::keysight) mod layout;
 pub(in crate::modules::keysight) mod migration;
