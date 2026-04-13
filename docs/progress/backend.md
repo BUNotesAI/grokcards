@@ -2,7 +2,7 @@
 
 ## Active
 
-- [ ] **Keysight 节点菜单能力类型化（Phase B1）** — Card/Alias/Note/Question/Section 五类节点的 ⋯ 菜单能力做成强类型 catalog：判别联合 + applies_to: Set&lt;NodeKind&gt; + ui_kind (plain/submenu/custom) + 可见性规则 + order。当前 `NodeContextMenu` 的菜单项按 kind 分散硬编码在五个分支里，能力空白（Task 是渲染节点但完全无菜单）和能力重复（Move to Section / Remove from group 散在四份）都看不出来。**B1 scope 纯 TS**：复用现有 Rust command，不动 schema。**B1 真实 UX 新增**：Card/Alias/Section 菜单新增 `Copy UUID + title`（统一 normalized pipeline `UUID:{id} {normalize(title)}`），砍掉 Card 原有纯 `Copy title`。Task 是第 6 个渲染节点但 B1 不接线——NodeKind union 不含 "task"，类型层面预留，接入留给后续独立 task。`set_color` 扩张到 Card/Question/Task 留 B2（Rust schema 变更）。
+（无）
 
 ## Next
 
@@ -12,6 +12,14 @@
 ## Done
 
 ### 2026-04-14
+
+- [x] **Keysight 节点菜单能力类型化（Phase B1）完成** — 分 2 子阶段落地,共 2 commit:
+  - `6a37f25` feat: Phase B1 type sketch — 新建 `src/components/keysight/nodes/NodeCapabilityCatalog.ts`,判别联合 type sketch(NodeKind 5 种 + 10 个 Capability variant + NODE_CAPABILITIES + per-NodeKind handlers via `Pick<NodeCapabilityHandlerMap, ...>` + NodeMenuConfig 判别联合)
+  - `29d1fb8` refactor: Phase B1 完成 — NodeContextMenu 从 5 份 kind-dispatched 分支改为单一 catalog 驱动渲染路径(applies_to 过滤 → visibility → order → ui_kind 分派);EntityNode/GraphView 菜单 wiring 改新 shape;GraphView 菜单回调 3 个 per-kind copy 合并为 `onCopyEntityUuidTitle(id, kind)` + 新增 `onSetSectionColor`
+  - 防火墙机制:`NodeKind` union 不含 "task"(类型层面不埋技术债)、每个 Capability variant 把 `ui_kind`/`destructive`/`visible` 写死(const 初始化时非法组合编译失败)、`NodeCapabilityHandlerMap` 单一声明源让 per-kind handlers drift 风险集中一处、渲染时 `menu.handlers as Partial<NodeCapabilityHandlerMap>` 是结构子类型 sound cast
+  - 真实 UX 新增:Card/Alias/Section 菜单新增 `Copy UUID + title`(统一 normalized pipeline `UUID:{id} {normalizeCardTitleForClipboard(title)}`,把原 Card 专属的 markdown 剥离能力推到其他节点);Section 菜单新增 `Set color`(复用 `section_update` 的 color 参数);`Delete` 标签统一(原 "Delete alias" / "Delete section" → "Delete")
+  - 测试计数:TS vitest 209 → 215(+6,含 Card 无 Delete / sections 空态 / Alias/Section copy_uuid_title / Section set_color / Section 不含 draw/move/remove/edit);Rust 不变
+  - 后续 task:**Phase B2**(Card/Question/Task color schema 扩张)和 **Task 节点菜单接入** 留在 Next
 
 - [x] **Keysight Edge 判别联合重构（Phase A）完成** — 分 3 子阶段落地，共 4 commit:
   - `cddecc4` refactor: rename `models::Edge` → `models::EdgeRow`（DB 行 DTO，为新判别联合让名字）
