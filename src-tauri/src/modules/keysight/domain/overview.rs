@@ -131,7 +131,19 @@ pub(in crate::modules::keysight) fn list_whiteboards(
     conn: &Connection,
     fs: &dyn VaultFs,
 ) -> Result<Vec<WhiteboardSummary>, KeysightError> {
-    let folder_whiteboards = fs.list_first_level_dirs("whiteboard")?;
+    // 一级 whiteboard 目录排除字面 "projects":它是嵌套 project 白板的容器,本身不是白板
+    let top_level_whiteboards = fs
+        .list_first_level_dirs("whiteboard")?
+        .into_iter()
+        .filter(|name| name != "projects");
+
+    // whiteboard/projects/* 嵌套 project 白板,带 "projects/" 前缀变成完整 wb_id
+    let project_whiteboards = fs
+        .list_project_whiteboards()?
+        .into_iter()
+        .map(|name| format!("projects/{name}"));
+
+    let folder_whiteboards: Vec<String> = top_level_whiteboards.chain(project_whiteboards).collect();
 
     let mut stmt = conn.prepare(
         "SELECT whiteboard_id,
@@ -326,5 +338,64 @@ mod tests {
         assert_eq!(result[0].cards, 0);
         assert_eq!(result[0].notes, 0);
         assert_eq!(result[0].aliases, 0);
+    }
+
+    #[test]
+    fn test_list_whiteboards_lists_empty_nested_project_whiteboard() {
+        // 场景 c:whiteboard/projects/super-tauri 目录存在但 DB 无任何 task
+        //       期望:作为 "projects/super-tauri" 白板出现,counts 全 0
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_dir("whiteboard/projects")
+            .with_dir("whiteboard/projects/super-tauri");
+
+        let result = list_whiteboards(&conn, &fs).unwrap();
+
+        assert_eq!(result.len(), 1, "应只有 projects/super-tauri 一条");
+        assert_eq!(result[0].whiteboard_id, "projects/super-tauri");
+        assert_eq!(result[0].tasks, 0);
+        assert_eq!(result[0].cards, 0);
+    }
+
+    #[test]
+    fn test_list_whiteboards_excludes_bare_projects_folder() {
+        // 场景 b:whiteboard/projects 目录本身存在,但里面无任何 project 子目录
+        //       期望:不应出现 whiteboard_id = "projects" 的白板条目
+        let conn = test_conn();
+        let fs = MockVaultFs::new().with_dir("whiteboard/projects");
+
+        let result = list_whiteboards(&conn, &fs).unwrap();
+
+        assert!(
+            !result.iter().any(|w| w.whiteboard_id == "projects"),
+            "裸 projects 目录不应被列为白板"
+        );
+        assert!(result.is_empty(), "没有嵌套 project 目录,结果应为空");
+    }
+
+    #[test]
+    fn test_list_whiteboards_merges_db_task_with_nested_project_dir() {
+        // 场景 a:whiteboard/projects/super-tauri 目录存在,DB 已有 1 个 task 归属此白板
+        //       期望:1 条 "projects/super-tauri" 白板,tasks=1,且不重复出现裸 "projects"
+        let conn = test_conn();
+        let fs = MockVaultFs::new()
+            .with_dir("whiteboard/projects")
+            .with_dir("whiteboard/projects/super-tauri");
+
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES ('task_lw__001', 'task', 'My Task', 'projects/super-tauri')",
+            [],
+        ).unwrap();
+
+        let result = list_whiteboards(&conn, &fs).unwrap();
+
+        assert_eq!(result.len(), 1);
+        let pwb = &result[0];
+        assert_eq!(pwb.whiteboard_id, "projects/super-tauri");
+        assert_eq!(pwb.tasks, 1);
+        assert!(
+            !result.iter().any(|w| w.whiteboard_id == "projects"),
+            "不应同时存在裸 projects 白板"
+        );
     }
 }

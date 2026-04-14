@@ -16,6 +16,14 @@ pub(in crate::modules::keysight) trait VaultFs {
     fn list_md_files(&self, subdir: &str) -> Result<Vec<(String, f64)>, KeysightError>;
     /// 列出指定子目录下一层的所有子目录名。
     fn list_first_level_dirs(&self, subdir: &str) -> Result<Vec<String>, KeysightError>;
+
+    /// 列出 whiteboard/projects/ 下的所有一级子目录(project 名),不含路径前缀。
+    ///
+    /// 默认实现委托给 list_first_level_dirs("whiteboard/projects")。
+    /// 提供为独立方法是为了让调用方表达语义(枚举 project 白板),而不是通用"列子目录"。
+    fn list_project_whiteboards(&self) -> Result<Vec<String>, KeysightError> {
+        self.list_first_level_dirs("whiteboard/projects")
+    }
 }
 
 /// 真实文件系统实现。

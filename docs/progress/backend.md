@@ -12,6 +12,13 @@
 
 ### 2026-04-14
 
+- [x] **list_whiteboards 递归 `projects/*` 嵌套白板** — 修复"裸 projects 假白板 + 空 project 目录不显示"两个缺口:
+  - `vault_fs.rs` — `VaultFs` trait 新增 **default method** `list_project_whiteboards`,委托 `list_first_level_dirs("whiteboard/projects")`。Real/Mock 都继承默认实现,零额外 impl
+  - `domain/overview.rs::list_whiteboards` — folder_whiteboards 构造:top-level 结果过滤字面 `"projects"` + chain `list_project_whiteboards()` 的带 `projects/` 前缀 wb_id
+  - 测试 +3:空嵌套 project 白板通过 FS 出现 / 裸 projects 目录不被列 / nested project 与 DB task 合并不重复
+  - 防火墙机制:独立语义方法让调用点表达"枚举 project 白板"意图,过滤规则集中在 domain 层一处,避免 SQL + FS 两处漂移
+  - Rust 测试 245 → **248**(+3);TS 不变;bindings.ts 未变(纯 domain 改动)
+
 - [x] **Keysight 节点菜单 Phase B2 完成** — 分 7 commit 落地,跨 Rust + TS 全栈:
   - **Rust backend**:
     - `a4290e5` feat: sub-stage 1 — models.rs 给 AtomicCard/TaskEntity/QuestionEntity 加 `color: Option<String>`;card.rs / question.rs / task.rs 的 query 路径读 e.color
