@@ -212,14 +212,14 @@ export const NODE_CAPABILITIES: readonly NodeCapability[] = [
   },
   {
     kind: "set_color",
-    applies_to: new Set<NodeKind>(["note", "section"]),
+    applies_to: new Set<NodeKind>(["card", "note", "question", "section", "task"]),
     ui_kind: "custom",
     order: 90,
     label: "Set color",
   },
   {
     kind: "delete",
-    applies_to: new Set<NodeKind>(["alias", "note", "question", "section"]),
+    applies_to: new Set<NodeKind>(["alias", "note", "question", "section", "task"]),
     ui_kind: "plain",
     order: 100,
     label: "Delete",
@@ -260,10 +260,10 @@ export type NodeCapabilityHandlerMap = {
 // 渲染时把 menu.handlers 当作 `Partial<NodeCapabilityHandlerMap>` 处理,这是合法的
 // 结构子类型关系(Pick 子集 → Partial 全集)。
 
-/** Card 节点菜单 handlers (6 个) */
+/** Card 节点菜单 handlers (7 个) */
 export type CardNodeHandlers = Pick<
   NodeCapabilityHandlerMap,
-  "copy_uuid_title" | "draw_connection" | "related" | "create_alias" | "move_to_section" | "remove_from_group"
+  "copy_uuid_title" | "draw_connection" | "related" | "create_alias" | "move_to_section" | "remove_from_group" | "set_color"
 >;
 
 /** Alias 节点菜单 handlers (6 个) */
@@ -278,10 +278,10 @@ export type NoteNodeHandlers = Pick<
   "copy_uuid_title" | "draw_connection" | "edit_title" | "move_to_section" | "remove_from_group" | "set_color" | "delete"
 >;
 
-/** Question 节点菜单 handlers (6 个) */
+/** Question 节点菜单 handlers (7 个) */
 export type QuestionNodeHandlers = Pick<
   NodeCapabilityHandlerMap,
-  "copy_uuid_title" | "draw_connection" | "edit_title" | "move_to_section" | "remove_from_group" | "delete"
+  "copy_uuid_title" | "draw_connection" | "edit_title" | "move_to_section" | "remove_from_group" | "set_color" | "delete"
 >;
 
 /** Section 节点菜单 handlers (3 个) */
@@ -290,10 +290,16 @@ export type SectionNodeHandlers = Pick<
   "copy_uuid_title" | "set_color" | "delete"
 >;
 
-/** Task 节点菜单 handlers (3 个) */
+/**
+ * Task 节点菜单 handlers (5 个)
+ *
+ * 注意:`edit_title` 暂未纳入 —— TaskNode 当前无 inline editor(和
+ * QuestionNode/NoteNode 的模式不同),加一个 edit_title 能力需要先在
+ * TaskNode 加 inline editor,独立 task 处理。
+ */
 export type TaskNodeHandlers = Pick<
   NodeCapabilityHandlerMap,
-  "copy_uuid_title" | "move_to_section" | "remove_from_group"
+  "copy_uuid_title" | "move_to_section" | "remove_from_group" | "set_color" | "delete"
 >;
 
 /**

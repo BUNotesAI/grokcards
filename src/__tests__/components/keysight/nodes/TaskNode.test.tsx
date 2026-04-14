@@ -51,6 +51,8 @@ describe("TaskNode", () => {
         copy_uuid_title: vi.fn(),
         move_to_section: vi.fn(),
         remove_from_group: vi.fn(),
+        set_color: vi.fn(),
+        delete: vi.fn(),
       },
     };
     render(<TaskNode task={mockTask} style={{}} contextMenu={taskMenu} />);

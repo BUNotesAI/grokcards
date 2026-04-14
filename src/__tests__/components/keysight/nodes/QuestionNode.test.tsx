@@ -23,6 +23,7 @@ function makeQuestionMenu(): QuestionMenuConfig {
       move_to_section: vi.fn(),
       remove_from_group: vi.fn(),
       delete: vi.fn(),
+      set_color: vi.fn(),
     },
   };
 }

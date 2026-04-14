@@ -36,7 +36,7 @@ import type {
  *   语义差异大,保留 per-kind 接口。
  */
 export interface NodeContextMenuHandlers {
-  /** 共享:复制 UUID + normalized title(Card/Alias/Note/Question/Section 共用) */
+  /** 共享:复制 UUID + normalized title(Card/Alias/Note/Question/Section/Task 共用) */
   onCopyEntityUuidTitle: (entityId: string, kind: EntityKind) => void;
   /** Card/Alias/Note/Question:从此节点开始画一条连线 */
   onDrawConnectionFrom: (id: string) => void;
@@ -44,6 +44,8 @@ export interface NodeContextMenuHandlers {
   onRelatedFrom: (id: string) => void;
   /** Card 专属:为卡片创建 alias */
   onCreateAlias: (cardId: string) => void;
+  /** Card 专属:设置卡片背景色(B2 新增) */
+  onSetCardColor: (cardId: string, color: string) => void;
   /** Alias 专属:跳转到 source card */
   onJumpToSourceCard: (aliasId: string) => void;
   /** Alias 专属:删除 */
@@ -55,9 +57,14 @@ export interface NodeContextMenuHandlers {
   /** Question 专属 */
   onEditQuestionTitle: (questionId: string) => void;
   onDeleteQuestion: (questionId: string) => void;
+  /** Question 专属:设置背景色(B2 新增) */
+  onSetQuestionColor: (questionId: string, color: string) => void;
   /** Section 专属 */
   onDeleteSection: (sectionId: string) => void;
   onSetSectionColor: (sectionId: string, color: string) => void;
+  /** Task 专属(B2 新增):删除 + 背景色 */
+  onDeleteTask: (taskId: string) => void;
+  onSetTaskColor: (taskId: string, color: string) => void;
   /** 共享:分组 */
   onMoveToSection: (entityId: string, sectionId: string) => void;
   onRemoveFromGroup: (entityId: string) => void;
@@ -162,6 +169,7 @@ function EntityNodeImpl({
         create_alias: () => menuHandlers.onCreateAlias(entity.id),
         move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
         remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+        set_color: (color) => menuHandlers.onSetCardColor(entity.id, color),
       },
     };
   }, [menuHandlers, entity.id, entity.kind]);
@@ -193,6 +201,7 @@ function EntityNodeImpl({
         move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
         remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
         delete: () => menuHandlers.onDeleteQuestion(entity.id),
+        set_color: (color) => menuHandlers.onSetQuestionColor(entity.id, color),
       },
     };
   }, [menuHandlers, entity.id, entity.kind]);
@@ -232,6 +241,8 @@ function EntityNodeImpl({
         copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "task"),
         move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
         remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+        set_color: (color) => menuHandlers.onSetTaskColor(entity.id, color),
+        delete: () => menuHandlers.onDeleteTask(entity.id),
       },
     };
   }, [menuHandlers, entity.id, entity.kind]);

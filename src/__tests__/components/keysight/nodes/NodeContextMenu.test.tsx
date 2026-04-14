@@ -24,6 +24,7 @@ describe("NodeContextMenu", () => {
         create_alias: vi.fn(),
         move_to_section: vi.fn(),
         remove_from_group: vi.fn(),
+        set_color: vi.fn(),
       },
     };
 
@@ -311,6 +312,7 @@ describe("NodeContextMenu", () => {
         move_to_section: vi.fn(),
         remove_from_group: vi.fn(),
         delete: vi.fn(),
+        set_color: vi.fn(),
       },
     };
 
@@ -459,6 +461,8 @@ describe("NodeContextMenu", () => {
         copy_uuid_title: vi.fn(),
         move_to_section: vi.fn(),
         remove_from_group: vi.fn(),
+        set_color: vi.fn(),
+        delete: vi.fn(),
       },
     };
 
@@ -527,15 +531,42 @@ describe("NodeContextMenu", () => {
       expect(taskConfig.handlers.remove_from_group).toHaveBeenCalledTimes(1);
     });
 
-    it("Task 菜单不含 Draw connection / Edit title / Delete / Set color / Related / Create alias / Jump to source card(白名单边界锁死)", () => {
+    it("Task 菜单**显示** Set color + Delete(Phase B2 新加的 3 项能力之 2)", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Delete")).toBeInTheDocument();
+      const swatches = screen.getAllByRole("button", { name: /set color/i });
+      expect(swatches).toHaveLength(7);
+    });
+
+    it("点击颜色块 → set_color 被调用", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      const swatches = screen.getAllByRole("button", { name: /set color/i });
+      act(() => fireEvent.click(swatches[2]));
+      expect(taskConfig.handlers.set_color).toHaveBeenCalledWith("#ffadad");
+    });
+
+    it("点击 Delete → delete 被调用", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Delete")));
+      expect(taskConfig.handlers.delete).toHaveBeenCalledTimes(1);
+    });
+
+    it("Task 菜单不含 Draw connection / Edit title / Related / Create alias / Jump to source card(白名单边界锁死,B2 剩余未接入的能力)", () => {
       render(
         <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId="sec_a" />,
       );
       act(() => openMenu());
       expect(screen.queryByText("Draw connection")).not.toBeInTheDocument();
       expect(screen.queryByText("Edit title")).not.toBeInTheDocument();
-      expect(screen.queryByText("Delete")).not.toBeInTheDocument();
-      expect(screen.queryByRole("button", { name: /set color/i })).not.toBeInTheDocument();
       expect(screen.queryByText("Related")).not.toBeInTheDocument();
       expect(screen.queryByText("Create alias")).not.toBeInTheDocument();
       expect(screen.queryByText("→ Jump to source card")).not.toBeInTheDocument();

@@ -1103,6 +1103,44 @@ export function GraphView({
           console.error("从 section 移除失败:", e);
         }
       },
+      // Card: Set background color (B2 新增)
+      onSetCardColor: async (cardId, color) => {
+        try {
+          await unwrapCommand(commands.cardSetColor(cardId, color));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("更新 card 颜色失败:", e);
+        }
+      },
+      // Question: Set background color (B2 新增)
+      onSetQuestionColor: async (questionId, color) => {
+        try {
+          await unwrapCommand(
+            commands.questionUpdate(questionId, null, null, null, color),
+          );
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("更新 question 颜色失败:", e);
+        }
+      },
+      // Task: Delete (B2 新增)
+      onDeleteTask: async (taskId) => {
+        try {
+          await unwrapCommand(commands.taskDelete(taskId));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("删除 task 失败:", e);
+        }
+      },
+      // Task: Set background color (B2 新增)
+      onSetTaskColor: async (taskId, color) => {
+        try {
+          await unwrapCommand(commands.taskSetColor(taskId, color));
+          queryClient.invalidateQueries();
+        } catch (e) {
+          console.error("更新 task 颜色失败:", e);
+        }
+      },
     }),
     [
       data.cards,
