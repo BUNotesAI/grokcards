@@ -169,6 +169,10 @@ const NODE_SPACING: f64 = 40.0;
 ///
 /// 空白板返回 `Position { x: 0, y: 0 }`(不是 error;空态是合法的,
 /// 意思是"这是白板第一个节点")。
+///
+/// TODO(B3 P2): WhiteboardId newtype —— 参数 `whiteboard_id: &str` 仍是 stringly typed,
+/// plan 明确推迟到 Phase B3 P2(WhiteboardId newtype + `for_project` 构造器)。
+/// 仅有一个调用点 `task::create`,通过 `project.whiteboard_id()` 派生,入口类型安全。
 pub(in crate::modules::keysight) fn compute_position_below_bottommost(
     conn: &Connection,
     whiteboard_id: &str,
