@@ -8,6 +8,7 @@ import { KanbanBoard } from "./KanbanBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { invalidateAllTaskCaches } from "./invalidateAllTaskCaches";
+import { COLUMN_ORDER } from "./columns";
 
 interface ModalState {
   open: boolean;
@@ -90,8 +91,28 @@ export function KanbanView() {
 
   if (tasksQuery.isLoading) {
     return (
-      <div className="p-6 text-muted-foreground" data-testid="kanban-view">
-        Loading kanban...
+      <div
+        className="flex h-full flex-col"
+        data-testid="kanban-view"
+        aria-busy="true"
+      >
+        <div className="border-b p-4 text-muted-foreground">
+          Kanban — loading...
+        </div>
+        <div className="flex gap-4 p-4">
+          {COLUMN_ORDER.map((status) => (
+            <div
+              key={status}
+              className="w-72 animate-pulse rounded-lg bg-muted/30 p-3"
+              data-testid={`kanban-column-${status}-skeleton`}
+            >
+              <div className="mb-3 h-6 w-20 rounded bg-muted" />
+              {[1, 2].map((i) => (
+                <div key={i} className="mb-2 h-12 rounded bg-muted" />
+              ))}
+            </div>
+          ))}
+        </div>
       </div>
     );
   }
