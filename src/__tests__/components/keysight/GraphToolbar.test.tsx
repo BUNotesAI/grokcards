@@ -1,5 +1,11 @@
-import { render, screen, fireEvent } from "@testing-library/react";
-import { renderHook } from "@testing-library/react";
+import { render, screen, fireEvent, renderHook } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+
+// useNavigate in GraphToolbar requires a Router context,
+// 本文件所有 render 用 renderT 包裹 MemoryRouter
+function renderT(element: React.ReactElement) {
+  return render(<MemoryRouter>{element}</MemoryRouter>);
+}
 import { GraphToolbar } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
 import type { WhiteboardSummary } from "@/bindings";
@@ -24,8 +30,7 @@ const mockWhiteboard: WhiteboardSummary = {
 describe("GraphToolbar", () => {
   it("显示实体计数", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 2, notes: 1, sections: 1, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -39,8 +44,7 @@ describe("GraphToolbar", () => {
 
   it("显示 zoom 百分比", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -53,8 +57,7 @@ describe("GraphToolbar", () => {
 
   it("子白板时显示面包屑导航", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -71,8 +74,7 @@ describe("GraphToolbar", () => {
 
   it("顶部工具栏不显示搜索框，并按 Section / Note / Question / Whiteboard / 孤儿 / Sections / Boards 排列", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 2, notes: 1, sections: 1, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -112,8 +114,7 @@ describe("GraphToolbar", () => {
   it("Sync 按钮调用 onSync", () => {
     const viewport = createTestViewport();
     const onSync = vi.fn();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={onSync}
@@ -127,8 +128,7 @@ describe("GraphToolbar", () => {
 
   it("无文字按钮提供鼠标悬停提示", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -146,8 +146,7 @@ describe("GraphToolbar", () => {
   it("+ Section 按钮调用 onCreateSection", () => {
     const viewport = createTestViewport();
     const onCreateSection = vi.fn();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -162,8 +161,7 @@ describe("GraphToolbar", () => {
   it("+ Question 按钮调用 onCreateQuestion", () => {
     const viewport = createTestViewport();
     const onCreateQuestion = vi.fn();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -178,8 +176,7 @@ describe("GraphToolbar", () => {
 
   it("创建 note 时显示内联输入框", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -196,8 +193,7 @@ describe("GraphToolbar", () => {
 
   it("创建 question 时显示内联输入框", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -215,8 +211,7 @@ describe("GraphToolbar", () => {
   it("根白板时显示 Whiteboard 按钮并调用 onCreateWhiteboard", () => {
     const viewport = createTestViewport();
     const onCreateWhiteboard = vi.fn();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -233,8 +228,7 @@ describe("GraphToolbar", () => {
 
   it("创建 whiteboard 时显示内联输入框", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -251,8 +245,7 @@ describe("GraphToolbar", () => {
 
   it("根白板时不显示返回按钮", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -266,8 +259,7 @@ describe("GraphToolbar", () => {
 
   it("子白板时不显示 Whiteboard 创建按钮", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -283,8 +275,7 @@ describe("GraphToolbar", () => {
   it("子白板时显示返回按钮和白板名，点击触发 onNavigateBack", () => {
     const viewport = createTestViewport();
     const onNavigateBack = vi.fn();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 50, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -302,8 +293,7 @@ describe("GraphToolbar", () => {
   it("project 白板时显示 Task 按钮并调用 onCreateTask", () => {
     const viewport = createTestViewport();
     const onCreateTask = vi.fn();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -319,8 +309,7 @@ describe("GraphToolbar", () => {
 
   it("根白板时不显示 Task 按钮", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -335,8 +324,7 @@ describe("GraphToolbar", () => {
 
   it("非 project 子白板时不显示 Task 按钮", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -351,8 +339,7 @@ describe("GraphToolbar", () => {
 
   it("创建 task 时显示内联输入框", () => {
     const viewport = createTestViewport();
-    render(
-      <GraphToolbar
+    renderT(      <GraphToolbar
         viewport={viewport}
         entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
         onSync={vi.fn()}
@@ -365,5 +352,47 @@ describe("GraphToolbar", () => {
     );
     expect(screen.getByRole("textbox", { name: /task title/i })).toHaveValue("My Task");
     expect(screen.queryByRole("button", { name: /create task/i })).not.toBeInTheDocument();
+  });
+
+  it("project 白板显示 Show Kanban 按钮", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="projects/super-tauri"
+      />,
+    );
+    expect(screen.getByRole("button", { name: /show kanban/i })).toBeInTheDocument();
+  });
+
+  it("非 project 白板不显示 Show Kanban 按钮", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="wb_root"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /show kanban/i })).not.toBeInTheDocument();
+  });
+
+  it("root 白板不显示 Show Kanban 按钮", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="rust"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /show kanban/i })).not.toBeInTheDocument();
   });
 });

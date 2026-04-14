@@ -1,3 +1,4 @@
+import { useNavigate } from "react-router-dom";
 import type { UseViewportReturn } from "@/components/keysight/useViewport";
 import type { GraphSection, WhiteboardSummary } from "@/bindings";
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ import {
   CircleHelp,
   FolderKanban,
   FolderPlus,
+  LayoutGrid,
   Lightbulb,
   Minus,
   NotebookPen,
@@ -127,10 +129,18 @@ export function GraphToolbar({
   onJumpToSection,
   onJumpToBoard,
 }: GraphToolbarProps) {
+  const navigate = useNavigate();
   const { state, actions } = viewport;
   const zoomPercent = Math.round(state.zoom * 100);
   const coordX = Math.round(-state.panX / Math.max(state.zoom, 0.001));
   const coordY = Math.round(-state.panY / Math.max(state.zoom, 0.001));
+
+  const handleShowKanban = () => {
+    if (currentWhiteboardId.startsWith("projects/")) {
+      const project = currentWhiteboardId.slice("projects/".length);
+      navigate(`/kanban?project=${encodeURIComponent(project)}`);
+    }
+  };
 
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-[#dbd6cc] bg-[#f6f4ef] px-4 py-2 text-[13px] text-[#5c5548]">
@@ -255,6 +265,17 @@ export function GraphToolbar({
             Task
           </Button>
         )
+      )}
+      {currentWhiteboardId.startsWith("projects/") && (
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleShowKanban}
+          aria-label="Show Kanban"
+        >
+          <LayoutGrid className="mr-1 h-4 w-4" />
+          Show Kanban
+        </Button>
       )}
       {currentWhiteboardId === "wb_root" && (
         creatingWhiteboard ? (
