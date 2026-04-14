@@ -4,9 +4,29 @@
 >
 > **TDD 人工确认关卡**: 用户已**授权本次跳过 Red/Green 人工确认关卡**(2026-04-14)。测试本身仍然严格执行(Red 测失败 → 写代码 → Green 测通过 → Refactor),但不暂停等用户确认。
 
+## ⚠️ Revision History
+
+**2026-04-14 — post codex review**
+
+本 plan 第一版经 codex agent review(见 [`2026-04-14-kanban-view-implementation-plan-via-codex.md`](./2026-04-14-kanban-view-implementation-plan-via-codex.md)),发现 7 项与当前仓库现实不一致的问题。下面条目都已在本版本修正/标注,执行时以本版本为准。
+
+| # | Codex 发现 | 修正 |
+|---|---|---|
+| 1 | `entities` 表没有 `created_at` 列(db.rs:10-18) | Task 1.4 `query_kanban` 改为 `ORDER BY e.title`(与 `task::query_all` 对齐),V1 不做"最新优先"假设 |
+| 2 | `KeysightView` 是纯本地 `useState`,不读 URL(KeysightView.tsx:42, 113) | 新增 **Task 0.2 KeysightView URL sync**,作为 Reveal Graph / Show Kanban 的硬前置 |
+| 3 | `WhiteboardId` newtype 在本 scope 内无法真正 close 现有 String 流转,是半吊子 | **删除 Phase 0 WhiteboardId 任务**(原 Task 0.2 / 0.3),单独列入 Phase B3 P2 积压项,不在本次 P3 内做 |
+| 4 | `CreateTaskModal` 内部 `useState(defaultStatus)` 有 stale default 问题 | Task 3.4 改为**受控组件**(parent 持有 project/title/status state,或 modal 用 `key={open}` 条件渲染强制 remount) |
+| 5 | API 形状已漂移: `task::create` 用 `TaskCreateInput` struct;command 叫 `commands.whiteboardList`(不是 listWhiteboards);`WhiteboardSummary` 字段是 `whiteboardId`(camelCase)不是 `id`;项目已有 `unwrapCommand` helper 不要手写 result 拆包 | 所有 Rust test / TS 代码示例已对齐当前 API;执行时仍以实际 `bindings.ts` / `src/lib/commandResult.ts` 为准 |
+| 6 | task 节点实际估计高度 `140` 不是 `80`(types.ts:47-50 `ENTITY_DIMENSIONS.task.height = 140`) | Task 1.2 `DEFAULT_NODE_HEIGHT: f64 = 140.0`;`NODE_SPACING` 同步调整,测试期望数值重算 |
+| 7 | 默认创建状态 Inbox 只落到 kanban,GraphView(GraphView.tsx:952-959)仍 hardcode `"next"`,两个入口会默默分叉 | 本 plan 的产品决策: **kanban 入口 default = Inbox,GraphView 入口保持 default = Next**。这是有意的不同语义(canvas 上手动创建表示"我决定要做",kanban Inbox 表示"先收集未决定")。此条在 §11 明确文档化,不做 unify。如未来产品决策要 unify 到 Inbox,单独起 migration task |
+
+**结论**: 沿用原方向,删掉一个 task,加一个 task,修正若干代码示例。核心架构(独立路由 / 纯视觉列 / SQLite SoT / auto-position / co-equal mode / @dnd-kit)均保留不变。
+
+---
+
 **Goal:** 实现 P3 Kanban view —— sidebar 顶级独立路由 `/kanban`,与 Canvas 是 co-equal 视图模式,用户可在 5 列(Inbox/Next/Active/Blocked/Done)按 status 管理 task,创建后自动同步到 canvas。
 
-**Architecture:** 三层协作 —— Rust 数据层(TaskStatus 加 Inbox + 自动 position + query_kanban)、TS UI 层(5 个新组件 + 新路由 + @dnd-kit)、SQLite 单一真源(无 sync 代码,React Query cache key 命名约定驱动两边自动 invalidate)。Phase 0 顺手做 IPC 边界类型迁移(TaskStatus String → enum + WhiteboardId newtype)收紧防火墙。
+**Architecture:** 三层协作 —— Rust 数据层(TaskStatus 加 Inbox + 自动 position + query_kanban)、TS UI 层(5 个新组件 + 新路由 + @dnd-kit)、SQLite 单一真源(无 sync 代码,React Query cache key 命名约定驱动两边自动 invalidate)。Phase 0 只做 **TaskStatus IPC enum 迁移** 和 **KeysightView URL sync**(跨路由跳转硬前置),**WhiteboardId newtype 推迟到 Phase B3 P2 独立 task**。
 
 **Tech Stack:** Rust + tauri-specta(IPC 类型) / React 19 + react-router-dom + @tanstack/react-query / @dnd-kit/core(新引入) / vitest + RTL(测试)。
 
@@ -20,8 +40,8 @@
 
 | 文件 | 操作 | 责任 |
 |---|---|---|
-| `models.rs` | Modify | TaskStatus enum 加 Inbox 变体;新增 `WhiteboardId` newtype |
-| `commands.rs` | Modify | task_create/update/etc 签名 `status: String → TaskStatus`;新增 `task_query_kanban` 命令;删 `parse_task_status_from_ipc` |
+| `models.rs` | Modify | TaskStatus enum 加 Inbox 变体;`TaskEntity.status: String → TaskStatus`(DTO 也走 enum,tauri-specta 生成 TS literal union) |
+| `commands.rs` | Modify | task_create/update/etc 签名 `status: String → TaskStatus`;用 `TaskCreateInput`/`TaskUpdateInput` struct(当前已是 struct 形态);新增 `task_query_kanban` 命令;删 `parse_task_status_from_ipc` |
 | `domain/task.rs` | Modify | parse_task_status 加 Inbox case;`compute_position_below_bottommost` 新 helper;`create` 集成 auto-position;`query_kanban` 新函数 |
 | `domain/layout.rs` | Modify | 新增/复用 query 接口供 compute_position 用 |
 | `db.rs` | Modify | 加 `CREATE INDEX IF NOT EXISTS idx_positions_wb_y ON positions(whiteboard_id, y)` |
@@ -34,6 +54,7 @@
 |---|---|---|
 | `App.tsx` | Modify | 加 `<Route path="/kanban" element={<KanbanView />} />` |
 | `components/AppShell.tsx` | Modify | `modules` 数组加 Kanban entry + `pageTitles` 加 `/kanban` |
+| `components/keysight/KeysightView.tsx` | Modify | 加 `useSearchParams` 读 `?wb=...`,与 `currentWhiteboardId` 本地 state 双向同步(Task 0.2 硬前置) |
 | `components/kanban/KanbanView.tsx` | Create | 页面壳,URL state,queries,modal state |
 | `components/kanban/KanbanToolbar.tsx` | Create | project dropdown + "+ New task" + "Reveal Graph" |
 | `components/kanban/KanbanBoard.tsx` | Create | DndContext + 5 KanbanColumn + onDragEnd |
@@ -205,182 +226,155 @@ EOF
 
 ---
 
-### Task 0.2: WhiteboardId newtype + for_project 构造器
+### Task 0.2: KeysightView URL sync(`?wb=<whiteboardId>` ↔ 本地 state)
+
+> **为什么需要这个 task**: 当前 `KeysightView` 用纯本地 `useState` 管理 `currentWhiteboardId`(KeysightView.tsx:42),**不读 URL**。Kanban 的 "Reveal Graph" 按钮要跳到 `/keysight?wb=projects/{name}` 才能让 canvas 显示该 project 白板 — 但现状下跳过去 canvas 仍然显示 `wb_root`,按钮等于无效。这个 task 必须在 Task 3.6(Show Kanban / Reveal Graph 双向按钮)之前完成。
 
 **Files:**
-- Modify: `src-tauri/src/modules/keysight/models.rs` (加 newtype)
-- Test: `src-tauri/src/modules/keysight/models.rs` (内部 `#[cfg(test)]`)
+- Modify: `src/components/keysight/KeysightView.tsx` (加 `useSearchParams` + `useEffect` 同步)
+- Test: `src/__tests__/components/keysight/KeysightView.test.tsx`(如已有)或新增
 
 - [ ] **Step 1: 写失败的测试**
 
-在 `models.rs` 文件末尾加(或现有 test 模块内):
+`src/__tests__/components/keysight/KeysightView.test.tsx` 加(如文件不存在则新建):
 
-```rust
-#[cfg(test)]
-mod whiteboard_id_tests {
-    use super::*;
-    use crate::modules::keysight::domain::task::ProjectName;
+```typescript
+import { describe, it, expect, vi } from "vitest";
+import { render, waitFor } from "@testing-library/react";
+import { MemoryRouter } from "react-router-dom";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { KeysightView } from "@/components/keysight/KeysightView";
 
-    #[test]
-    fn for_project_formats_with_prefix() {
-        let p = ProjectName::new("super-tauri").unwrap();
-        let wb = WhiteboardId::for_project(&p);
-        assert_eq!(wb.as_str(), "projects/super-tauri");
-    }
+// 需要 mock 所有 useWhiteboardData 相关 commands - 复用现有 KeysightView test 的 mock setup
+// 这里假设 mock 已存在。如不存在,参照 GraphView.test.tsx 或 KanbanView.test.tsx 的 setup。
 
-    #[test]
-    fn root_constant() {
-        assert_eq!(WhiteboardId::root().as_str(), "wb_root");
-    }
+const renderWithRoute = (initialEntry: string) => {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <KeysightView />
+      </MemoryRouter>
+    </QueryClientProvider>
+  );
+};
 
-    #[test]
-    fn parse_recognizes_project_prefix() {
-        let wb = WhiteboardId::parse("projects/foo").unwrap();
-        assert!(matches!(wb.kind(), WhiteboardKind::Project));
-    }
+describe("KeysightView URL sync", () => {
+  it("reads ?wb=projects/super-tauri from URL on initial render", async () => {
+    renderWithRoute("/keysight?wb=projects/super-tauri");
+    // 预期 GraphView 被初始化为 projects/super-tauri 白板,不是 ROOT_WHITEBOARD
+    // 具体断言方式取决于 GraphView 如何把 currentWhiteboardId 渲染出来(例如 breadcrumb、data-testid 等)
+    await waitFor(() => {
+      // 示例: 检查某个显示当前 wb 的元素
+      expect(document.body.textContent).toContain("projects/super-tauri");
+    });
+  });
 
-    #[test]
-    fn parse_recognizes_root() {
-        let wb = WhiteboardId::parse("wb_root").unwrap();
-        assert!(matches!(wb.kind(), WhiteboardKind::Root));
-    }
-}
+  it("falls back to wb_root when ?wb= absent", async () => {
+    renderWithRoute("/keysight");
+    await waitFor(() => {
+      expect(document.body.textContent).toContain("wb_root");
+    });
+  });
+
+  // 注: "本地切白板同步回 URL" 的断言留到 integration test 做,
+  // 因为 Boards 下拉的交互涉及 useWhiteboardData / toolbar / 下拉 UI 多层组合,
+  // 在 KeysightView 单元测试里 mock 成本过高。这里只验证读 URL 路径。
+});
 ```
 
 - [ ] **Step 2: 跑测试确认失败**
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace whiteboard_id_tests
+pnpm test -- --run KeysightView
 ```
 
-预期: 编译失败 "cannot find type `WhiteboardId`"。
+预期: 失败(因为 KeysightView 还不读 URL)。
 
-- [ ] **Step 3: 实现 WhiteboardId 类型**
+- [ ] **Step 3: 修改 KeysightView.tsx 读 URL**
 
-在 `models.rs` 顶部 `Position` struct 之后加:
+`src/components/keysight/KeysightView.tsx:41-43` 附近改为:
 
-```rust
-/// 白板标识。封装 wb_id 字符串避免散落拼接。
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-pub struct WhiteboardId(String);
+```typescript
+import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useSearchParams } from "react-router-dom";
+// ...其他 import 不变
 
-/// 白板类型(用于路由层判断 project vs root vs folder)。
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum WhiteboardKind {
-    /// 根白板 `wb_root`
-    Root,
-    /// 嵌套 project 白板 `projects/{name}`
-    Project,
-    /// 普通文件夹白板(非 root 非 projects)
-    Folder,
-}
+export function KeysightView() {
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlWbId = searchParams.get("wb");
 
-impl WhiteboardId {
-    /// 根白板常量。
-    pub fn root() -> Self {
-        Self("wb_root".to_string())
+  // 初始 state 从 URL 读;若 URL 没有则 fallback 到 ROOT_WHITEBOARD
+  const [currentWhiteboardId, setCurrentWhiteboardId] = useState(
+    urlWbId ?? ROOT_WHITEBOARD,
+  );
+  // ...其他 state 不变
+
+  // URL → state: 外部 navigate(/keysight?wb=xxx) 时同步本地 state
+  useEffect(() => {
+    if (urlWbId && urlWbId !== currentWhiteboardId) {
+      setCurrentWhiteboardId(urlWbId);
+      setSelected(null);
     }
+  }, [urlWbId, currentWhiteboardId]);
 
-    /// 从 ProjectName 构造嵌套 project 白板 id。
-    pub fn for_project(name: &crate::modules::keysight::domain::task::ProjectName) -> Self {
-        Self(format!("projects/{}", name.as_str()))
-    }
-
-    /// 从字符串 parse,接受所有合法 wb_id 形态。
-    pub fn parse(s: &str) -> Result<Self, String> {
-        if s.is_empty() {
-            return Err("白板 id 不能为空".to_string());
-        }
-        Ok(Self(s.to_string()))
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-
-    pub fn kind(&self) -> WhiteboardKind {
-        if self.0 == "wb_root" {
-            WhiteboardKind::Root
-        } else if self.0.starts_with("projects/") {
-            WhiteboardKind::Project
-        } else {
-            WhiteboardKind::Folder
-        }
-    }
-}
+  // state → URL: 本地切白板时同步 URL(通过 handleWhiteboardChange 统一入口)
+  const handleWhiteboardChange = useCallback(
+    (whiteboardId: string) => {
+      setCurrentWhiteboardId(whiteboardId);
+      setSelected(null);
+      // 同步 URL (replace 模式,不堆历史栈)
+      if (whiteboardId === ROOT_WHITEBOARD) {
+        setSearchParams({}, { replace: true });
+      } else {
+        setSearchParams({ wb: whiteboardId }, { replace: true });
+      }
+    },
+    [setSearchParams],
+  );
 ```
 
-- [ ] **Step 4: 跑测试确认通过**
+注意要点:
+- `useEffect(() => {...}, [urlWbId])` 处理外部跳转(reveal graph 按钮 / 刷新页面 / 直接贴 URL)
+- `handleWhiteboardChange` 处理内部切换(Boards 下拉)并同步回 URL
+- 用 `replace: true` 避免每次切白板都堆进浏览器历史栈
+- `ROOT_WHITEBOARD` 不写入 URL(保持路径简洁)
+
+- [ ] **Step 4: 跑测试通过**
 
 ```bash
-cargo test --manifest-path src-tauri/Cargo.toml --workspace whiteboard_id_tests
+pnpm test -- --run KeysightView
 ```
 
-预期: 4 passed。
+预期: 相关 test passed。现有 KeysightView 其他测试可能因 `useSearchParams` 需要 router context 失败,需补 `MemoryRouter` wrapper — 修完为止。
 
-- [ ] **Step 5: cargo clippy 验证**
-
-```bash
-cargo clippy --workspace --manifest-path src-tauri/Cargo.toml -- -D warnings
-```
-
-预期: green(因为只是新增类型,没改其他代码)。
-
-- [ ] **Step 6: cargo test 全量验证**
+- [ ] **Step 5: pnpm build 验证类型**
 
 ```bash
-cargo test --workspace --manifest-path src-tauri/Cargo.toml
-```
-
-预期: 256/256(原 252 + 4 新)。
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add src-tauri/src/modules/keysight/models.rs
-git commit -m "$(cat <<'EOF'
-feat(keysight): WhiteboardId newtype + for_project 构造器 (Phase 0)
-
-封装 wb_id 字符串,避免散落 format!("projects/{}", ...)。
-WhiteboardKind enum 表达 Root / Project / Folder 三种 wb 形态,后续路由判断走 enum 而非字符串前缀。
-
-Kanban view 实施前置 — Phase 0/3 类型迁移。
-EOF
-)"
-```
-
----
-
-### Task 0.3: 收敛现有 wb_id 字符串拼接调用点(可选,YAGNI 控制)
-
-**Files:**
-- Modify: 各 caller 中字面 `format!("projects/{}", ...)` 处
-
-- [ ] **Step 1: 找所有字符串拼接点**
-
-```bash
-grep -rn 'format!("projects/{' src-tauri/src/
-```
-
-预期看到 3-5 处。**不动测试代码里的字面字符串**(它们是测试 fixture)。
-
-- [ ] **Step 2: 决策 — 此 task 缩减**
-
-如果发现的拼接点不多(< 5 处),逐个改成 `WhiteboardId::for_project(&project_name).as_str()`。如果点很多或在 hot path,**留到下次重构,本 task 跳过**(Phase 0 目的是引入类型,不是全量迁移)。
-
-- [ ] **Step 3: 如改,跑全测验证**
-
-```bash
-cargo clippy --workspace --manifest-path src-tauri/Cargo.toml -- -D warnings && cargo test --workspace --manifest-path src-tauri/Cargo.toml
+pnpm build
 ```
 
 预期: green。
 
-- [ ] **Step 4: Commit (如有改动)**
+- [ ] **Step 6: 回归 — 现有 canvas Task 创建路径(GraphView.tsx)不受影响**
+
+手动核对 GraphView.tsx 里对 `currentWhiteboardId` 的所有读取点是否仍然正确(因为 state 源没变,只是加了 URL 双向同步)。
+
+- [ ] **Step 7: Commit**
 
 ```bash
-git add src-tauri/src/modules/keysight/
-git commit -m "refactor(keysight): 收敛 wb_id 字符串拼接到 WhiteboardId::for_project (Phase 0)"
+git add src/components/keysight/KeysightView.tsx src/__tests__/components/keysight/KeysightView.test.tsx
+git commit -m "$(cat <<'EOF'
+feat(keysight): KeysightView URL state sync via ?wb= (Phase 0)
+
+加 useSearchParams 双向同步 currentWhiteboardId 与 URL:
+- 外部 navigate(/keysight?wb=projects/xxx) 可直接切到该白板
+- Boards 下拉切换时同步写回 URL (replace 模式)
+- ROOT_WHITEBOARD 不写入 URL,保持路径简洁
+
+为 Kanban view 的 Reveal Graph / Show Kanban 双向跳转提供硬前置。
+EOF
+)"
 ```
 
 ---
@@ -540,8 +534,8 @@ fn compute_position_below_single_row() {
     ).unwrap();
     let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
     assert_eq!(pos.x, 0.0); // 默认 x = 0
-    // y = max_y + node_height + spacing = 200 + 80 + 40 = 320
-    assert_eq!(pos.y, 320.0);
+    // y = max_y + DEFAULT_NODE_HEIGHT + NODE_SPACING = 200 + 140 + 40 = 380
+    assert_eq!(pos.y, 380.0);
 }
 
 #[test]
@@ -565,7 +559,8 @@ fn compute_position_n_rows_picks_max() {
         ).unwrap();
     }
     let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
-    assert_eq!(pos.y, 320.0); // max(50, 200, 100) + 80 + 40 = 320
+    // max(50, 200, 100) + 140 + 40 = 380
+    assert_eq!(pos.y, 380.0);
 }
 ```
 
@@ -583,8 +578,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --workspace compute_position
 
 ```rust
 /// 节点默认高度,用于 compute_position 计算下方坐标。
-/// 真实节点高度可能不同(由 CSS 决定),但作为自动布局的近似值足够。
-const DEFAULT_NODE_HEIGHT: f64 = 80.0;
+/// 值 = 140 是 task 节点的折叠状态典型高度,与前端 `src/components/keysight/types.ts`
+/// 的 `ENTITY_DIMENSIONS.task.height` 保持对齐。以 task 为基准(kanban 创建的
+/// 主要是 task),其他 entity 高度可能更大但不是 kanban 关心的场景。
+const DEFAULT_NODE_HEIGHT: f64 = 140.0;
 
 /// 节点之间垂直间距。
 const NODE_SPACING: f64 = 40.0;
@@ -659,11 +656,26 @@ EOF
 `domain/task.rs` 测试块内加:
 
 ```rust
+// 注意: task::create 当前真实签名是 `create(conn, vault_fs, project, TaskCreateInput)` struct 输入,
+// 不是位置参数。TaskCreateInput 见 models/task.rs 定义,字段为 title/content/status/area/color。
+
 #[test]
 fn create_task_writes_position_row_first_time() {
     let conn = test_conn();
+    let fs = MockVaultFs::new();
     let project = ProjectName::new("test").unwrap();
-    let task = create(&conn, &project, "first task", None, TaskStatus::Inbox, None, None, &MockVaultFs::new()).unwrap();
+    let task = create(
+        &conn,
+        &fs,
+        &project,
+        TaskCreateInput {
+            title: "first task",
+            content: None,
+            status: TaskStatus::Inbox,
+            area: None,
+            color: None,
+        },
+    ).unwrap();
 
     let pos: (f64, f64) = conn.query_row(
         "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
@@ -676,16 +688,24 @@ fn create_task_writes_position_row_first_time() {
 #[test]
 fn create_task_writes_position_below_bottommost() {
     let conn = test_conn();
+    let fs = MockVaultFs::new();
     let project = ProjectName::new("test").unwrap();
-    let _first = create(&conn, &project, "first", None, TaskStatus::Inbox, None, None, &MockVaultFs::new()).unwrap();
-    let second = create(&conn, &project, "second", None, TaskStatus::Inbox, None, None, &MockVaultFs::new()).unwrap();
+    let _first = create(
+        &conn, &fs, &project,
+        TaskCreateInput { title: "first", content: None, status: TaskStatus::Inbox, area: None, color: None },
+    ).unwrap();
+    let second = create(
+        &conn, &fs, &project,
+        TaskCreateInput { title: "second", content: None, status: TaskStatus::Inbox, area: None, color: None },
+    ).unwrap();
 
     let pos: (f64, f64) = conn.query_row(
         "SELECT x, y FROM positions WHERE entity_id = ?1",
         rusqlite::params![&second.id],
         |row| Ok((row.get(0)?, row.get(1)?)),
     ).unwrap();
-    assert_eq!(pos.1, 120.0); // 0 + 80 + 40 = 120
+    // 第一个 task 落在 (0, 0) → 第二个落在 0 + 140 + 40 = 180
+    assert_eq!(pos.1, 180.0);
 }
 ```
 
@@ -758,27 +778,34 @@ EOF
 `domain/task.rs` 测试块内加:
 
 ```rust
+fn make_input<'a>(title: &'a str, status: TaskStatus) -> TaskCreateInput<'a> {
+    TaskCreateInput { title, content: None, status, area: None, color: None }
+}
+
 #[test]
 fn query_kanban_with_project_filter() {
     let conn = test_conn();
+    let fs = MockVaultFs::new();
     let project_a = ProjectName::new("alpha").unwrap();
     let project_b = ProjectName::new("beta").unwrap();
-    create(&conn, &project_a, "task in alpha", None, TaskStatus::Inbox, None, None, &MockVaultFs::new()).unwrap();
-    create(&conn, &project_a, "another in alpha", None, TaskStatus::Next, None, None, &MockVaultFs::new()).unwrap();
-    create(&conn, &project_b, "task in beta", None, TaskStatus::Active, None, None, &MockVaultFs::new()).unwrap();
+    create(&conn, &fs, &project_a, make_input("task in alpha", TaskStatus::Inbox)).unwrap();
+    create(&conn, &fs, &project_a, make_input("another in alpha", TaskStatus::Next)).unwrap();
+    create(&conn, &fs, &project_b, make_input("task in beta", TaskStatus::Active)).unwrap();
 
     let alpha_tasks = query_kanban(&conn, Some(&project_a)).unwrap();
     assert_eq!(alpha_tasks.len(), 2);
-    assert!(alpha_tasks.iter().all(|t| t.project == "alpha"));
+    // TaskEntity.project 是 Option<String>, 这里都是 Some("alpha")
+    assert!(alpha_tasks.iter().all(|t| t.project.as_deref() == Some("alpha")));
 }
 
 #[test]
 fn query_kanban_all_projects() {
     let conn = test_conn();
+    let fs = MockVaultFs::new();
     let project_a = ProjectName::new("alpha").unwrap();
     let project_b = ProjectName::new("beta").unwrap();
-    create(&conn, &project_a, "a1", None, TaskStatus::Inbox, None, None, &MockVaultFs::new()).unwrap();
-    create(&conn, &project_b, "b1", None, TaskStatus::Active, None, None, &MockVaultFs::new()).unwrap();
+    create(&conn, &fs, &project_a, make_input("a1", TaskStatus::Inbox)).unwrap();
+    create(&conn, &fs, &project_b, make_input("b1", TaskStatus::Active)).unwrap();
 
     let all = query_kanban(&conn, None).unwrap();
     assert_eq!(all.len(), 2);
@@ -810,35 +837,15 @@ cargo test --manifest-path src-tauri/Cargo.toml --workspace query_kanban
 /// - `project = None` → 跨项目查所有 task entity
 /// - `project = Some(name)` → 仅该 project 的 task
 ///
-/// 不按 status 分组(留给前端按 task.status 渲染),按 created_at desc 排序。
+/// 不按 status 分组(留给前端按 task.status 渲染)。**V1 排序按 `e.title` ASC**
+/// (对齐 `task::query_all` 的现有行为),因为 entities 表当前没有 `created_at` 列。
+/// V2 如需"最新优先"再单独加 migration + 排序字段。
 pub(in crate::modules::keysight) fn query_kanban(
     conn: &Connection,
     project: Option<&ProjectName>,
 ) -> Result<Vec<TaskEntity>, KeysightError> {
-    let (sql, params): (&str, Vec<&dyn rusqlite::ToSql>) = match project {
-        Some(p) => {
-            let wb_id = p.whiteboard_id();
-            (
-                "SELECT e.id, e.title, e.whiteboard_id, e.content, t.status, t.area, t.project, e.color \
-                 FROM entities e \
-                 JOIN task_fields t ON t.entity_id = e.id \
-                 WHERE e.entity_kind = 'task' AND e.whiteboard_id = ?1 \
-                 ORDER BY e.created_at DESC",
-                vec![],  // placeholder, fill below
-            )
-        }
-        None => (
-            "SELECT e.id, e.title, e.whiteboard_id, e.content, t.status, t.area, t.project, e.color \
-             FROM entities e \
-             JOIN task_fields t ON t.entity_id = e.id \
-             WHERE e.entity_kind = 'task' \
-             ORDER BY e.created_at DESC",
-            vec![],
-        ),
-    };
-
-    // 由于 ToSql 借用问题,分两路实现:
-    let mut stmt = conn.prepare(sql)?;
+    // 两条 SQL 只差一个 WHERE 子句,分开写避免动态 params 借用问题。
+    // SELECT 列顺序和 mapper 索引必须对照 task::query_all 保持一致。
     let mapper = |r: &rusqlite::Row<'_>| -> Result<TaskEntity, rusqlite::Error> {
         Ok(TaskEntity {
             id: r.get(0)?,
@@ -851,18 +858,37 @@ pub(in crate::modules::keysight) fn query_kanban(
             color: r.get(7)?,
         })
     };
-    let rows = match project {
+
+    match project {
         Some(p) => {
             let wb = p.whiteboard_id();
-            stmt.query_map([wb], mapper)?.collect::<Result<Vec<_>, _>>()?
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.title, e.whiteboard_id, COALESCE(e.content, '') AS content, t.status, t.area, t.project, e.color \
+                 FROM entities e \
+                 JOIN task_fields t ON t.entity_id = e.id \
+                 WHERE e.kind = 'task' AND e.whiteboard_id = ?1 \
+                 ORDER BY e.title",
+            )?;
+            Ok(stmt.query_map([wb], mapper)?.collect::<Result<Vec<_>, _>>()?)
         }
-        None => stmt.query_map([], mapper)?.collect::<Result<Vec<_>, _>>()?,
-    };
-    Ok(rows)
+        None => {
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.title, e.whiteboard_id, COALESCE(e.content, '') AS content, t.status, t.area, t.project, e.color \
+                 FROM entities e \
+                 JOIN task_fields t ON t.entity_id = e.id \
+                 WHERE e.kind = 'task' \
+                 ORDER BY e.title",
+            )?;
+            Ok(stmt.query_map([], mapper)?.collect::<Result<Vec<_>, _>>()?)
+        }
+    }
 }
 ```
 
-注意: 上面代码示意了一种实现形式。实际写时需要对照 `query_all` 的现有结构(`task.rs:294-310` 附近)来对齐 column 顺序和 TaskEntity 字段顺序。
+注意:
+- **entities 表 `kind` 字段名是 `kind` 不是 `entity_kind`**(见 db.rs:12)。上面 SQL 已对齐。
+- **entities 表没有 `created_at` 列**,所以不能 ORDER BY 它。V1 用 `e.title`。
+- column 顺序 / TaskEntity 字段顺序对照 `task::query_all` 现有实现(`domain/task.rs` 的 `query_all`),包括 `COALESCE(e.content, '')` 处理 NULL content。
 
 - [ ] **Step 4: 跑测试通过**
 
@@ -930,7 +956,8 @@ feat(keysight): task_query_kanban 命令 (Phase 1)
 新 query 函数 + IPC command 支持 kanban view 数据需求:
 - project = None → 跨项目查所有 task
 - project = Some(name) → 仅该 project 的 task
-按 created_at desc 排序,前端按 task.status 分列渲染。
+V1 按 e.title ASC 排序(entities 表当前无 created_at 列),
+前端按 task.status 分列渲染。
 EOF
 )"
 ```
@@ -1653,6 +1680,7 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import { unwrapCommand } from "@/lib/commandResult";
 import { KanbanBoard } from "./KanbanBoard";
 import type { TaskStatus } from "@/bindings";
 
@@ -1660,15 +1688,10 @@ export function KanbanView() {
   const [searchParams] = useSearchParams();
   const project = searchParams.get("project");
 
+  // 关键: 用 unwrapCommand helper,不要手写 result.status 判断(L0 不解析 error 字符串 + 一致性)
   const tasksQuery = useQuery({
     queryKey: ["tasks-kanban", project],
-    queryFn: async () => {
-      const result = await commands.taskQueryKanban(project);
-      if (result.status === "error") {
-        throw new Error(result.error);
-      }
-      return result.data;
-    },
+    queryFn: () => unwrapCommand(commands.taskQueryKanban(project)),
   });
 
   const [, setCreatingStatus] = useState<TaskStatus | null>(null);
@@ -1680,7 +1703,9 @@ export function KanbanView() {
   if (tasksQuery.isError) {
     return (
       <div className="p-6">
-        <div className="text-destructive">加载失败: {(tasksQuery.error as Error).message}</div>
+        <div className="text-destructive">
+          加载失败: {String(tasksQuery.error)}
+        </div>
         <button onClick={() => tasksQuery.refetch()} className="mt-2 rounded border px-3 py-1">
           Retry
         </button>
@@ -1706,7 +1731,10 @@ export function KanbanView() {
 }
 ```
 
-注意: `commands.taskQueryKanban` 实际签名取决于 bindings.ts 生成形式(可能是 Result 包装 / 可能直接 throw)。对照 `bindings.ts` 检查。
+注意:
+- 统一用 `unwrapCommand` helper(见 `src/lib/commandResult.ts`),不要手写 `if (result.status === "error")`
+- `unwrapCommand` 把 Rust 侧 error `throw` 出来,React Query 自动进 `isError` 状态
+- `tasksQuery.error` 是 `unknown`,直接 `String(...)` 展示即可(不解析内部结构)
 
 - [ ] **Step 2: 更新测试 mock commands**
 
@@ -1925,24 +1953,21 @@ pnpm test -- --run KanbanToolbar
 
 - [ ] **Step 4: 集成 toolbar 到 KanbanView**
 
-`src/components/kanban/KanbanView.tsx` 在 query 区下方加 list_whiteboards query + Toolbar 渲染:
+`src/components/kanban/KanbanView.tsx` 在 query 区下方加 whiteboard list query + Toolbar 渲染。**注意**:当前 API 命名是 `commands.whiteboardList()`(不是 `listWhiteboards`),`WhiteboardSummary` 字段是 `whiteboardId`(camelCase,不是 `id`),全部走 `unwrapCommand`:
 
 ```typescript
+// 在 KanbanView.tsx 顶部已 import { unwrapCommand } from "@/lib/commandResult";
+// 现在加 whiteboards query:
+
 const whiteboardsQuery = useQuery({
   queryKey: ["whiteboards"],
-  queryFn: async () => {
-    const result = await commands.listWhiteboards();
-    if (result.status === "error") throw new Error(result.error);
-    return result.data;
-  },
+  queryFn: () => unwrapCommand(commands.whiteboardList()),
 });
 
 const projects = (whiteboardsQuery.data ?? [])
-  .filter((wb) => wb.id.startsWith("projects/"))
-  .map((wb) => wb.id.slice("projects/".length));
+  .filter((wb) => wb.whiteboardId.startsWith("projects/"))
+  .map((wb) => wb.whiteboardId.slice("projects/".length));
 ```
-
-(具体字段名取决于 WhiteboardSummary 类型)
 
 在 JSX return 中,把原 `<div className="border-b p-4">...</div>` 换成:
 
@@ -1971,13 +1996,17 @@ git commit -m "feat(kanban): KanbanToolbar + project dropdown + Reveal Graph (Ph
 
 ---
 
-### Task 3.4: CreateTaskModal 组件
+### Task 3.4: CreateTaskModal 组件(受控 state,无 stale default)
 
 **Files:**
 - Create: `src/components/kanban/CreateTaskModal.tsx`
 - Test: `src/__tests__/components/kanban/CreateTaskModal.test.tsx`
 
-- [ ] **Step 1: 创建 CreateTaskModal.tsx**
+> **Stale state 防护**: 这个 modal 的 `project / status` 字段**不在 modal 内部持有 state**,改为**受控组件** — 由 parent 每次打开时传入正确的 initial 值,并通过 `onFieldChange` 回调更新。这样从 Inbox 列打开和从 Blocked 列打开不会出现"第二次打开还是上次的 status"的 stale default 问题(codex review §4)。
+>
+> **另一种等价做法**: 在 KanbanView 里**条件渲染** modal(`{modalState.open && <CreateTaskModal ...>}`),这样 modal 每次开启是全新实例,内部 state 自动 fresh。两种方式任选其一,plan 里用后者因为对 parent 改动最小。
+
+- [ ] **Step 1: 创建 CreateTaskModal.tsx(内部 title state,但 project/status 是 props)**
 
 ```typescript
 // src/components/kanban/CreateTaskModal.tsx
@@ -1986,29 +2015,34 @@ import type { TaskStatus } from "@/bindings";
 import { COLUMN_ORDER, COLUMNS } from "./columns";
 
 interface CreateTaskModalProps {
-  open: boolean;
-  defaultStatus: TaskStatus;
-  defaultProject: string | null; // 当前 view 的 project (single project mode)
+  // 受控字段 — parent 每次打开时传入最新值
+  initialStatus: TaskStatus;
+  initialProject: string | null; // 当前 view 的 project (single project mode)
   availableProjects: string[];
   onSubmit: (data: { project: string; title: string; status: TaskStatus }) => Promise<void>;
   onCancel: () => void;
 }
 
+/**
+ * Modal 内部只对 title / submitting / error 持有 state。project 和 status 通过 initial* props
+ * 传入,本地可修改(因为 parent 不需要同步每一个按键),但由于本组件由 parent 用
+ * `{open && <CreateTaskModal />}` 条件渲染,每次打开是新实例,不会出现 stale state。
+ */
 export function CreateTaskModal({
-  open,
-  defaultStatus,
-  defaultProject,
+  initialStatus,
+  initialProject,
   availableProjects,
   onSubmit,
   onCancel,
 }: CreateTaskModalProps) {
-  const [project, setProject] = useState(defaultProject ?? availableProjects[0] ?? "");
+  const [project, setProject] = useState(initialProject ?? availableProjects[0] ?? "");
   const [title, setTitle] = useState("");
-  const [status, setStatus] = useState<TaskStatus>(defaultStatus);
+  const [status, setStatus] = useState<TaskStatus>(initialStatus);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  if (!open) return null;
+  // 注意: 没有 `open` prop, 没有 `if (!open) return null`。
+  // Parent 用 `{modalState.open && <CreateTaskModal ... />}` 条件渲染。
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -2112,9 +2146,8 @@ import { CreateTaskModal } from "@/components/kanban/CreateTaskModal";
 const renderModal = (props: Partial<React.ComponentProps<typeof CreateTaskModal>> = {}) => {
   return render(
     <CreateTaskModal
-      open={true}
-      defaultStatus="inbox"
-      defaultProject="alpha"
+      initialStatus="inbox"
+      initialProject="alpha"
       availableProjects={["alpha", "beta"]}
       onSubmit={vi.fn().mockResolvedValue(undefined)}
       onCancel={vi.fn()}
@@ -2124,28 +2157,30 @@ const renderModal = (props: Partial<React.ComponentProps<typeof CreateTaskModal>
 };
 
 describe("CreateTaskModal", () => {
-  it("renders nothing when open=false", () => {
-    renderModal({ open: false });
-    expect(screen.queryByTestId("create-task-modal")).not.toBeInTheDocument();
-  });
-
-  it("renders form fields when open=true", () => {
+  it("renders form fields", () => {
     renderModal();
     expect(screen.getByText("Project")).toBeInTheDocument();
     expect(screen.getByText("Title")).toBeInTheDocument();
     expect(screen.getByText("Status")).toBeInTheDocument();
   });
 
-  it("defaults status to defaultStatus prop", () => {
-    renderModal({ defaultStatus: "blocked" });
-    const statusSelect = screen.getByDisplayValue("Blocked");
-    expect(statusSelect).toBeInTheDocument();
+  it("defaults status from initialStatus prop", () => {
+    renderModal({ initialStatus: "blocked" });
+    expect(screen.getByDisplayValue("Blocked")).toBeInTheDocument();
+  });
+
+  it("stale-state guard: second mount picks up new initialStatus", () => {
+    // 模拟 parent 条件渲染:先用 inbox unmount,再用 blocked mount
+    const { unmount } = renderModal({ initialStatus: "inbox" });
+    expect(screen.getByDisplayValue("Inbox")).toBeInTheDocument();
+    unmount();
+    renderModal({ initialStatus: "blocked" });
+    expect(screen.getByDisplayValue("Blocked")).toBeInTheDocument();
   });
 
   it("disables submit when title empty", () => {
     renderModal();
-    const submitBtn = screen.getByText("Create");
-    expect(submitBtn).toBeDisabled();
+    expect(screen.getByText("Create")).toBeDisabled();
   });
 
   it("calls onSubmit with form data when submit clicked", async () => {
@@ -2205,7 +2240,7 @@ git commit -m "feat(kanban): CreateTaskModal 表单 + 校验 + 错误反馈 (Pha
 **Files:**
 - Modify: `src/components/kanban/KanbanView.tsx`
 
-- [ ] **Step 1: 改 KanbanView 加 modal 状态 + onSubmit handler**
+- [ ] **Step 1: 改 KanbanView 加 modal 状态 + onSubmit handler(条件渲染防 stale state)**
 
 ```typescript
 // 在 KanbanView 内部新加 state
@@ -2216,10 +2251,10 @@ const [modalState, setModalState] = useState<{ open: boolean; status: TaskStatus
 const queryClient = useQueryClient();
 
 const handleCreateTask = async (data: { project: string; title: string; status: TaskStatus }) => {
-  const result = await commands.taskCreate(data.project, data.title, null, data.status, null, null);
-  if (result.status === "error") {
-    throw new Error(result.error);
-  }
+  // 用 unwrapCommand 统一 error 路径
+  await unwrapCommand(
+    commands.taskCreate(data.project, data.title, null, data.status, null, null),
+  );
   invalidateAllTaskCaches(queryClient, `projects/${data.project}`);
   setModalState({ open: false, status: "inbox" });
 };
@@ -2227,16 +2262,22 @@ const handleCreateTask = async (data: { project: string; title: string; status: 
 // 把 setCreatingStatus 改成 setModalState
 const openModal = (status: TaskStatus) => setModalState({ open: true, status });
 
-// 在 JSX render 加:
-<CreateTaskModal
-  open={modalState.open}
-  defaultStatus={modalState.status}
-  defaultProject={project}
-  availableProjects={projects}
-  onSubmit={handleCreateTask}
-  onCancel={() => setModalState({ ...modalState, open: false })}
-/>
+// JSX render 用**条件渲染**创建 modal —— 每次 open 是新实例,无 stale state:
+{modalState.open && (
+  <CreateTaskModal
+    initialStatus={modalState.status}
+    initialProject={project}
+    availableProjects={projects}
+    onSubmit={handleCreateTask}
+    onCancel={() => setModalState((s) => ({ ...s, open: false }))}
+  />
+)}
 ```
+
+注意:
+- `{modalState.open && <CreateTaskModal ... />}` 条件渲染是 stale state 防护的**关键** — 每次关了再开,组件被完全 unmount 然后重新 mount,`useState(initialStatus)` 重新初始化,不会继承上次的值
+- 错误路径靠 `unwrapCommand` throw,`handleCreateTask` 让它往上传播到 `CreateTaskModal` 的 `try/catch`,由 modal 展示错误 + 保持打开状态
+- Task update 失败路径也同样走 `unwrapCommand`(drag-and-drop 改 status 的 mutation 在 Task 4.3)
 
 需要 import:
 
@@ -2255,8 +2296,8 @@ import { invalidateAllTaskCaches } from "./invalidateAllTaskCaches";
 ```typescript
 it("opens modal with inbox status when New task clicked", async () => {
   vi.mocked(commands.taskQueryKanban).mockResolvedValue({ status: "ok", data: [] });
-  vi.mocked(commands.listWhiteboards).mockResolvedValue({ status: "ok", data: [
-    { id: "projects/alpha", /* ... */ } as any,
+  vi.mocked(commands.whiteboardList).mockResolvedValue({ status: "ok", data: [
+    { whiteboardId: "projects/alpha", cards: 0, notes: 0, sections: 0, aliases: 0, tasks: 0, questions: 0 } as any,
   ]});
   renderKanban("/kanban?project=alpha");
 
@@ -2267,7 +2308,7 @@ it("opens modal with inbox status when New task clicked", async () => {
 });
 ```
 
-注意需要 mock `commands.listWhiteboards` 和 `commands.taskCreate` 也(添加到 vi.mock 块)。
+注意需要 mock `commands.whiteboardList` 和 `commands.taskCreate` 也(添加到 vi.mock 块)。
 
 - [ ] **Step 3: 跑测试通过**
 
@@ -2359,8 +2400,8 @@ git commit -m "feat(keysight): GraphToolbar 加 Show Kanban 按钮 (project 白�
 ```typescript
 it("end-to-end: query → render board → open modal → create task → invalidate", async () => {
   vi.mocked(commands.taskQueryKanban).mockResolvedValue({ status: "ok", data: [] });
-  vi.mocked(commands.listWhiteboards).mockResolvedValue({ status: "ok", data: [
-    { id: "projects/alpha" } as any,
+  vi.mocked(commands.whiteboardList).mockResolvedValue({ status: "ok", data: [
+    { whiteboardId: "projects/alpha", cards: 0, notes: 0, sections: 0, aliases: 0, tasks: 0, questions: 0 } as any,
   ]});
   vi.mocked(commands.taskCreate).mockResolvedValue({ status: "ok", data: {
     id: "new-1", title: "New", whiteboardId: "projects/alpha", content: "", status: "inbox", area: null, project: "alpha", color: null,
