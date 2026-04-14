@@ -423,11 +423,14 @@ pub(in crate::modules::keysight) struct TaskUpdateInput<'a> {
 /// 4. 通过 VaultFs 写文件(不存在的目录由 vault_fs 负责 mkdir -p)
 /// 5. 调 `sync::sync_file` 把 markdown parse 回 DB,`whiteboard_id` 由路径推导为
 ///    `projects/{project}`,task_fields 表 UPSERT status/area/project
-/// 6. 返回 `TaskEntity`(通过 `get` 从 DB 重新读取)
+/// 6. 自动定位: 写 positions 行(x=0.0, y=最底元素下方一个 node 高度 + spacing),
+///    空白板第一个节点落在 (0, 0)
+/// 7. 返回 `TaskEntity`(通过 `get` 从 DB 重新读取)
 ///
 /// # 不做的事
 /// - 不校验 project 目录已存在(VaultFs 的 mkdir -p 负责)
 /// - 不处理并发(同名 title 由 task_id 前缀保证文件名唯一)
+/// - 不做智能布局(x 坐标始终是 0.0,y 是单列垂直堆叠;未来如需 grid 布局另起 helper)
 ///
 /// # 幂等性
 /// 非幂等 —— 每次调用生成新 task_id,产生新文件。
@@ -452,6 +455,14 @@ pub(in crate::modules::keysight) fn create(
     );
     vault_fs.write_file(&file_path, &markdown)?;
     sync::sync_file(conn, &file_path, &markdown, current_mtime_ms())?;
+    // 自动定位: 在 canvas 最底元素下方一个 node 高度 + spacing 处
+    // (为 Kanban view 创建的 task 提供 canvas 坐标,无需 TS 侧调 layout_set_position)
+    let whiteboard_id = project.whiteboard_id();
+    let position = compute_position_below_bottommost(conn, &whiteboard_id)?;
+    conn.execute(
+        "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
+        params![&task_id, &whiteboard_id, position.x, position.y],
+    )?;
     get(conn, &task_id)
 }
 
@@ -1307,5 +1318,82 @@ mod tests {
         let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
         // max(50, 200, 100) = 200, + 140 + 40 = 380
         assert_eq!(pos.y, 380.0);
+    }
+
+    // ============================================================
+    // task::create — auto-position 集成测试
+    // ============================================================
+
+    #[test]
+    fn test_create_task_writes_position_row_first_time() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let project = ProjectName::new("test").unwrap();
+        let task = create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                title: "first task",
+                content: None,
+                status: TaskStatus::Inbox,
+                area: None,
+                color: None,
+            },
+        )
+        .unwrap();
+
+        let pos: (f64, f64) = conn
+            .query_row(
+                "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
+                params![&task.id, "projects/test"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        // 首个 task,白板空 → 落在原点
+        assert_eq!(pos, (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_create_task_writes_position_below_bottommost() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let project = ProjectName::new("test").unwrap();
+        let _first = create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                title: "first",
+                content: None,
+                status: TaskStatus::Inbox,
+                area: None,
+                color: None,
+            },
+        )
+        .unwrap();
+        let second = create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                title: "second",
+                content: None,
+                status: TaskStatus::Inbox,
+                area: None,
+                color: None,
+            },
+        )
+        .unwrap();
+
+        let second_y: f64 = conn
+            .query_row(
+                "SELECT y FROM positions WHERE entity_id = ?1",
+                params![&second.id],
+                |row| row.get(0),
+            )
+            .unwrap();
+        // 第一个 task 落在 y=0 → 第二个 = 0 + DEFAULT_NODE_HEIGHT (140) + NODE_SPACING (40) = 180
+        assert_eq!(second_y, 180.0);
     }
 }
