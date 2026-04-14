@@ -70,6 +70,7 @@ CREATE INDEX IF NOT EXISTS idx_edges_to ON edges(to_id);
 CREATE INDEX IF NOT EXISTS idx_task_status ON task_fields(status);
 CREATE INDEX IF NOT EXISTS idx_question_status ON question_fields(status);
 CREATE INDEX IF NOT EXISTS idx_positions_wb ON positions(whiteboard_id);
+CREATE INDEX IF NOT EXISTS idx_positions_wb_y ON positions(whiteboard_id, y);
 CREATE INDEX IF NOT EXISTS idx_section_members_entity ON section_members(entity_id);
 
 -- 全文搜索
