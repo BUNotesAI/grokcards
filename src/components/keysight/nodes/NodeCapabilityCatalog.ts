@@ -12,29 +12,30 @@
  *
  * ## 防火墙约束
  *
- * - NodeKind union 限定 5 种,传 "task" 编译失败。
+ * - NodeKind union 限定 6 种(含 task),applies_to 决定哪些能力落到 task。
  * - NodeMenuConfig per-kind handlers 强制完整(少一字段编译失败),不依赖注释或运行时校验。
  * - 每个 Capability variant 把 ui_kind / destructive 写死在类型里,const 初始化时
  *   shape 与 kind 不一致会编译失败(例如 set_color 的 ui_kind 只能是 "custom")。
  *
- * ## Task 预留
+ * ## Task 已接入(3 项能力)
  *
- * Task 是 EntityKind 的第 6 种(参考 types.ts),目前在 graph 已渲染(TaskNode.tsx)但无菜单。
- * B1 不接入,**类型层面不埋技术债**:NodeKind union 不含 "task",NODE_CAPABILITIES 的
- * applies_to 不含 "task"。未来接入(docs/progress/backend.md Next 段):
- *   1. 把 "task" 加入 NodeKind union
- *   2. 更新相应 capability 的 applies_to(copy_uuid_title / draw_connection / edit_title /
- *      move_to_section / remove_from_group / delete)
- *   3. 新增 TaskNodeHandlers interface + NodeMenuConfig.task 变体
- *   4. EntityNode.tsx 的 case "task" 装配 handlers
+ * Task 作为第 6 个 NodeKind 接入菜单,当前 scope 只含 **3 项能力**:
+ *   - `copy_uuid_title` — Task 有 title,走统一 normalize pipeline
+ *   - `move_to_section` — `section_members` schema 通用,接受任意 entity kind
+ *   - `remove_from_group` — 同上
+ *
+ * 未接入的能力(留给后续 task):
+ *   - `draw_connection` — Edge 判别联合编译期禁 Task 作 from(edge.rs:101-102)
+ *   - `edit_title` / `delete` — 后端无 `task_update` / `task_delete`,需 Rust 扩张(Phase B2)
+ *   - `set_color` — Task 模型无 color 字段,需 schema 扩张(Phase B2)
  */
 
 // ============================================================================
 // Types
 // ============================================================================
 
-/** 有菜单的节点类型(Task 暂不含,见文件头注释) */
-export type NodeKind = "card" | "alias" | "note" | "question" | "section";
+/** 有菜单的节点类型 */
+export type NodeKind = "card" | "alias" | "note" | "question" | "section" | "task";
 
 /** 菜单项渲染形态 */
 export type UiKind =
@@ -153,7 +154,7 @@ export type CapabilityKind = NodeCapability["kind"];
 export const NODE_CAPABILITIES: readonly NodeCapability[] = [
   {
     kind: "copy_uuid_title",
-    applies_to: new Set<NodeKind>(["card", "alias", "note", "question", "section"]),
+    applies_to: new Set<NodeKind>(["card", "alias", "note", "question", "section", "task"]),
     ui_kind: "plain",
     order: 10,
     label: "Copy UUID + title",
@@ -195,7 +196,7 @@ export const NODE_CAPABILITIES: readonly NodeCapability[] = [
   },
   {
     kind: "move_to_section",
-    applies_to: new Set<NodeKind>(["card", "alias", "note", "question"]),
+    applies_to: new Set<NodeKind>(["card", "alias", "note", "question", "task"]),
     ui_kind: "submenu",
     order: 70,
     label: "Move to Section",
@@ -203,7 +204,7 @@ export const NODE_CAPABILITIES: readonly NodeCapability[] = [
   },
   {
     kind: "remove_from_group",
-    applies_to: new Set<NodeKind>(["card", "alias", "note", "question"]),
+    applies_to: new Set<NodeKind>(["card", "alias", "note", "question", "task"]),
     ui_kind: "plain",
     order: 80,
     label: "Remove from group",
@@ -289,6 +290,12 @@ export type SectionNodeHandlers = Pick<
   "copy_uuid_title" | "set_color" | "delete"
 >;
 
+/** Task 节点菜单 handlers (3 个) */
+export type TaskNodeHandlers = Pick<
+  NodeCapabilityHandlerMap,
+  "copy_uuid_title" | "move_to_section" | "remove_from_group"
+>;
+
 /**
  * 节点菜单运行时配置判别联合。
  *
@@ -304,7 +311,8 @@ export type NodeMenuConfig =
   | { readonly kind: "alias"; readonly handlers: AliasNodeHandlers }
   | { readonly kind: "note"; readonly handlers: NoteNodeHandlers }
   | { readonly kind: "question"; readonly handlers: QuestionNodeHandlers }
-  | { readonly kind: "section"; readonly handlers: SectionNodeHandlers };
+  | { readonly kind: "section"; readonly handlers: SectionNodeHandlers }
+  | { readonly kind: "task"; readonly handlers: TaskNodeHandlers };
 
 // ============================================================================
 // Backward compat 类型别名 —— 旧 NodeContextMenu.tsx 的 *MenuConfig 接口已被
@@ -318,3 +326,4 @@ export type AliasMenuConfig = Extract<NodeMenuConfig, { readonly kind: "alias" }
 export type NoteMenuConfig = Extract<NodeMenuConfig, { readonly kind: "note" }>;
 export type QuestionMenuConfig = Extract<NodeMenuConfig, { readonly kind: "question" }>;
 export type SectionMenuConfig = Extract<NodeMenuConfig, { readonly kind: "section" }>;
+export type TaskMenuConfig = Extract<NodeMenuConfig, { readonly kind: "task" }>;

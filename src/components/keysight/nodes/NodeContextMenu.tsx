@@ -25,6 +25,7 @@ export type {
   NoteMenuConfig,
   QuestionMenuConfig,
   SectionMenuConfig,
+  TaskMenuConfig,
   NodeCapabilityHandlerMap,
 } from "./NodeCapabilityCatalog";
 
