@@ -23,12 +23,14 @@ import {
   Bookmark,
   Code2,
   Grid3x3,
+  LayoutGrid,
   Settings,
   Zap,
 } from "lucide-react";
 
 const modules = [
   { label: "KeySight", icon: Grid3x3, path: "/keysight" },
+  { label: "Kanban", icon: LayoutGrid, path: "/kanban" },
   { label: "Todo", icon: CheckSquare, path: "/todo" },
   { label: "Notes", icon: FileText, path: "/notes" },
   { label: "Bookmarks", icon: Bookmark, path: "/bookmarks" },
@@ -41,6 +43,7 @@ const system = [
 
 const pageTitles: Record<string, string> = {
   "/keysight": "KeySight",
+  "/kanban": "Kanban",
   "/todo": "Todo",
   "/notes": "Notes",
   "/bookmarks": "Bookmarks",
