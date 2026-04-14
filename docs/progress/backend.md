@@ -6,11 +6,33 @@
 
 ## Next
 
-- [ ] **Keysight 节点菜单 Phase B2** — 扩 Card/Question/Task 的 `color` schema + Task 的 `edit_title` / `delete` domain:`entities` 表 color 列 + migration、`card_set_color` / `question_set_color` / `task_set_color` commands、`task_update` / `task_delete` domain + commands,然后把 catalog 的 `set_color` / `edit_title` / `delete` applies_to 对应扩到 Task。依赖 B1 + Task 菜单接入完成。涉及 Rust schema 变更,风险面较大,要独立 task 做。
+- [ ] **Task 前端 UI 入口 + edit_title inline editor** — B2 把 task CRUD 从 Rust 到菜单都串通了,但仍缺:(1) "新建 task" 的 UI 入口(右键菜单?工具栏?)(2) TaskNode 加 inline editor 支持 edit_title 能力。这两个是独立的 UI/UX 工作。
 
 ## Done
 
 ### 2026-04-14
+
+- [x] **Keysight 节点菜单 Phase B2 完成** — 分 7 commit 落地,跨 Rust + TS 全栈:
+  - **Rust backend**:
+    - `a4290e5` feat: sub-stage 1 — models.rs 给 AtomicCard/TaskEntity/QuestionEntity 加 `color: Option<String>`;card.rs / question.rs / task.rs 的 query 路径读 e.color
+    - `16d91df` feat: sub-stage 2+3 — `domain/task.rs` 重写(187→940 行),新增 `ProjectName` newtype(路径字符校验 + 构造器防火墙)+ `parse_task_status`/`task_status_to_str`(TaskStatus enum 互转)+ `task_relative_path`(固定路径 `whiteboard/projects/{project}/{id} 【TASK】{title}.md`)+ `render_task_markdown`(含 hex color 加引号避 YAML 注释坑)+ `create/update/delete/get` 四个 pub fn;sync.rs 的 `derive_whiteboard_id` 识别 `projects/{name}` 为二级 wb_id
+    - `133e2b9` feat: sub-stage 4a — question.rs 的 create/update 加 color 参数 + `"default"` sentinel 清空(note.rs 模式);render_question_markdown 加 color 字段;commands.question_create/update 加 color 参数
+    - `d6c6f18` feat: sub-stage 5 — commands 层暴露 5 个新命令:`card_set_color` / `task_create` / `task_update` / `task_delete` / `task_set_color`;parser.rs 新加 `write_color_frontmatter` helper(用 serde_yaml 更新/移除 frontmatter color);CardStore trait 加 `fn set_color`;commands.rs 新 helper `parse_task_status_from_ipc`(serde_json::from_value 把 IPC 字符串解析回 TaskStatus)
+  - **TS frontend**:
+    - `bf96491` feat: sub-stage 6+7 — NodeCapabilityCatalog `set_color` applies_to 扩 `card/question/task`,`delete` 扩 `task`;CardNodeHandlers / QuestionNodeHandlers 加 `set_color`;TaskNodeHandlers 从 3 项扩到 5 项(加 `set_color` + `delete`);EntityNode 三个 useMemo 装配 + NodeContextMenuHandlers 接口加 4 个字段(`onSetCardColor` / `onSetQuestionColor` / `onDeleteTask` / `onSetTaskColor`);GraphView menuHandlers 实现 4 个新 handler 路由到对应 Tauri command
+  - **防火墙机制**:
+    - `ProjectName::new` 在 command 边界拒绝空 / `/\\:*?"<>|` 等非法字符 → domain 层拿到的 ProjectName 一定合法,可拼路径
+    - `TaskStatus` enum + `parse_task_status_from_ipc` 在 command 边界拒绝未知状态字符串 → domain 路径永远是强类型
+    - file path 由 `task_relative_path(project, id, title)` 拼接,调用方无法传 `../` 绕目录
+    - `TaskCreateInput` / `TaskUpdateInput` struct 让 create/update 参数命名显式(避免 clippy `too_many_arguments` + 减少位置参数混淆)
+    - `render_task_markdown` / `render_question_markdown` 对 color 值加双引号避免 hex `#xxx` 被 YAML 当行内注释
+    - `write_color_frontmatter` 用 serde_yaml 序列化,天然处理 hex 引号问题
+    - Task 菜单白名单边界测试锁死 `Draw connection / Edit title / Related / Create alias / Jump to source card` 不在菜单内
+  - **CLAUDE.md 副作用矩阵** 新增 6 行:card_set_color / question_create / question_update / question_delete / task_create / task_update / task_delete / task_set_color
+  - **测试计数**:Rust 211 → **234**(+23:ProjectName ×5 / TaskStatus ×2 / render ×2 / path ×2 / create ×3 / update ×3 / delete ×1 / get ×1 / query ×2 / legacy ×2 / card set_color ×3 / question color ×3 / sync derive ×3);TS 227 → **230**(+3 task variant set_color/delete assertions)
+  - **未接入的能力**(保留 Next):Task 的 `edit_title` 需要 TaskNode 加 inline editor(独立 UI 工作);前端创建 Task 的入口 UI 未实装
+
+- [x] **Keysight Task 节点菜单接入(Phase B1 后续)完成** — 分 3 commit 落地,纯 TS 增量扩张:
 
 - [x] **Keysight Task 节点菜单接入(Phase B1 后续)完成** — 分 3 commit 落地,纯 TS 增量扩张:
   - `18ba92a` feat: type sketch — NodeCapabilityCatalog NodeKind union 扩 task;copy_uuid_title / move_to_section / remove_from_group 的 applies_to 加 task;新增 TaskNodeHandlers + NodeMenuConfig.task 变体 + TaskMenuConfig 别名;NodeContextMenu re-export TaskMenuConfig;文件头注释从「Task 预留」改为「Task 已接入(3 项能力)」
