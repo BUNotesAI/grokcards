@@ -3,7 +3,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
-use crate::modules::keysight::models::{TaskEntity, TaskStatus};
+use crate::modules::keysight::models::{Position, TaskEntity, TaskStatus};
 use crate::modules::keysight::vault_fs::VaultFs;
 
 use super::sync;
@@ -145,6 +145,44 @@ fn task_status_to_str(status: TaskStatus) -> &'static str {
         TaskStatus::Blocked => "blocked",
         TaskStatus::Done => "done",
     }
+}
+
+// ============================================================
+// Canvas auto-position 支持
+// ============================================================
+
+/// Task 节点默认高度。
+///
+/// 值 = 140 与前端 `src/components/keysight/types.ts` 的
+/// `ENTITY_DIMENSIONS.task.height = 140` 对齐。Kanban 创建的实体以 task 为主,
+/// 因此以 task 高度作为 canvas 垂直步长基准。
+const DEFAULT_NODE_HEIGHT: f64 = 140.0;
+
+/// 节点之间的垂直间距,用于 auto-position 计算。
+const NODE_SPACING: f64 = 40.0;
+
+/// 计算给定 whiteboard 上"最底元素下方"的坐标,供 Kanban 创建 task 时
+/// 自动定位到 canvas 上不重叠位置。
+///
+/// 算法: `SELECT MAX(y) FROM positions WHERE whiteboard_id = ?`,
+/// 然后 `new_y = max_y + DEFAULT_NODE_HEIGHT + NODE_SPACING`,`new_x = 0.0`。
+///
+/// 空白板返回 `Position { x: 0, y: 0 }`(不是 error;空态是合法的,
+/// 意思是"这是白板第一个节点")。
+pub(in crate::modules::keysight) fn compute_position_below_bottommost(
+    conn: &Connection,
+    whiteboard_id: &str,
+) -> Result<Position, KeysightError> {
+    let max_y: Option<f64> = conn.query_row(
+        "SELECT MAX(y) FROM positions WHERE whiteboard_id = ?1",
+        [whiteboard_id],
+        |row| row.get::<_, Option<f64>>(0),
+    )?;
+    let new_y = match max_y {
+        Some(y) => y + DEFAULT_NODE_HEIGHT + NODE_SPACING,
+        None => 0.0,
+    };
+    Ok(Position { x: 0.0, y: new_y })
 }
 
 // ============================================================================
@@ -1215,5 +1253,59 @@ mod tests {
         seed_task_legacy(&conn);
         let tasks = by_status(&conn, "next").unwrap();
         assert_eq!(tasks.len(), 1);
+    }
+
+    // ============================================================
+    // compute_position_below_bottommost — auto-position helper
+    // ============================================================
+
+    #[test]
+    fn test_compute_position_empty_whiteboard_returns_origin() {
+        let conn = test_conn();
+        let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
+        assert_eq!(pos.x, 0.0);
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn test_compute_position_below_single_row() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO positions (entity_id, whiteboard_id, x, y) VALUES ('e1', 'projects/test', 100.0, 200.0)",
+            [],
+        )
+        .unwrap();
+        let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
+        // x 始终是 0.0(简化版),y = 200 + 140 + 40 = 380
+        assert_eq!(pos.x, 0.0);
+        assert_eq!(pos.y, 380.0);
+    }
+
+    #[test]
+    fn test_compute_position_isolates_whiteboards() {
+        let conn = test_conn();
+        conn.execute(
+            "INSERT INTO positions (entity_id, whiteboard_id, x, y) VALUES ('e1', 'projects/A', 0.0, 500.0)",
+            [],
+        )
+        .unwrap();
+        // B 白板空,不受 A 白板影响
+        let pos = compute_position_below_bottommost(&conn, "projects/B").unwrap();
+        assert_eq!(pos.y, 0.0);
+    }
+
+    #[test]
+    fn test_compute_position_n_rows_picks_max() {
+        let conn = test_conn();
+        for (i, y) in [50.0_f64, 200.0, 100.0].iter().enumerate() {
+            conn.execute(
+                "INSERT INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, 'projects/test', 0.0, ?2)",
+                params![format!("e{}", i), *y],
+            )
+            .unwrap();
+        }
+        let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
+        // max(50, 200, 100) = 200, + 140 + 40 = 380
+        assert_eq!(pos.y, 380.0);
     }
 }
