@@ -44,6 +44,66 @@ describe("EntityNode", () => {
     render(<EntityNode entity={entity} allPositions={{}} allKinds={{}} />);
     expect(screen.getByText("Test Section")).toBeInTheDocument();
   });
+  it("kind=task 时渲染 TaskNode", () => {
+    const entity: EntityWithPosition = {
+      kind: "task",
+      id: "task_001",
+      entity: {
+        id: "task_001",
+        title: "Test Task",
+        content: "task body",
+        whiteboardId: "wb_root",
+        status: "next",
+        area: null,
+        project: null,
+      },
+      position: { x: 0, y: 0 },
+    };
+    render(<EntityNode entity={entity} allPositions={{}} allKinds={{}} />);
+    expect(screen.getByText("Test Task")).toBeInTheDocument();
+  });
+  it("kind=task 且 menuHandlers 提供时 TaskNode 渲染 ⋯ 按钮", () => {
+    const entity: EntityWithPosition = {
+      kind: "task",
+      id: "task_menu001",
+      entity: {
+        id: "task_menu001",
+        title: "Task With Menu",
+        content: "",
+        whiteboardId: "wb_root",
+        status: "next",
+        area: null,
+        project: null,
+      },
+      position: { x: 0, y: 0 },
+    };
+    const menuHandlers = {
+      onCopyEntityUuidTitle: vi.fn(),
+      onDrawConnectionFrom: vi.fn(),
+      onRelatedFrom: vi.fn(),
+      onCreateAlias: vi.fn(),
+      onJumpToSourceCard: vi.fn(),
+      onDeleteAlias: vi.fn(),
+      onEditNoteTitle: vi.fn(),
+      onDeleteNote: vi.fn(),
+      onSetNoteColor: vi.fn(),
+      onEditQuestionTitle: vi.fn(),
+      onDeleteQuestion: vi.fn(),
+      onDeleteSection: vi.fn(),
+      onSetSectionColor: vi.fn(),
+      onMoveToSection: vi.fn(),
+      onRemoveFromGroup: vi.fn(),
+    };
+    render(
+      <EntityNode
+        entity={entity}
+        allPositions={{}}
+        allKinds={{}}
+        menuHandlers={menuHandlers}
+      />,
+    );
+    expect(screen.getByRole("button", { name: /open menu/i })).toBeInTheDocument();
+  });
   it("绝对定位到 position 坐标", () => {
     const entity: EntityWithPosition = {
       kind: "card",
