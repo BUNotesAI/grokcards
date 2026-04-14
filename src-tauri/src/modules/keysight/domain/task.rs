@@ -127,6 +127,7 @@ impl ProjectName {
 /// 未知字符串返回 `InvalidTaskStatus`,保证 Task 聚合路径的 status 是强类型。
 fn parse_task_status(s: &str) -> Result<TaskStatus, KeysightError> {
     match s {
+        "inbox" => Ok(TaskStatus::Inbox),
         "next" => Ok(TaskStatus::Next),
         "active" => Ok(TaskStatus::Active),
         "blocked" => Ok(TaskStatus::Blocked),
@@ -138,6 +139,7 @@ fn parse_task_status(s: &str) -> Result<TaskStatus, KeysightError> {
 /// 把 TaskStatus 枚举序列化成 DB / frontmatter 里的小写字符串。
 fn task_status_to_str(status: TaskStatus) -> &'static str {
     match status {
+        TaskStatus::Inbox => "inbox",
         TaskStatus::Next => "next",
         TaskStatus::Active => "active",
         TaskStatus::Blocked => "blocked",
@@ -735,6 +737,7 @@ mod tests {
     #[test]
     fn test_parse_task_status_roundtrip() {
         for status in [
+            TaskStatus::Inbox,
             TaskStatus::Next,
             TaskStatus::Active,
             TaskStatus::Blocked,
@@ -751,6 +754,17 @@ mod tests {
             parse_task_status("wip"),
             Err(KeysightError::InvalidTaskStatus(_))
         ));
+    }
+
+    #[test]
+    fn test_parse_task_status_inbox() {
+        assert_eq!(parse_task_status("inbox").unwrap(), TaskStatus::Inbox);
+    }
+
+    #[test]
+    fn test_task_status_inbox_serializes_lowercase() {
+        let json = serde_json::to_string(&TaskStatus::Inbox).unwrap();
+        assert_eq!(json, "\"inbox\"");
     }
 
     // --- task_relative_path + render ---

@@ -165,10 +165,11 @@ impl EdgeStyle {
     }
 }
 
-/// 任务状态。
+/// 任务状态。Inbox 是新增的收集阶段入口，用于 Kanban view 待分配需求。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]
 pub enum TaskStatus {
+    Inbox,
     Next,
     Active,
     Done,
