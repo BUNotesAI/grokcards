@@ -1,6 +1,7 @@
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { KeysightView } from "@/components/keysight/KeysightView";
+import { KanbanView } from "@/components/kanban/KanbanView";
 import TodoPage from "@/pages/TodoPage";
 import PlaceholderPage from "@/pages/PlaceholderPage";
 import { FileText, Bookmark, Code2, Settings } from "lucide-react";
@@ -11,6 +12,7 @@ function App() {
       <Routes>
         <Route element={<AppShell />}>
           <Route path="/keysight" element={<KeysightView />} />
+          <Route path="/kanban" element={<KanbanView />} />
           <Route path="/todo" element={<TodoPage />} />
           <Route
             path="/notes"
