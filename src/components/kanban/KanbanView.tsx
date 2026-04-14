@@ -76,6 +76,18 @@ export function KanbanView() {
     closeModal();
   };
 
+  const handleTaskMove = async (taskId: string, newStatus: TaskStatus) => {
+    try {
+      await unwrapCommand(
+        commands.taskUpdate(taskId, null, null, newStatus, null, null),
+      );
+      invalidateAllTaskCaches(queryClient);
+    } catch (err) {
+      // V1 不做 optimistic update,失败时 loud 报 console + query refetch 自动回滚视觉
+      console.error("Task move failed:", err);
+    }
+  };
+
   if (tasksQuery.isLoading) {
     return (
       <div className="p-6 text-muted-foreground" data-testid="kanban-view">
@@ -120,6 +132,7 @@ export function KanbanView() {
           tasks={tasks}
           showProjectTags={showProjectTags}
           onAddTask={openModal}
+          onTaskMove={handleTaskMove}
         />
       </div>
       {modalState.open && (

@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
-import { KanbanBoard } from "@/components/kanban/KanbanBoard";
+import { KanbanBoard, parseDragEnd } from "@/components/kanban/KanbanBoard";
 import type { TaskEntity } from "@/bindings";
 
 const tasks: TaskEntity[] = [
@@ -39,7 +39,12 @@ const tasks: TaskEntity[] = [
 describe("KanbanBoard", () => {
   it("按固定顺序渲染 5 列", () => {
     render(
-      <KanbanBoard tasks={[]} showProjectTags={false} onAddTask={vi.fn()} />,
+      <KanbanBoard
+        tasks={[]}
+        showProjectTags={false}
+        onAddTask={vi.fn()}
+        onTaskMove={vi.fn()}
+      />,
     );
     const board = screen.getByTestId("kanban-board");
     const columns = board.querySelectorAll(
@@ -58,6 +63,7 @@ describe("KanbanBoard", () => {
         tasks={tasks}
         showProjectTags={false}
         onAddTask={vi.fn()}
+        onTaskMove={vi.fn()}
       />,
     );
     expect(screen.getByText("T1")).toBeInTheDocument();
@@ -71,9 +77,53 @@ describe("KanbanBoard", () => {
         tasks={tasks}
         showProjectTags={true}
         onAddTask={vi.fn()}
+        onTaskMove={vi.fn()}
       />,
     );
     const projectTags = screen.getAllByText("a");
     expect(projectTags.length).toBe(3);
+  });
+});
+
+describe("parseDragEnd", () => {
+  function makeEvent(activeId: string, overId: string | null) {
+    return {
+      active: { id: activeId, data: { current: undefined }, rect: { current: {} } },
+      over: overId
+        ? { id: overId, data: { current: undefined }, rect: {}, disabled: false }
+        : null,
+      delta: { x: 0, y: 0 },
+      collisions: null,
+      activatorEvent: new Event("pointerdown"),
+    } as unknown as import("@dnd-kit/core").DragEndEvent;
+  }
+
+  it("over=null 时返回 null", () => {
+    expect(parseDragEnd(makeEvent("t1", null))).toBeNull();
+  });
+
+  it("over.id 是合法 TaskStatus 时返回 (taskId, newStatus)", () => {
+    expect(parseDragEnd(makeEvent("t1", "next"))).toEqual({
+      taskId: "t1",
+      newStatus: "next",
+    });
+    expect(parseDragEnd(makeEvent("task_42", "blocked"))).toEqual({
+      taskId: "task_42",
+      newStatus: "blocked",
+    });
+  });
+
+  it("over.id 不是 5 个合法 status 之一时返回 null", () => {
+    expect(parseDragEnd(makeEvent("t1", "trash"))).toBeNull();
+    expect(parseDragEnd(makeEvent("t1", "inbox_2"))).toBeNull();
+    expect(parseDragEnd(makeEvent("t1", ""))).toBeNull();
+  });
+
+  it("覆盖全部 5 个合法 status", () => {
+    const statuses = ["inbox", "next", "active", "blocked", "done"] as const;
+    for (const s of statuses) {
+      const parsed = parseDragEnd(makeEvent("t1", s));
+      expect(parsed?.newStatus).toBe(s);
+    }
   });
 });

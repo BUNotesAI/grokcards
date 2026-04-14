@@ -1,3 +1,4 @@
+import { useDraggable } from "@dnd-kit/core";
 import type { TaskEntity } from "@/bindings";
 
 interface KanbanCardProps {
@@ -8,17 +9,29 @@ interface KanbanCardProps {
 
 /**
  * Kanban 单 task 卡片 —— 显示 title,可选 project 标签,左侧 color 条使用 task.color。
- * V1 是纯展示,拖拽在 Phase 4 (Task 4.2) 加入。
+ * 卡片是 dnd-kit 的 draggable(id = task.id),拖动时透明度降低、平移跟随 pointer。
  */
 export function KanbanCard({ task, showProjectTag = false }: KanbanCardProps) {
   const color = task.color ?? undefined;
+  const { attributes, listeners, setNodeRef, transform, isDragging } =
+    useDraggable({ id: task.id });
+
+  const style: React.CSSProperties = {
+    borderLeftColor: color,
+    borderLeftWidth: color ? 4 : 1,
+    transform: transform
+      ? `translate3d(${transform.x}px, ${transform.y}px, 0)`
+      : undefined,
+    opacity: isDragging ? 0.5 : 1,
+  };
+
   return (
     <div
-      className="rounded-md border bg-card p-3 shadow-sm"
-      style={{
-        borderLeftColor: color,
-        borderLeftWidth: color ? 4 : 1,
-      }}
+      ref={setNodeRef}
+      {...listeners}
+      {...attributes}
+      className="cursor-grab rounded-md border bg-card p-3 shadow-sm active:cursor-grabbing"
+      style={style}
       data-testid={`kanban-card-${task.id}`}
     >
       <div className="text-sm font-medium">{task.title}</div>

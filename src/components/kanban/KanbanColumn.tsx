@@ -1,5 +1,6 @@
 import { Plus } from "lucide-react";
 import type { ReactNode } from "react";
+import { useDroppable } from "@dnd-kit/core";
 import type { TaskEntity, TaskStatus } from "@/bindings";
 import { COLUMNS } from "./columns";
 
@@ -12,7 +13,7 @@ interface KanbanColumnProps {
 
 /**
  * Kanban 单列 —— 列头(label + count + "+" button)+ 内容区(空态文案或 children 卡片)。
- * 列的 label / 描述由 `COLUMNS[status]` 提供,不在组件里写死。
+ * 列本身是 dnd-kit 的 droppable(id = status 字符串),拖入卡片时 bg 稍亮提示。
  */
 export function KanbanColumn({
   status,
@@ -21,10 +22,14 @@ export function KanbanColumn({
   children,
 }: KanbanColumnProps) {
   const config = COLUMNS[status];
+  const { setNodeRef, isOver } = useDroppable({ id: status });
 
   return (
     <div
-      className="flex w-72 flex-col rounded-lg bg-muted/30 p-3"
+      ref={setNodeRef}
+      className={`flex w-72 flex-col rounded-lg p-3 ${
+        isOver ? "bg-muted/60" : "bg-muted/30"
+      }`}
       data-testid={`kanban-column-${status}`}
     >
       <div className="mb-3 flex items-center justify-between">
