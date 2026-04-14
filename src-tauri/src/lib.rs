@@ -45,6 +45,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::section_move_to_whiteboard,
         // keysight: task
         modules::keysight::commands::task_query_all,
+        modules::keysight::commands::task_query_kanban,
         modules::keysight::commands::task_create,
         modules::keysight::commands::task_update,
         modules::keysight::commands::task_delete,

@@ -355,6 +355,62 @@ pub(in crate::modules::keysight) fn query_all(
         .map_err(KeysightError::from)
 }
 
+/// 查询 kanban view 数据 —— 跨项目或单项目 task list。
+///
+/// - `project = None` → 跨项目查所有 task entity
+/// - `project = Some(name)` → 仅该 project 的 task(whiteboard_id = `projects/{name}`)
+///
+/// 不按 status 分组(留给前端按 `task.status` 渲染)。V1 按 `e.title` ASC 排序
+/// (对齐 `query_all` 的现有行为),因为 entities 表当前没有 `created_at` 列。
+/// V2 如需"最新优先"排序再单独加 migration + 字段。
+pub(in crate::modules::keysight) fn query_kanban(
+    conn: &Connection,
+    project: Option<&ProjectName>,
+) -> Result<Vec<TaskEntity>, KeysightError> {
+    // 两条 SQL 只差一个 WHERE 子句。为了避免动态 param 借用生命周期纠结,
+    // 分支展开成两个独立的 prepare/query_map 调用,mapper 复用同一个 closure。
+    let mapper = |r: &rusqlite::Row<'_>| -> rusqlite::Result<TaskEntity> {
+        Ok(TaskEntity {
+            id: r.get(0)?,
+            title: r.get(1)?,
+            content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
+            whiteboard_id: r.get(3)?,
+            status: r.get(4)?,
+            area: r.get(5)?,
+            project: r.get(6)?,
+            color: r.get(7)?,
+        })
+    };
+
+    match project {
+        Some(p) => {
+            let wb = p.whiteboard_id();
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
+                 t.status, t.area, t.project, e.color \
+                 FROM entities e JOIN task_fields t ON e.id = t.entity_id \
+                 WHERE e.kind = 'task' AND e.whiteboard_id = ?1 \
+                 ORDER BY e.title",
+            )?;
+            stmt.query_map([wb], mapper)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(KeysightError::from)
+        }
+        None => {
+            let mut stmt = conn.prepare(
+                "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
+                 t.status, t.area, t.project, e.color \
+                 FROM entities e JOIN task_fields t ON e.id = t.entity_id \
+                 WHERE e.kind = 'task' \
+                 ORDER BY e.title",
+            )?;
+            stmt.query_map([], mapper)?
+                .collect::<rusqlite::Result<Vec<_>>>()
+                .map_err(KeysightError::from)
+        }
+    }
+}
+
 /// 按状态查询任务(返回 json,用于 command 层跨项目聚合视图)。
 pub(in crate::modules::keysight) fn by_status(
     conn: &Connection,
@@ -1395,5 +1451,93 @@ mod tests {
             .unwrap();
         // 第一个 task 落在 y=0 → 第二个 = 0 + DEFAULT_NODE_HEIGHT (140) + NODE_SPACING (40) = 180
         assert_eq!(second_y, 180.0);
+    }
+
+    // ============================================================
+    // query_kanban — Kanban view 数据源
+    // ============================================================
+
+    #[test]
+    fn test_query_kanban_with_project_filter() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let project_a = ProjectName::new("alpha").unwrap();
+        let project_b = ProjectName::new("beta").unwrap();
+
+        create(
+            &conn,
+            &fs,
+            &project_a,
+            TaskCreateInput {
+                title: "task in alpha",
+                status: TaskStatus::Inbox,
+                ..task_create_defaults("task in alpha")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project_a,
+            TaskCreateInput {
+                title: "another in alpha",
+                status: TaskStatus::Next,
+                ..task_create_defaults("another in alpha")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project_b,
+            TaskCreateInput {
+                title: "task in beta",
+                status: TaskStatus::Active,
+                ..task_create_defaults("task in beta")
+            },
+        )
+        .unwrap();
+
+        let alpha_tasks = query_kanban(&conn, Some(&project_a)).unwrap();
+        assert_eq!(alpha_tasks.len(), 2);
+        assert!(alpha_tasks
+            .iter()
+            .all(|t| t.project.as_deref() == Some("alpha")));
+    }
+
+    #[test]
+    fn test_query_kanban_all_projects_returns_all_tasks() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let project_a = ProjectName::new("alpha").unwrap();
+        let project_b = ProjectName::new("beta").unwrap();
+
+        create(
+            &conn,
+            &fs,
+            &project_a,
+            task_create_defaults("a1"),
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project_b,
+            TaskCreateInput {
+                status: TaskStatus::Active,
+                ..task_create_defaults("b1")
+            },
+        )
+        .unwrap();
+
+        let all = query_kanban(&conn, None).unwrap();
+        assert_eq!(all.len(), 2);
+    }
+
+    #[test]
+    fn test_query_kanban_empty_returns_empty_vec() {
+        let conn = test_conn();
+        let result = query_kanban(&conn, None).unwrap();
+        assert_eq!(result.len(), 0);
     }
 }

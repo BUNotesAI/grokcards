@@ -469,6 +469,22 @@ pub fn task_query_all(
     task::query_all(&conn, &whiteboard_id).map_err(Into::into)
 }
 
+/// 查询 kanban view 数据 —— 跨项目或单项目 task list。
+#[tauri::command]
+#[specta::specta]
+pub fn task_query_kanban(
+    state: State<'_, KeysightState>,
+    project: Option<String>,
+) -> Result<Vec<TaskEntity>, AppError> {
+    let _t = ScopedTimer::new("cmd:task_query_kanban");
+    let conn = lock_db(&state.db, "task_query_kanban");
+    let project_name = match project {
+        Some(p) => Some(task::ProjectName::new(&p).map_err(Into::<AppError>::into)?),
+        None => None,
+    };
+    task::query_kanban(&conn, project_name.as_ref()).map_err(Into::into)
+}
+
 /// 创建新 task,写 markdown 文件 + 同步 DB。
 ///
 /// ## 前置条件
