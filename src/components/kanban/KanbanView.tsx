@@ -5,6 +5,7 @@ import { commands } from "@/bindings";
 import type { TaskStatus } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { KanbanBoard } from "./KanbanBoard";
+import { KanbanToolbar } from "./KanbanToolbar";
 
 /**
  * Kanban 主页面壳。
@@ -21,6 +22,16 @@ export function KanbanView() {
     queryKey: ["tasks-kanban", project],
     queryFn: () => unwrapCommand(commands.taskQueryKanban(project)),
   });
+
+  const whiteboardsQuery = useQuery({
+    queryKey: ["whiteboards"],
+    queryFn: () => unwrapCommand(commands.whiteboardList()),
+  });
+
+  // projects 列表:从 whiteboardList 过滤 `projects/*` 前缀,剥掉前缀只留 project 名
+  const projects = (whiteboardsQuery.data ?? [])
+    .filter((wb) => wb.whiteboardId.startsWith("projects/"))
+    .map((wb) => wb.whiteboardId.slice("projects/".length));
 
   // 列头 + 按钮点击的 pending status,Task 3.5 会接入 CreateTaskModal
   const [, setCreatingStatus] = useState<TaskStatus | null>(null);
@@ -56,10 +67,13 @@ export function KanbanView() {
 
   return (
     <div className="flex h-full flex-col" data-testid="kanban-view">
-      <div className="border-b p-4">
-        <h2 className="text-xl font-semibold">
-          Kanban {project ? `— ${project}` : "(All projects)"}
-        </h2>
+      <KanbanToolbar
+        currentProject={project}
+        projects={projects}
+        onCreateTask={() => setCreatingStatus("inbox")}
+      />
+      <div className="px-4 pt-2 text-xs text-muted-foreground">
+        Kanban {project ? `— ${project}` : "(All projects)"}
       </div>
       <div className="flex-1 overflow-hidden">
         <KanbanBoard

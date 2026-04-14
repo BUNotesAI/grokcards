@@ -8,6 +8,7 @@ import { commands } from "@/bindings";
 vi.mock("@/bindings", () => ({
   commands: {
     taskQueryKanban: vi.fn(),
+    whiteboardList: vi.fn(),
   },
 }));
 
@@ -30,16 +31,22 @@ describe("KanbanView", () => {
       status: "ok",
       data: [],
     });
+    vi.mocked(commands.whiteboardList).mockResolvedValue({
+      status: "ok",
+      data: [],
+    });
   });
 
-  it("缺失 ?project= 时显示 All projects 标题", async () => {
+  it("缺失 ?project= 时 subtitle 显示 All projects", async () => {
     renderKanban("/kanban");
     await waitFor(() =>
-      expect(screen.getByText(/All projects/)).toBeInTheDocument(),
+      expect(
+        screen.getByText(/Kanban \(All projects\)/),
+      ).toBeInTheDocument(),
     );
   });
 
-  it("?project=super-tauri 时显示 project 名", async () => {
+  it("?project=super-tauri 时 subtitle 显示 project 名", async () => {
     renderKanban("/kanban?project=super-tauri");
     await waitFor(() =>
       expect(screen.getByText(/Kanban — super-tauri/)).toBeInTheDocument(),
