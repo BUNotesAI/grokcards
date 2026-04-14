@@ -275,7 +275,7 @@ pub struct TaskEntity {
     pub title: String,
     pub content: String,
     pub whiteboard_id: String,
-    pub status: String,
+    pub status: TaskStatus,
     #[serde(default)]
     pub area: Option<String>,
     #[serde(default)]

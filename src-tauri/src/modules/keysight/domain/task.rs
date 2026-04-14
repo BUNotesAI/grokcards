@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::modules::keysight::errors::KeysightError;
@@ -144,6 +145,51 @@ fn task_status_to_str(status: TaskStatus) -> &'static str {
         TaskStatus::Active => "active",
         TaskStatus::Blocked => "blocked",
         TaskStatus::Done => "done",
+    }
+}
+
+// ============================================================================
+// rusqlite 互操作: TaskStatus ↔ TEXT column
+//
+// 让 `r.get::<_, TaskStatus>(col)` 直接生效,并让 `params![TaskStatus]` 免转字符串。
+// 反序列化非法字符串时把 `KeysightError::InvalidTaskStatus` 装进 FromSqlError::Other,
+// 外层 `extract_keysight_err` 通过 downcast 还原,保证 DB 脏数据 loud fail 而非 silent coerce。
+// ============================================================================
+
+impl FromSql for TaskStatus {
+    fn column_result(value: ValueRef<'_>) -> FromSqlResult<Self> {
+        let s = value.as_str()?;
+        parse_task_status(s).map_err(|e| FromSqlError::Other(Box::new(e)))
+    }
+}
+
+impl ToSql for TaskStatus {
+    fn to_sql(&self) -> rusqlite::Result<ToSqlOutput<'_>> {
+        Ok(ToSqlOutput::Borrowed(ValueRef::Text(
+            task_status_to_str(*self).as_bytes(),
+        )))
+    }
+}
+
+/// `rusqlite::Error` → `KeysightError` 转换,特别处理 `FromSqlConversionFailure`:
+/// 如果底层 boxed error 是 `KeysightError`(来自 TaskStatus::FromSql 的 `InvalidTaskStatus`),
+/// 直接 unbox 还原,让调用方拿到语义清晰的错误变体。
+///
+/// P1-3 回归保证:legacy "wip" 之类的非法 status 被 SQL 读取时抛出
+/// `InvalidTaskStatus` 而非 `Database(...)`,test_update_task_rejects_invalid_legacy_status
+/// 依赖此行为。
+fn extract_keysight_err(e: rusqlite::Error) -> KeysightError {
+    if let rusqlite::Error::FromSqlConversionFailure(_, _, boxed) = e {
+        match boxed.downcast::<KeysightError>() {
+            Ok(ks) => *ks,
+            Err(other) => KeysightError::Database(rusqlite::Error::FromSqlConversionFailure(
+                0,
+                rusqlite::types::Type::Text,
+                other,
+            )),
+        }
+    } else {
+        KeysightError::Database(e)
     }
 }
 
@@ -328,7 +374,7 @@ pub(in crate::modules::keysight) fn get(
     )
     .map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
-        other => KeysightError::Database(other),
+        other => extract_keysight_err(other),
     })
 }
 
@@ -356,7 +402,7 @@ pub(in crate::modules::keysight) fn query_all(
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
-        .map_err(KeysightError::from)
+        .map_err(extract_keysight_err)
 }
 
 /// 查询 kanban view 数据 —— 跨项目或单项目 task list。
@@ -571,12 +617,10 @@ pub(in crate::modules::keysight) fn update(
         .ok_or_else(|| KeysightError::InvalidProjectName(format!("task {id} 缺 project")))?;
     let project = ProjectName::new(&current_project_str)?;
 
-    // status 从 current.status 严格解析 —— 如果 DB 里的状态不在 enum 集合中,
-    // 说明数据被外部污染,必须 loud fail 而不是 silently 重置为 Next。
-    // P1-3 修复:之前 `unwrap_or(TaskStatus::Next)` 会让 task::update 调用
-    //   "只改 title" 的路径,悄悄把 status 从 "wip" 改成 "next",永久丢失原值。
-    let current_status = parse_task_status(&current.status)?;
-    let next_status = input.status.unwrap_or(current_status);
+    // current.status 已是强类型 TaskStatus(FromSql 在 get() 里已严格解析,
+    // legacy 脏数据会 loud fail 为 InvalidTaskStatus,不会走到这里)。
+    // P1-3 回归保证: "只改 title" 的 update 不会悄悄把 "wip" 改成 "next"。
+    let next_status = input.status.unwrap_or(current.status);
 
     let next_title = match input.title {
         Some(value) => validate_title(value)?.to_string(),
@@ -980,7 +1024,7 @@ mod tests {
         .unwrap();
 
         assert_eq!(task.title, "Add login");
-        assert_eq!(task.status, "active");
+        assert_eq!(task.status, TaskStatus::Active);
         assert_eq!(task.area, Some("backend".to_string()));
         assert_eq!(task.project, Some("super-tauri".to_string()));
         assert_eq!(task.whiteboard_id, "projects/super-tauri");
@@ -1071,7 +1115,7 @@ mod tests {
 
         let loaded = get(&conn, &task.id).unwrap();
         assert_eq!(loaded.content, "New body");
-        assert_eq!(loaded.status, "active");
+        assert_eq!(loaded.status, TaskStatus::Active);
         assert_eq!(loaded.title, "Original");
     }
 
@@ -1614,8 +1658,10 @@ mod tests {
         );
 
         // 5 个 status 每个都出现一次
-        let mut statuses: Vec<&str> =
-            tasks.iter().map(|t| t.status.as_str()).collect();
+        let mut statuses: Vec<&str> = tasks
+            .iter()
+            .map(|t| task_status_to_str(t.status))
+            .collect();
         statuses.sort();
         assert_eq!(
             statuses,
