@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useSearchParams } from "react-router-dom";
 import { GraphView, ROOT_WHITEBOARD, type GraphFocusTarget } from "@/components/keysight/GraphView";
 import { useWhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
 import type { AliasReference, GraphSelection } from "@/components/keysight/types";
@@ -39,7 +40,13 @@ function deriveWhiteboardIdFromFilePath(filePath: string): string {
 }
 
 export function KeysightView() {
-  const [currentWhiteboardId, setCurrentWhiteboardId] = useState(ROOT_WHITEBOARD);
+  const [searchParams, setSearchParams] = useSearchParams();
+  const urlWbId = searchParams.get("wb");
+
+  // 初始 state 从 URL 读；若 URL 没有则 fallback 到 ROOT_WHITEBOARD
+  const [currentWhiteboardId, setCurrentWhiteboardId] = useState(
+    urlWbId ?? ROOT_WHITEBOARD,
+  );
   const [selected, setSelected] = useState<GraphSelection | null>(null);
   const [previewRequestKey, setPreviewRequestKey] = useState(0);
   const [focusTarget, setFocusTarget] = useState<GraphFocusTarget | null>(null);
@@ -50,6 +57,14 @@ export function KeysightView() {
     () => (loadString("mode", "all") === "orphans" ? "orphans" : "all"),
   );
   const boardData = useWhiteboardData(currentWhiteboardId);
+
+  // URL → state：外部 navigate(/keysight?wb=xxx) 时同步本地 state
+  useEffect(() => {
+    if (urlWbId && urlWbId !== currentWhiteboardId) {
+      setCurrentWhiteboardId(urlWbId);
+      setSelected(null);
+    }
+  }, [urlWbId, currentWhiteboardId]);
 
   useEffect(() => {
     localStorage.setItem(STORAGE_PREFIX + "width", String(sidebarWidth));
@@ -110,10 +125,19 @@ export function KeysightView() {
     return null;
   }, [cardsById, selected, selectedAlias]);
 
-  const handleWhiteboardChange = useCallback((whiteboardId: string) => {
-    setCurrentWhiteboardId(whiteboardId);
-    setSelected(null);
-  }, []);
+  const handleWhiteboardChange = useCallback(
+    (whiteboardId: string) => {
+      setCurrentWhiteboardId(whiteboardId);
+      setSelected(null);
+      // state → URL 同步（replace 模式，不堆历史栈）
+      if (whiteboardId === ROOT_WHITEBOARD) {
+        setSearchParams({}, { replace: true });
+      } else {
+        setSearchParams({ wb: whiteboardId }, { replace: true });
+      }
+    },
+    [setSearchParams],
+  );
 
   const handleFocusEntity = useCallback((entityId: string, kind: GraphSelection["kind"] = "card") => {
     setSelected({ id: entityId, kind });
@@ -126,7 +150,8 @@ export function KeysightView() {
       if (card) {
         const targetWhiteboardId = deriveWhiteboardIdFromFilePath(card.filePath);
         if (targetWhiteboardId !== currentWhiteboardId) {
-          setCurrentWhiteboardId(targetWhiteboardId);
+          // 复用 handleWhiteboardChange，同步 URL（handleFocusEntity 会在之后重设 selected）
+          handleWhiteboardChange(targetWhiteboardId);
         }
       }
       handleFocusEntity(selection.id, "card");
@@ -139,7 +164,7 @@ export function KeysightView() {
     }
 
     handleFocusEntity(selection.id, selection.kind);
-  }, [cardsById, currentWhiteboardId, handleFocusEntity]);
+  }, [cardsById, currentWhiteboardId, handleFocusEntity, handleWhiteboardChange]);
 
   const handlePreviewEntity = useCallback((entityId: string, kind: GraphSelection["kind"] = "card") => {
     setSidebarCollapsed(false);

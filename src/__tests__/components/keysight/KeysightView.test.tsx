@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { MemoryRouter } from "react-router-dom";
 import { KeysightView } from "@/components/keysight/KeysightView";
 
 vi.mock("@/bindings", () => ({
@@ -115,7 +116,7 @@ vi.mock("@/components/keysight/hooks/useWhiteboardData", () => ({
   }),
 }));
 
-function renderKeysightView() {
+function renderKeysightView(initialEntry: string = "/keysight") {
   const queryClient = new QueryClient({
     defaultOptions: {
       queries: { retry: false },
@@ -125,7 +126,9 @@ function renderKeysightView() {
 
   return render(
     <QueryClientProvider client={queryClient}>
-      <KeysightView />
+      <MemoryRouter initialEntries={[initialEntry]}>
+        <KeysightView />
+      </MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -217,6 +220,29 @@ describe("KeysightView", () => {
       expect(
         screen.getByText((_, node) => node?.textContent === "selected:card_1"),
       ).toBeInTheDocument();
+    });
+  });
+});
+
+describe("KeysightView URL sync", () => {
+  beforeEach(() => {
+    localStorage.clear();
+    localStorage.setItem("keysight:sidebar:collapsed", "true");
+    localStorage.setItem("keysight:sidebar:query", "");
+    localStorage.setItem("keysight:sidebar:mode", "all");
+  });
+
+  it("?wb= 缺失时使用 ROOT_WHITEBOARD", async () => {
+    renderKeysightView("/keysight");
+    await waitFor(() => {
+      expect(screen.getByText(/whiteboard:root/)).toBeInTheDocument();
+    });
+  });
+
+  it("从 URL ?wb=projects/super-tauri 读取初始白板", async () => {
+    renderKeysightView("/keysight?wb=projects/super-tauri");
+    await waitFor(() => {
+      expect(screen.getByText(/whiteboard:projects\/super-tauri/)).toBeInTheDocument();
     });
   });
 });
