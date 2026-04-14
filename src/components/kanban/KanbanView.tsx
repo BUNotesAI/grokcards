@@ -1,22 +1,35 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
 import type { TaskStatus } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { KanbanBoard } from "./KanbanBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
+import { CreateTaskModal } from "./CreateTaskModal";
+import { invalidateAllTaskCaches } from "./invalidateAllTaskCaches";
+
+interface ModalState {
+  open: boolean;
+  status: TaskStatus;
+}
 
 /**
  * Kanban 主页面壳。
  *
  * URL state: `?project={name}` 单项目模式,缺失时为 "All projects" 跨项目模式。
- * 主数据源: useQuery(["tasks-kanban", project]) → commands.taskQueryKanban。
- * 创建 task 的 modal state 暂置 placeholder,由 Task 3.5 接入 CreateTaskModal。
+ * 主数据源: `useQuery(["tasks-kanban", project])` → `commands.taskQueryKanban`。
+ *
+ * 创建 task 数据流:
+ * - 列头 "+" 或 toolbar "+ New task" → openModal(status) → modalState.open = true
+ * - modal 受控渲染 `{modalState.open && <CreateTaskModal />}`(stale state 防护)
+ * - modal onSubmit → commands.taskCreate → invalidateAllTaskCaches → 关闭 modal
+ * - 错误通过 unwrapCommand throw,由 CreateTaskModal 内部 try/catch 显示
  */
 export function KanbanView() {
   const [searchParams] = useSearchParams();
   const project = searchParams.get("project");
+  const queryClient = useQueryClient();
 
   const tasksQuery = useQuery({
     queryKey: ["tasks-kanban", project],
@@ -33,8 +46,35 @@ export function KanbanView() {
     .filter((wb) => wb.whiteboardId.startsWith("projects/"))
     .map((wb) => wb.whiteboardId.slice("projects/".length));
 
-  // 列头 + 按钮点击的 pending status,Task 3.5 会接入 CreateTaskModal
-  const [, setCreatingStatus] = useState<TaskStatus | null>(null);
+  const [modalState, setModalState] = useState<ModalState>({
+    open: false,
+    status: "inbox",
+  });
+
+  const openModal = (status: TaskStatus) =>
+    setModalState({ open: true, status });
+
+  const closeModal = () =>
+    setModalState((prev) => ({ ...prev, open: false }));
+
+  const handleCreateTask = async (data: {
+    project: string;
+    title: string;
+    status: TaskStatus;
+  }) => {
+    await unwrapCommand(
+      commands.taskCreate(
+        data.project,
+        data.title,
+        null,
+        data.status,
+        null,
+        null,
+      ),
+    );
+    invalidateAllTaskCaches(queryClient, `projects/${data.project}`);
+    closeModal();
+  };
 
   if (tasksQuery.isLoading) {
     return (
@@ -70,7 +110,7 @@ export function KanbanView() {
       <KanbanToolbar
         currentProject={project}
         projects={projects}
-        onCreateTask={() => setCreatingStatus("inbox")}
+        onCreateTask={() => openModal("inbox")}
       />
       <div className="px-4 pt-2 text-xs text-muted-foreground">
         Kanban {project ? `— ${project}` : "(All projects)"}
@@ -79,9 +119,18 @@ export function KanbanView() {
         <KanbanBoard
           tasks={tasks}
           showProjectTags={showProjectTags}
-          onAddTask={setCreatingStatus}
+          onAddTask={openModal}
         />
       </div>
+      {modalState.open && (
+        <CreateTaskModal
+          initialStatus={modalState.status}
+          initialProject={project}
+          availableProjects={projects}
+          onSubmit={handleCreateTask}
+          onCancel={closeModal}
+        />
+      )}
     </div>
   );
 }
