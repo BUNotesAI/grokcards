@@ -191,22 +191,32 @@ pub(in crate::modules::keysight) fn sync_file(
 /// 规则:
 /// - `whiteboard/projects/{name}/...` → `projects/{name}`(reserved 命名空间,
 ///   用于 task kanban whiteboard,wb_id 是一个二级路径)
-/// - `whiteboard/{sub}/...` → `sub`(普通 whiteboard,wb_id 是扁平单级)
+/// - `whiteboard/{sub}/...` → `sub`(普通 whiteboard,wb_id 是扁平单级,
+///   其中 `sub != "projects"`,因为 `projects` 是 reserved 父目录)
+/// - `whiteboard/projects/loose.md`(`projects/` 下直接放文件,没有 project 子目录)
+///   → `wb_root`(quarantine 到根,不创建 `projects` 影子 whiteboard)
 /// - 其他 → `wb_root`(根白板,文件直接在 `whiteboard/` 下)
+///
+/// P1-7 修复:之前的实现对 `whiteboard/projects/loose.md` 会返回 `"projects"`,
+/// 但 `projects` 本身不是合法 whiteboard(是命名空间),这会创建一个影子 whiteboard
+/// 污染枚举结果。现在统一归到 wb_root。
 pub(super) fn derive_whiteboard_id(file_path: &str) -> String {
     let Some(path) = file_path.strip_prefix("whiteboard/") else {
         return "wb_root".to_string();
     };
     // 优先识别 reserved `projects/{name}/...` 作为二级 wb_id
-    if let Some(rest) = path.strip_prefix("projects/")
-        && let Some(slash_pos) = rest.find('/')
-    {
-        let project_name = &rest[..slash_pos];
-        if !project_name.is_empty() {
-            return format!("projects/{project_name}");
+    if let Some(rest) = path.strip_prefix("projects/") {
+        if let Some(slash_pos) = rest.find('/') {
+            let project_name = &rest[..slash_pos];
+            if !project_name.is_empty() {
+                return format!("projects/{project_name}");
+            }
         }
+        // `whiteboard/projects/loose.md` 或 `whiteboard/projects/` —— 没有 project
+        // 子目录,禁止创建 `projects` 影子 whiteboard,quarantine 到 wb_root
+        return "wb_root".to_string();
     }
-    // 否则取第一个 / 之前的部分作为扁平 wb_id
+    // 其余是普通扁平 whiteboard:取第一个 / 之前的部分作为 wb_id
     if let Some(slash_pos) = path.find('/') {
         let sub_wb = &path[..slash_pos];
         if !sub_wb.is_empty() {
@@ -608,13 +618,16 @@ Question body.
     }
 
     #[test]
-    fn test_derive_whiteboard_id_projects_no_subdir() {
-        // projects/ 下直接放文件(没有 project 子目录)→ 退化为扁平 "projects"
-        // 这是一个边界 case,实际上 task 不应该这样放,但 derive 逻辑要能退化处理
+    fn test_derive_whiteboard_id_projects_no_subdir_quarantines_to_wb_root() {
+        // P1-7 修复后:projects/ 下直接放文件(没有 project 子目录)
+        // 不再创建 `projects` 影子 whiteboard,而是 quarantine 到 wb_root。
+        // `projects` 是 reserved 父目录命名空间,不是合法 whiteboard。
         assert_eq!(
             derive_whiteboard_id("whiteboard/projects/loose.md"),
-            "projects"
+            "wb_root"
         );
+        // 空 project 名也一样归 wb_root
+        assert_eq!(derive_whiteboard_id("whiteboard/projects/"), "wb_root");
     }
 
     // --- remove_file ---

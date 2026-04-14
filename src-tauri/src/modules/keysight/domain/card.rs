@@ -64,7 +64,7 @@ impl<'a> SqliteCardStore<'a> {
             related: Some(card.related.clone()),
             see_also: Some(card.see_also.clone()),
             ..Default::default()
-        });
+        })?;
         vault_fs.write_file(&card.file_path, &updated)?;
         crate::modules::keysight::domain::sync::sync_file(
             self.conn,
@@ -539,7 +539,7 @@ impl CardStore for SqliteCardStore<'_> {
         let updated = parser::write_frontmatter(&content, parser::FrontmatterUpdate {
             understanding: Some(text.to_string()),
             ..Default::default()
-        });
+        })?;
         vault_fs.write_file(&file_path, &updated)?;
 
         self.conn.execute(
@@ -549,6 +549,12 @@ impl CardStore for SqliteCardStore<'_> {
         Ok(())
     }
 
+    /// 设置或清空卡片背景色,走标准 file-backed 写入链路:
+    /// 读文件 → 改 frontmatter → 写文件 → `sync::sync_file` 同步 DB。
+    ///
+    /// P1-6 修复:不再手动 `UPDATE entities SET color`,改走 `sync_file` 统一路径,
+    /// 保证 `file_mtimes` 正确更新,和 task/question/note 的写入路径一致,
+    /// 避免下次 `sync_vault` 时因 mtime 不一致重新导入覆盖。
     fn set_color(&self, id: &str, color: &str) -> Result<(), KeysightError> {
         let vault_fs = self.vault_fs.ok_or_else(|| {
             KeysightError::FileError("set_color 需要 VaultFs".to_string())
@@ -563,20 +569,23 @@ impl CardStore for SqliteCardStore<'_> {
             other => KeysightError::Database(other),
         })?;
 
-        // 读文件,用 serde_yaml 更新/移除 color,写回
+        // 读文件,用 serde_yaml 更新/移除 color,写回(P0-2: 解析失败会 propagate
+        // ParseError,不再静默销毁 frontmatter)
         let content = vault_fs.read_file(&file_path)?;
-        let updated = parser::write_color_frontmatter(&content, color);
+        let updated = parser::write_color_frontmatter(&content, color)?;
         vault_fs.write_file(&file_path, &updated)?;
 
-        // 同步到 entities.color 列(sync 的 update path 按 file_path 找到 entity)
-        let next_color = if color == "default" {
-            None
-        } else {
-            Some(color.to_string())
-        };
-        self.conn.execute(
-            "UPDATE entities SET color = ?1 WHERE id = ?2 AND kind = 'card'",
-            params![next_color, id],
+        // 走 sync_file 统一同步 entities.color + file_mtimes(和 task/note/question 一致)
+        let now_ms = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs_f64()
+            * 1000.0;
+        crate::modules::keysight::domain::sync::sync_file(
+            self.conn,
+            &file_path,
+            &updated,
+            now_ms,
         )?;
         Ok(())
     }

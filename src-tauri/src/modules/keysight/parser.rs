@@ -3,6 +3,8 @@
 use serde::Deserialize;
 use serde::Serialize;
 
+use crate::modules::keysight::errors::KeysightError;
+
 /// 已知的实体类型。
 const KNOWN_TYPES: &[&str] = &["atomic-card", "note", "project-task", "question"];
 
@@ -276,12 +278,11 @@ pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
 }
 
 /// 修改 frontmatter 并返回完整 markdown。
-pub(super) fn write_frontmatter(markdown: &str, updates: FrontmatterUpdate) -> String {
-    let fm_str = extract_frontmatter(markdown);
-    let mut map: serde_yaml::Mapping = match &fm_str {
-        Some(s) => serde_yaml::from_str(s).unwrap_or_default(),
-        None => serde_yaml::Mapping::new(),
-    };
+pub(super) fn write_frontmatter(
+    markdown: &str,
+    updates: FrontmatterUpdate,
+) -> Result<String, KeysightError> {
+    let mut map = parse_frontmatter_map(markdown)?;
 
     if let Some(id) = updates.id {
         map.remove(serde_yaml::Value::String("uuid".to_string()));
@@ -321,9 +322,7 @@ pub(super) fn write_frontmatter(markdown: &str, updates: FrontmatterUpdate) -> S
         );
     }
 
-    let after_fm = skip_frontmatter(markdown);
-    let yaml = serde_yaml::to_string(&map).unwrap_or_default();
-    format!("---\n{}---\n{}", yaml, after_fm)
+    render_with_frontmatter(markdown, &map)
 }
 
 /// 设置或清空 frontmatter 的 `color` 字段。
@@ -332,12 +331,17 @@ pub(super) fn write_frontmatter(markdown: &str, updates: FrontmatterUpdate) -> S
 /// - 其他 → 写入 `color: {value}`
 ///
 /// 用 serde_yaml 序列化,自动处理 hex 值(以 `#` 开头)被 YAML 当行内注释的坑。
-pub(super) fn write_color_frontmatter(markdown: &str, color: &str) -> String {
-    let fm_str = extract_frontmatter(markdown);
-    let mut map: serde_yaml::Mapping = match &fm_str {
-        Some(s) => serde_yaml::from_str(s).unwrap_or_default(),
-        None => serde_yaml::Mapping::new(),
-    };
+///
+/// # Errors
+///
+/// 返回 `KeysightError::ParseError` 当:
+/// - frontmatter 不是合法 YAML(防止静默吞掉其他字段 → 数据丢失)
+/// - 序列化回 YAML 失败(理论不可能,但保持对称)
+pub(super) fn write_color_frontmatter(
+    markdown: &str,
+    color: &str,
+) -> Result<String, KeysightError> {
+    let mut map = parse_frontmatter_map(markdown)?;
     let color_key = serde_yaml::Value::String("color".to_string());
     if color == "default" {
         map.remove(&color_key);
@@ -347,9 +351,34 @@ pub(super) fn write_color_frontmatter(markdown: &str, color: &str) -> String {
             serde_yaml::Value::String(color.to_string()),
         );
     }
+    render_with_frontmatter(markdown, &map)
+}
+
+/// 解析 frontmatter 为 mapping,如果 YAML 格式非法返回 ParseError。
+///
+/// **之前的实现用 `unwrap_or_default()` 在解析失败时静默返回空 mapping**,
+/// 导致下次 write 会把整份 frontmatter 替换成只有新字段的空壳,
+/// 所有其他字段(id / type / tags / linkTo / ...)丢失,下次 sync 时 entity
+/// 变孤儿。这是一个 P0 级数据丢失 bug,由 Phase B2 review 发现。
+fn parse_frontmatter_map(markdown: &str) -> Result<serde_yaml::Mapping, KeysightError> {
+    match extract_frontmatter(markdown) {
+        Some(s) => serde_yaml::from_str(&s).map_err(|e| {
+            KeysightError::ParseError(format!("frontmatter YAML 解析失败: {e}"))
+        }),
+        None => Ok(serde_yaml::Mapping::new()),
+    }
+}
+
+/// 把 mapping 序列化回 frontmatter + body。序列化失败返回 ParseError(理论不可能)。
+fn render_with_frontmatter(
+    markdown: &str,
+    map: &serde_yaml::Mapping,
+) -> Result<String, KeysightError> {
     let after_fm = skip_frontmatter(markdown);
-    let yaml = serde_yaml::to_string(&map).unwrap_or_default();
-    format!("---\n{}---\n{}", yaml, after_fm)
+    let yaml = serde_yaml::to_string(map).map_err(|e| {
+        KeysightError::ParseError(format!("frontmatter YAML 序列化失败: {e}"))
+    })?;
+    Ok(format!("---\n{}---\n{}", yaml, after_fm))
 }
 
 /// understanding 字段可以是 string 或 list（旧版兼容）。
@@ -616,8 +645,54 @@ after
                 id: Some("card_new00001".to_string()),
                 ..Default::default()
             },
-        );
+        )
+        .unwrap();
         assert!(updated.contains("card_new00001"));
         assert!(updated.contains("Body content here."));
+    }
+
+    #[test]
+    fn test_write_frontmatter_errors_on_malformed_yaml() {
+        // malformed YAML(tab 缩进 + 错键):旧实现会 unwrap_or_default 静默吞掉
+        // 所有字段,下次 write 写回一个空 frontmatter,导致数据丢失。
+        // P0-2 修复后应该返回 ParseError,由调用方决定怎么处理。
+        let malformed = "---\n\tkey:::not yaml\n---\n\n# Body\n";
+        let result = write_frontmatter(
+            malformed,
+            FrontmatterUpdate {
+                id: Some("card_new".to_string()),
+                ..Default::default()
+            },
+        );
+        assert!(
+            matches!(result, Err(KeysightError::ParseError(_))),
+            "expected ParseError for malformed YAML, got {result:?}"
+        );
+    }
+
+    #[test]
+    fn test_write_color_frontmatter_preserves_other_fields() {
+        let updated = write_color_frontmatter(CARD_MD, "#ffadad").unwrap();
+        // 必须保留原有字段,不能静默覆盖
+        assert!(updated.contains("id: card_abc12345"));
+        assert!(updated.contains("type: atomic-card"));
+        assert!(updated.contains("color:"));
+        assert!(updated.contains("ffadad"));
+    }
+
+    #[test]
+    fn test_write_color_frontmatter_clears_on_default_sentinel() {
+        let with_color = write_color_frontmatter(CARD_MD, "#ffadad").unwrap();
+        assert!(with_color.contains("color:"));
+        let cleared = write_color_frontmatter(&with_color, "default").unwrap();
+        assert!(!cleared.contains("color:"));
+        assert!(cleared.contains("id: card_abc12345"));
+    }
+
+    #[test]
+    fn test_write_color_frontmatter_errors_on_malformed_yaml() {
+        let malformed = "---\n\tbad yaml\n---\n\n# Body\n";
+        let result = write_color_frontmatter(malformed, "#ffadad");
+        assert!(matches!(result, Err(KeysightError::ParseError(_))));
     }
 }

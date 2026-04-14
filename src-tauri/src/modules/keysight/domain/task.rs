@@ -19,24 +19,91 @@ use super::sync;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(in crate::modules::keysight) struct ProjectName(String);
 
+/// ProjectName 的最大长度(单个路径组件)。255 是大多数文件系统的上限,
+/// 但 project name 还要和 task_id + title 拼在同一层目录,留足余量设 100。
+const PROJECT_NAME_MAX_LEN: usize = 100;
+
+/// Windows 保留的设备名(不区分大小写,不含扩展名)。
+/// POSIX 不禁,但我们要跨平台,所以一并禁。
+const WINDOWS_RESERVED: &[&str] = &[
+    "CON", "PRN", "AUX", "NUL",
+    "COM1", "COM2", "COM3", "COM4", "COM5", "COM6", "COM7", "COM8", "COM9",
+    "LPT1", "LPT2", "LPT3", "LPT4", "LPT5", "LPT6", "LPT7", "LPT8", "LPT9",
+];
+
 impl ProjectName {
     /// 构造 ProjectName,对非法输入返回 `InvalidProjectName`。
     ///
-    /// 合法字符集:allow 除 `/ \\ : * ? " < > |` 之外的任意 char(含中文、空格、`-`、`_`)。
-    /// 禁止原因:这些字符是 POSIX / Windows 文件系统的路径分隔符或保留字符。
+    /// ## 合法字符
+    /// 允许除下列之外的任意 char(包含中文、空格、`-`、`_`):
+    /// - 路径分隔符和 Windows 禁用字符:`/ \ : * ? " < > |`
+    /// - NUL 字节 `\0`(POSIX 路径截断)
+    /// - 控制字符(`\n` `\r` `\t` + ASCII < 0x20)
+    ///
+    /// ## 其他校验
+    /// - **不 silently trim** —— 前后空白 reject 而非偷偷吞掉
+    ///   (trim 后两个不同输入会变成同一个 project 名,是 bug 温床)
+    /// - 禁 `.` 和 `..` 等 dots-only(path traversal)
+    /// - 禁 leading `.`(Unix hidden file 约定)
+    /// - 禁 Windows 保留设备名(CON / PRN / AUX / NUL / COM1-9 / LPT1-9)
+    /// - 长度上限 [`PROJECT_NAME_MAX_LEN`] 字符
+    ///
+    /// P1-8 修复:之前只检查路径分隔符 + 自动 trim,对其余 filesystem 危险字符无防护。
     pub(in crate::modules::keysight) fn new(value: &str) -> Result<Self, KeysightError> {
-        let trimmed = value.trim();
-        if trimmed.is_empty() {
+        if value.is_empty() {
             return Err(KeysightError::InvalidProjectName("不能为空".to_string()));
         }
-        for ch in trimmed.chars() {
+        // 不允许前后空白 —— reject 而非 trim(两个输入 trim 后同名是 bug)
+        if value != value.trim() {
+            return Err(KeysightError::InvalidProjectName(
+                "前后不能有空白字符".to_string(),
+            ));
+        }
+        // 长度上限
+        if value.chars().count() > PROJECT_NAME_MAX_LEN {
+            return Err(KeysightError::InvalidProjectName(format!(
+                "长度超过 {PROJECT_NAME_MAX_LEN} 字符"
+            )));
+        }
+        // 字符级检查
+        for ch in value.chars() {
             if matches!(ch, '/' | '\\' | ':' | '*' | '?' | '"' | '<' | '>' | '|') {
                 return Err(KeysightError::InvalidProjectName(format!(
-                    "含非法字符 '{ch}'"
+                    "含路径非法字符 '{ch}'"
+                )));
+            }
+            if ch == '\0' {
+                return Err(KeysightError::InvalidProjectName(
+                    "含 NUL 字节".to_string(),
+                ));
+            }
+            if ch.is_control() {
+                return Err(KeysightError::InvalidProjectName(format!(
+                    "含控制字符 U+{:04X}",
+                    ch as u32
                 )));
             }
         }
-        Ok(Self(trimmed.to_string()))
+        // dots-only(`.` / `..` / `...` 等)— path traversal
+        if value.chars().all(|c| c == '.') {
+            return Err(KeysightError::InvalidProjectName(
+                "不能是 `.` / `..` 等纯点名".to_string(),
+            ));
+        }
+        // leading `.`(Unix hidden file)
+        if value.starts_with('.') {
+            return Err(KeysightError::InvalidProjectName(
+                "不能以 `.` 开头".to_string(),
+            ));
+        }
+        // Windows 保留设备名(不区分大小写,不含扩展名)
+        let upper = value.to_ascii_uppercase();
+        if WINDOWS_RESERVED.contains(&upper.as_str()) {
+            return Err(KeysightError::InvalidProjectName(format!(
+                "`{value}` 是 Windows 保留设备名"
+            )));
+        }
+        Ok(Self(value.to_string()))
     }
 
     /// 返回底层字符串切片,用于 SQL / 路径拼接。
@@ -270,7 +337,11 @@ pub(in crate::modules::keysight) fn by_status(
             "color": r.get::<_, Option<String>>(7)?,
         }))
     })?;
-    let results: Vec<serde_json::Value> = rows.filter_map(|r| r.ok()).collect();
+    // P1-4 修复:不再 filter_map(|r| r.ok()) 吞行错误。坏数据行必须 loud fail,
+    // 否则 kanban 视图会悄悄漏掉 task 不告诉任何人。
+    let results = rows
+        .collect::<rusqlite::Result<Vec<serde_json::Value>>>()
+        .map_err(KeysightError::from)?;
     Ok(results)
 }
 
@@ -389,8 +460,11 @@ pub(in crate::modules::keysight) fn update(
         .ok_or_else(|| KeysightError::InvalidProjectName(format!("task {id} 缺 project")))?;
     let project = ProjectName::new(&current_project_str)?;
 
-    // status 从 current.status 解析(tolerant 对 legacy 允许默认 Next)
-    let current_status = parse_task_status(&current.status).unwrap_or(TaskStatus::Next);
+    // status 从 current.status 严格解析 —— 如果 DB 里的状态不在 enum 集合中,
+    // 说明数据被外部污染,必须 loud fail 而不是 silently 重置为 Next。
+    // P1-3 修复:之前 `unwrap_or(TaskStatus::Next)` 会让 task::update 调用
+    //   "只改 title" 的路径,悄悄把 status 从 "wip" 改成 "next",永久丢失原值。
+    let current_status = parse_task_status(&current.status)?;
     let next_status = input.status.unwrap_or(current_status);
 
     let next_title = match input.title {
@@ -402,10 +476,15 @@ pub(in crate::modules::keysight) fn update(
         .area
         .map(|s| s.to_string())
         .or_else(|| current.area.clone());
-    let next_color = input
-        .color
-        .map(|s| s.to_string())
-        .or_else(|| current.color.clone());
+    // color "default" sentinel 清空(和 note.rs / question.rs / card.rs 一致):
+    //   Some("default") → None(清空)
+    //   Some(other)     → Some(other.to_string())(覆盖)
+    //   None            → current.color.clone()(保留)
+    let next_color = match input.color {
+        Some("default") => None,
+        Some(other) => Some(other.to_string()),
+        None => current.color.clone(),
+    };
 
     let previous_path = file_path.filter(|path| !path.is_empty());
     let relative_path =
@@ -467,12 +546,21 @@ pub(in crate::modules::keysight) fn delete(
         return Ok(());
     }
 
-    // Legacy DB-only 路径:没 file_path 的旧数据,直接删 DB 行
+    // Legacy DB-only 路径:没 file_path 的旧数据,手动级联清理
+    //
+    // P1-5 修复:之前只删 task_fields / positions / entities,漏了
+    // entity_tags / edges / entities_fts / section_members,导致 task 有外部
+    // 关联时留下悬挂的 edge / fts 行 / section 成员记录。
+    // 对齐 `sync::remove_file` 的完整清理列表。
     let rows = conn.execute("DELETE FROM task_fields WHERE entity_id = ?1", [id])?;
     if rows == 0 {
         return Err(KeysightError::NotFound(id.to_string()));
     }
+    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", [id])?;
+    conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id])?;
+    conn.execute("DELETE FROM entities_fts WHERE id = ?1", [id])?;
     conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
+    conn.execute("DELETE FROM section_members WHERE entity_id = ?1", [id])?;
     conn.execute("DELETE FROM entities WHERE id = ?1", [id])?;
     Ok(())
 }
@@ -524,10 +612,22 @@ mod tests {
         assert_eq!(p.as_str(), "我的 项目");
     }
 
+    /// P1-8 变更:不再 silently trim,前后空白直接 reject(两个输入 trim 后
+    /// 同名是 bug 温床)
     #[test]
-    fn test_project_name_trims() {
-        let p = ProjectName::new("  spaced  ").unwrap();
-        assert_eq!(p.as_str(), "spaced");
+    fn test_project_name_rejects_leading_trailing_whitespace() {
+        assert!(matches!(
+            ProjectName::new("  spaced  "),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        assert!(matches!(
+            ProjectName::new(" leading"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        assert!(matches!(
+            ProjectName::new("trailing "),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
     }
 
     #[test]
@@ -553,6 +653,81 @@ mod tests {
                 "expected {bad} to be rejected"
             );
         }
+    }
+
+    /// P1-8 新加:禁 NUL 字节和控制字符(POSIX 路径截断 / 显示破坏)
+    #[test]
+    fn test_project_name_rejects_nul_and_control_chars() {
+        assert!(matches!(
+            ProjectName::new("a\0b"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        assert!(matches!(
+            ProjectName::new("a\nb"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        assert!(matches!(
+            ProjectName::new("a\tb"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        assert!(matches!(
+            ProjectName::new("a\rb"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+    }
+
+    /// P1-8 新加:禁 dots-only(path traversal)
+    #[test]
+    fn test_project_name_rejects_dots_only() {
+        for bad in &[".", "..", "...", "...."] {
+            assert!(
+                matches!(
+                    ProjectName::new(bad),
+                    Err(KeysightError::InvalidProjectName(_))
+                ),
+                "expected {bad:?} to be rejected"
+            );
+        }
+    }
+
+    /// P1-8 新加:禁 leading dot(Unix hidden file)
+    #[test]
+    fn test_project_name_rejects_leading_dot() {
+        assert!(matches!(
+            ProjectName::new(".hidden"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        assert!(matches!(
+            ProjectName::new(".config"),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+    }
+
+    /// P1-8 新加:禁 Windows 保留设备名(跨平台安全)
+    #[test]
+    fn test_project_name_rejects_windows_reserved() {
+        for bad in &["CON", "con", "PRN", "aux", "NUL", "COM1", "lpt9", "COM5"] {
+            assert!(
+                matches!(
+                    ProjectName::new(bad),
+                    Err(KeysightError::InvalidProjectName(_))
+                ),
+                "expected {bad:?} to be rejected as Windows reserved name"
+            );
+        }
+    }
+
+    /// P1-8 新加:禁超长名(> 100 字符)
+    #[test]
+    fn test_project_name_rejects_too_long() {
+        let too_long: String = "a".repeat(101);
+        assert!(matches!(
+            ProjectName::new(&too_long),
+            Err(KeysightError::InvalidProjectName(_))
+        ));
+        // 100 字符刚好合法
+        let exactly: String = "a".repeat(100);
+        assert!(ProjectName::new(&exactly).is_ok());
     }
 
     // --- TaskStatus 互转 ---
@@ -835,6 +1010,102 @@ mod tests {
 
         let loaded = get(&conn, &task.id).unwrap();
         assert_eq!(loaded.color, Some("#a0c4ff".to_string()));
+    }
+
+    /// P1-3 回归测试:`task::update` 遇到 DB 中的非法 status 字符串必须 loud fail,
+    /// 不能 silently 重置为 Next。之前 `parse_task_status(...).unwrap_or(Next)`
+    /// 会让简单的 title rename 调用意外覆盖 legacy 状态值(例如 "wip" → "next"),
+    /// 永久丢失用户数据,违反 L0 "想出错都难" 原则。
+    #[test]
+    fn test_update_task_rejects_invalid_legacy_status() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+
+        // 用 sync_file 直接注入带非法 status 的 task(模拟 legacy / 污染数据)
+        let md = "---\ntype: project-task\nid: task_legacy0001\nstatus: wip\nproject: super-tauri\n---\n\n# 【TASK】Legacy Task\n\n";
+        sync::sync_file(
+            &conn,
+            "whiteboard/projects/super-tauri/task_legacy0001 【TASK】Legacy Task.md",
+            md,
+            1000.0,
+        )
+        .unwrap();
+
+        // 尝试 update(只改 title)—— 必须返回 InvalidTaskStatus,不得静默改状态
+        let result = update(
+            &conn,
+            &vfs,
+            "task_legacy0001",
+            TaskUpdateInput {
+                title: Some("Renamed"),
+                ..task_update_defaults()
+            },
+        );
+        assert!(
+            matches!(result, Err(KeysightError::InvalidTaskStatus(_))),
+            "expected InvalidTaskStatus, got {result:?}"
+        );
+
+        // 确认 DB 里的原值没有被 silently 覆盖
+        let status: String = conn
+            .query_row(
+                "SELECT status FROM task_fields WHERE entity_id = 'task_legacy0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(status, "wip", "原始 legacy 值必须保留");
+    }
+
+    /// P0-1 回归测试:`task::update` 必须识别 `"default"` sentinel 清空 color
+    /// (和 note/question/card/section 一致)。之前实现只有 map + or_else,
+    /// 导致 `Some("default")` 被写成字面字符串到 DB/frontmatter。
+    #[test]
+    fn test_update_task_clears_color_on_default_sentinel() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                color: Some("#ffadad"),
+                ..task_create_defaults("Task with color")
+            },
+        )
+        .unwrap();
+        assert_eq!(task.color, Some("#ffadad".to_string()));
+
+        // 用 "default" sentinel 清空
+        update(
+            &conn,
+            &vfs,
+            &task.id,
+            TaskUpdateInput {
+                color: Some("default"),
+                ..task_update_defaults()
+            },
+        )
+        .unwrap();
+
+        let loaded = get(&conn, &task.id).unwrap();
+        assert_eq!(loaded.color, None);
+
+        // 文件 frontmatter 里也不应该有字面 "default" 字符串
+        let file_path: String = conn
+            .query_row(
+                "SELECT file_path FROM entities WHERE id = ?1",
+                [&task.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let file = vfs.get_file(&file_path).unwrap();
+        assert!(
+            !file.contains("color: \"default\""),
+            "sentinel 不应该被写到文件: {file}"
+        );
+        assert!(!file.contains("color: default"), "同上");
     }
 
     #[test]

@@ -177,7 +177,10 @@ pub(super) fn by_status(conn: &Connection, status: &str) -> Result<Vec<serde_jso
             "status": r.get::<_, String>(4)?,
         }))
     })?;
-    let results: Vec<serde_json::Value> = rows.filter_map(|r| r.ok()).collect();
+    // P1-4 修复:不再 filter_map(|r| r.ok()) 吞行错误
+    let results = rows
+        .collect::<rusqlite::Result<Vec<serde_json::Value>>>()
+        .map_err(KeysightError::from)?;
     Ok(results)
 }
 
