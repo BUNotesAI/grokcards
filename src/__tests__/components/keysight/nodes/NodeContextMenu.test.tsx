@@ -451,4 +451,94 @@ describe("NodeContextMenu", () => {
       expect(screen.queryByText("Edit title")).not.toBeInTheDocument();
     });
   });
+
+  describe("variant='task'", () => {
+    const taskConfig: Extract<NodeMenuConfig, { kind: "task" }> = {
+      kind: "task",
+      handlers: {
+        copy_uuid_title: vi.fn(),
+        move_to_section: vi.fn(),
+        remove_from_group: vi.fn(),
+      },
+    };
+
+    beforeEach(() => {
+      for (const fn of Object.values(taskConfig.handlers)) {
+        if (typeof fn === "function") (fn as ReturnType<typeof vi.fn>).mockClear();
+      }
+    });
+
+    it("打开菜单 → 显示 Task 菜单项(Copy UUID + title / Move to Section)", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Copy UUID + title")).toBeInTheDocument();
+      expect(screen.getByText("Move to Section")).toBeInTheDocument();
+    });
+
+    it("sections 为空时不显示 Move to Section", () => {
+      render(<NodeContextMenu menu={taskConfig} sections={[]} currentSectionId={null} />);
+      act(() => openMenu());
+      expect(screen.queryByText("Move to Section")).not.toBeInTheDocument();
+    });
+
+    it("未在任何 section 时不显示 Remove from group", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.queryByText("Remove from group")).not.toBeInTheDocument();
+    });
+
+    it("在 section 中时显示 Remove from group", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId="sec_a" />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Remove from group")).toBeInTheDocument();
+    });
+
+    it("点击 Copy UUID + title → copy_uuid_title 被调用", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Copy UUID + title")));
+      expect(taskConfig.handlers.copy_uuid_title).toHaveBeenCalledTimes(1);
+    });
+
+    it("点击 Section A → move_to_section('sec_a') 被调用", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Move to Section")));
+      act(() => fireEvent.click(screen.getByText("Section A")));
+      expect(taskConfig.handlers.move_to_section).toHaveBeenCalledWith("sec_a");
+    });
+
+    it("点击 Remove from group → remove_from_group 被调用", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId="sec_a" />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Remove from group")));
+      expect(taskConfig.handlers.remove_from_group).toHaveBeenCalledTimes(1);
+    });
+
+    it("Task 菜单不含 Draw connection / Edit title / Delete / Set color / Related / Create alias / Jump to source card(白名单边界锁死)", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId="sec_a" />,
+      );
+      act(() => openMenu());
+      expect(screen.queryByText("Draw connection")).not.toBeInTheDocument();
+      expect(screen.queryByText("Edit title")).not.toBeInTheDocument();
+      expect(screen.queryByText("Delete")).not.toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: /set color/i })).not.toBeInTheDocument();
+      expect(screen.queryByText("Related")).not.toBeInTheDocument();
+      expect(screen.queryByText("Create alias")).not.toBeInTheDocument();
+      expect(screen.queryByText("→ Jump to source card")).not.toBeInTheDocument();
+    });
+  });
 });
