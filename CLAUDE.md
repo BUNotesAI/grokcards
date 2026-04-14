@@ -742,7 +742,7 @@ src/
 | `question_create` | `entities`, `question_fields` + markdown 文件 | DB 写 + 文件写(含 color 支持) | domain unit test |
 | `question_update` | `entities`, `question_fields` + markdown 文件 | DB 写 + 文件重写 + 可能 rename;`color` 参数 `"default"` sentinel 清空 | domain unit test |
 | `question_delete` | `entities`, `question_fields`, `edges`, `positions` + markdown 文件 | 级联删除 | domain unit test |
-| `task_create` (B2) | `entities`, `task_fields`, `file_mtimes`, `entities_fts` + `whiteboard/projects/{project}/{id} 【TASK】{title}.md` | DB 写 + 文件写(含 color/area/project);路径由 `ProjectName` 决定 | domain unit test |
+| `task_create` (B2) | `entities`, `task_fields`, `file_mtimes`, `entities_fts`, **`positions`** + `whiteboard/projects/{project}/{id} 【TASK】{title}.md` | DB 写 + 文件写(含 color/area/project) + auto-position 写 positions 行(x=0, y=最底元素下方);路径由 `ProjectName` 决定 | domain unit test |
 | `task_update` (B2) | `entities`, `task_fields`, `file_mtimes`, `entities_fts` + markdown 文件 | DB 写 + 文件重写 + title 改时 rename;不允许改 project;color `"default"` sentinel 清空 | domain unit test |
 | `task_delete` (B2) | `entities`, `task_fields`, `edges`, `positions`, `file_mtimes`, `entities_fts` + markdown 文件 | 级联删除(domain::task::delete 经 sync::remove_file) | domain unit test |
 | `task_set_color` (B2) | 等价于 `task_update` 只改 color | 同上 | 复用 task_update 测试 |
