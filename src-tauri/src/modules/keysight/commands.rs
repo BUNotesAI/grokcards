@@ -457,12 +457,6 @@ pub fn section_move_to_whiteboard(
 // Task
 // ============================================================
 
-/// 在 command 边界把 UI 传来的 TaskStatus(serde lowercase 字符串) 解析成枚举。
-fn parse_task_status_from_ipc(status: &str) -> Result<TaskStatus, AppError> {
-    serde_json::from_value::<TaskStatus>(serde_json::Value::String(status.to_string()))
-        .map_err(|_| AppError::Keysight(format!("task 状态不合法: {status}")))
-}
-
 /// 查询指定白板的所有 task。
 #[tauri::command]
 #[specta::specta]
@@ -480,14 +474,12 @@ pub fn task_query_all(
 /// ## 前置条件
 /// - `project` 不能为空且不含路径分隔符(由 ProjectName 校验)
 /// - `title` trim 后不能为空
-/// - `status` 必须是合法的 TaskStatus 字符串
 ///
 /// ## 执行效果
 /// 1. ProjectName::new 校验 project
-/// 2. parse_task_status 校验 status
-/// 3. 调 domain::task::create —— 生成 task_id、渲染 markdown、写
+/// 2. 调 domain::task::create —— 生成 task_id、渲染 markdown、写
 ///    `whiteboard/projects/{project}/{id} 【TASK】{title}.md`、sync 回 DB
-/// 4. 返回新 TaskEntity
+/// 3. 返回新 TaskEntity
 #[tauri::command]
 #[specta::specta]
 pub fn task_create(
@@ -495,7 +487,7 @@ pub fn task_create(
     project: String,
     title: String,
     content: Option<String>,
-    status: String,
+    status: TaskStatus,
     area: Option<String>,
     color: Option<String>,
 ) -> Result<TaskEntity, AppError> {
@@ -504,7 +496,6 @@ pub fn task_create(
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
     let project_name =
         task::ProjectName::new(&project).map_err(Into::<AppError>::into)?;
-    let parsed_status = parse_task_status_from_ipc(&status)?;
     task::create(
         &conn,
         &vault_fs,
@@ -512,7 +503,7 @@ pub fn task_create(
         task::TaskCreateInput {
             title: &title,
             content: content.as_deref(),
-            status: parsed_status,
+            status,
             area: area.as_deref(),
             color: color.as_deref(),
         },
@@ -529,17 +520,13 @@ pub fn task_update(
     id: String,
     title: Option<String>,
     content: Option<String>,
-    status: Option<String>,
+    status: Option<TaskStatus>,
     area: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
     let _t = ScopedTimer::new("cmd:task_update");
     let conn = lock_db(&state.db, "task_update");
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
-    let parsed_status = match status {
-        Some(s) => Some(parse_task_status_from_ipc(&s)?),
-        None => None,
-    };
     task::update(
         &conn,
         &vault_fs,
@@ -547,7 +534,7 @@ pub fn task_update(
         task::TaskUpdateInput {
             title: title.as_deref(),
             content: content.as_deref(),
-            status: parsed_status,
+            status,
             area: area.as_deref(),
             color: color.as_deref(),
         },
