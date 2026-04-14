@@ -467,7 +467,7 @@ describe("GraphView", () => {
     });
 
     await waitFor(() => {
-      expect(mockQuestionCreate).toHaveBeenCalledWith("wb_root", "Why Question", null, null);
+      expect(mockQuestionCreate).toHaveBeenCalledWith("wb_root", "Why Question", null, null, null);
     });
     await waitFor(() => {
       expect(mockLayoutSetPosition).toHaveBeenCalledWith(

@@ -345,10 +345,10 @@ export function GraphView({
             await unwrapCommand(commands.sectionUpdate(id, value, null));
             break;
           case "question-title":
-            await unwrapCommand(commands.questionUpdate(id, value, null, null));
+            await unwrapCommand(commands.questionUpdate(id, value, null, null, null));
             break;
           case "question-body":
-            await unwrapCommand(commands.questionUpdate(id, null, value, null));
+            await unwrapCommand(commands.questionUpdate(id, null, value, null, null));
             break;
         }
         if (field === "card-title" || field === "card-understanding") {
@@ -886,7 +886,7 @@ export function GraphView({
 
     try {
       const result = await unwrapCommand(
-        commands.questionCreate(currentWhiteboardId, title, null, null),
+        commands.questionCreate(currentWhiteboardId, title, null, null, null),
       );
       const pos = newEntityPositionAtCenter(320, 140);
       await unwrapCommand(

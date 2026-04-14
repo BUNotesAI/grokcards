@@ -50,6 +50,7 @@ pub(in crate::modules::keysight) fn create(
     title: &str,
     content: Option<&str>,
     status: Option<&str>,
+    color: Option<&str>,
 ) -> Result<QuestionEntity, KeysightError> {
     let title = validate_title(title)?;
     let question_id = id::gen_question_id();
@@ -59,7 +60,7 @@ pub(in crate::modules::keysight) fn create(
         content: content.unwrap_or_default().to_string(),
         whiteboard_id: whiteboard_id.to_string(),
         status: status.unwrap_or("pending").to_string(),
-        color: None,
+        color: color.filter(|v| !v.is_empty()).map(|v| v.to_string()),
     };
     let file_path = question_relative_path(whiteboard_id, &question_id, title);
     let markdown = render_question_markdown(&question);
@@ -75,12 +76,20 @@ pub(in crate::modules::keysight) fn update(
     title: Option<&str>,
     content: Option<&str>,
     status: Option<&str>,
+    color: Option<&str>,
 ) -> Result<(), KeysightError> {
     let current = get(conn, id)?;
     let file_path: Option<String> = conn
         .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id], |r| r.get(0))
         .optional()?;
 
+    // color "default" sentinel 清空(和 note.rs 一致):
+    //   Some("default") → None / Some(other) → 覆盖 / None → 保留 current
+    let next_color = match color {
+        Some("default") => None,
+        Some(other) => Some(other.to_string()),
+        None => current.color.clone(),
+    };
     let next = QuestionEntity {
         id: current.id.clone(),
         title: match title {
@@ -90,7 +99,7 @@ pub(in crate::modules::keysight) fn update(
         content: content.unwrap_or(&current.content).to_string(),
         whiteboard_id: current.whiteboard_id.clone(),
         status: status.unwrap_or(&current.status).to_string(),
-        color: current.color.clone(),
+        color: next_color,
     };
     let previous_path = file_path.filter(|path| !path.is_empty());
     let relative_path = desired_question_relative_path(&next.whiteboard_id, id, &next.title, previous_path.as_deref());
@@ -253,11 +262,17 @@ fn render_question_markdown(question: &QuestionEntity) -> String {
         "type: question".to_string(),
         format!("id: {}", question.id),
         format!("status: {}", question.status),
+    ];
+    if let Some(color) = question.color.as_deref().filter(|v| !v.is_empty()) {
+        // YAML 里裸的 `#` 会被当成行内注释,hex 色值必须加引号。
+        lines.push(format!("color: \"{color}\""));
+    }
+    lines.extend([
         "---".to_string(),
         String::new(),
         format!("# 【QUE】{}", question.title),
         String::new(),
-    ];
+    ]);
     if !body.is_empty() {
         lines.push(body.to_string());
     }
@@ -308,7 +323,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
 
-        let question = create(&conn, &vfs, "wb_root", "Test Question", Some("Body."), Some("doing")).unwrap();
+        let question = create(&conn, &vfs, "wb_root", "Test Question", Some("Body."), Some("doing"), None).unwrap();
 
         assert_eq!(question.status, "doing");
         let file_path: String = conn
@@ -323,9 +338,9 @@ mod tests {
     fn test_update_question_rewrites_markdown_file() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending")).unwrap();
+        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending"), None).unwrap();
 
-        update(&conn, &vfs, &question.id, Some("New"), Some("Updated"), Some("done")).unwrap();
+        update(&conn, &vfs, &question.id, Some("New"), Some("Updated"), Some("done"), None).unwrap();
 
         let loaded = get(&conn, &question.id).unwrap();
         assert_eq!(loaded.title, "New");
@@ -338,7 +353,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
 
-        let question = create(&conn, &vfs, "wb_root", "**Why** / Question", Some("Body"), None).unwrap();
+        let question = create(&conn, &vfs, "wb_root", "**Why** / Question", Some("Body"), None, None).unwrap();
 
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
@@ -350,12 +365,12 @@ mod tests {
     fn test_update_question_renames_file_when_title_changes() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending")).unwrap();
+        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending"), None).unwrap();
         let old_file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
             .unwrap();
 
-        update(&conn, &vfs, &question.id, Some("**New** / Question"), None, None).unwrap();
+        update(&conn, &vfs, &question.id, Some("**New** / Question"), None, None, None).unwrap();
 
         let new_file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
@@ -370,7 +385,7 @@ mod tests {
     fn test_delete_question_removes_markdown_file_and_db_rows() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Del", None, None).unwrap();
+        let question = create(&conn, &vfs, "wb_root", "Del", None, None, None).unwrap();
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
             .unwrap();
@@ -414,5 +429,82 @@ mod tests {
         seed_question(&conn);
         let questions = query_all(&conn, "other").unwrap();
         assert!(questions.is_empty());
+    }
+
+    #[test]
+    fn test_create_question_with_color() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+
+        let question = create(
+            &conn,
+            &vfs,
+            "wb_root",
+            "Colored Q",
+            None,
+            None,
+            Some("#ffadad"),
+        )
+        .unwrap();
+
+        assert_eq!(question.color, Some("#ffadad".to_string()));
+        let file_path: String = conn
+            .query_row(
+                "SELECT file_path FROM entities WHERE id = ?1",
+                [&question.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+        let content = vfs.get_file(&file_path).unwrap();
+        // hex 色值在 frontmatter 中必须加引号,避免被 YAML 当作行内注释
+        assert!(content.contains("color: \"#ffadad\""));
+    }
+
+    #[test]
+    fn test_update_question_sets_and_clears_color() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let question = create(&conn, &vfs, "wb_root", "Q", None, None, None).unwrap();
+
+        // 第一步:设置 color
+        update(
+            &conn,
+            &vfs,
+            &question.id,
+            None,
+            None,
+            None,
+            Some("#a0c4ff"),
+        )
+        .unwrap();
+        let loaded = get(&conn, &question.id).unwrap();
+        assert_eq!(loaded.color, Some("#a0c4ff".to_string()));
+
+        // 第二步:"default" sentinel 清空 color
+        update(&conn, &vfs, &question.id, None, None, None, Some("default")).unwrap();
+        let loaded = get(&conn, &question.id).unwrap();
+        assert_eq!(loaded.color, None);
+    }
+
+    #[test]
+    fn test_update_question_preserves_color_when_color_is_none() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let question = create(
+            &conn,
+            &vfs,
+            "wb_root",
+            "Q",
+            None,
+            None,
+            Some("#ffadad"),
+        )
+        .unwrap();
+
+        // 不传 color 参数 → 保留当前 color
+        update(&conn, &vfs, &question.id, Some("New title"), None, None, None).unwrap();
+        let loaded = get(&conn, &question.id).unwrap();
+        assert_eq!(loaded.color, Some("#ffadad".to_string()));
+        assert_eq!(loaded.title, "New title");
     }
 }

@@ -466,6 +466,7 @@ pub fn question_create(
     title: String,
     content: Option<String>,
     status: Option<String>,
+    color: Option<String>,
 ) -> Result<QuestionEntity, AppError> {
     let _t = ScopedTimer::new("cmd:question_create");
     let conn = lock_db(&state.db, "question_create");
@@ -477,11 +478,17 @@ pub fn question_create(
         &title,
         content.as_deref(),
         status.as_deref(),
+        color.as_deref(),
     )
     .map_err(Into::into)
 }
 
 /// 更新 question markdown 文件并重新同步。
+///
+/// color 语义(和 note_update 一致):
+/// - `None` → 保留 current.color
+/// - `Some("default")` → 清空 color
+/// - `Some(other)` → 覆盖为 `other`
 #[tauri::command]
 #[specta::specta]
 pub fn question_update(
@@ -490,6 +497,7 @@ pub fn question_update(
     title: Option<String>,
     content: Option<String>,
     status: Option<String>,
+    color: Option<String>,
 ) -> Result<(), AppError> {
     let _t = ScopedTimer::new("cmd:question_update");
     let conn = lock_db(&state.db, "question_update");
@@ -501,6 +509,7 @@ pub fn question_update(
         title.as_deref(),
         content.as_deref(),
         status.as_deref(),
+        color.as_deref(),
     )
     .map_err(Into::into)
 }
