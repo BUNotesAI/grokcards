@@ -1540,4 +1540,82 @@ mod tests {
         let result = query_kanban(&conn, None).unwrap();
         assert_eq!(result.len(), 0);
     }
+
+    #[test]
+    fn test_query_kanban_covers_all_5_statuses_and_orders_by_title() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let project = ProjectName::new("test").unwrap();
+
+        // 故意乱序创建,让 query 排序能力能被观测到
+        create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                status: TaskStatus::Next,
+                ..task_create_defaults("n task")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                status: TaskStatus::Inbox,
+                ..task_create_defaults("i task")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                status: TaskStatus::Done,
+                ..task_create_defaults("d task")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                status: TaskStatus::Active,
+                ..task_create_defaults("a task")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                status: TaskStatus::Blocked,
+                ..task_create_defaults("b task")
+            },
+        )
+        .unwrap();
+
+        let tasks = query_kanban(&conn, Some(&project)).unwrap();
+        assert_eq!(tasks.len(), 5);
+
+        // ORDER BY e.title ASC —— 不是按插入顺序或 status 顺序
+        let titles: Vec<&str> = tasks.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            vec!["a task", "b task", "d task", "i task", "n task"]
+        );
+
+        // 5 个 status 每个都出现一次
+        let mut statuses: Vec<&str> =
+            tasks.iter().map(|t| t.status.as_str()).collect();
+        statuses.sort();
+        assert_eq!(
+            statuses,
+            vec!["active", "blocked", "done", "inbox", "next"]
+        );
+    }
 }

@@ -128,6 +128,32 @@ describe("KanbanView", () => {
     });
   });
 
+  it("query 挂起时渲染 5 列 skeleton", () => {
+    // 用不 resolve 的 Promise 模拟 query 永远 pending
+    vi.mocked(commands.taskQueryKanban).mockReturnValue(
+      new Promise(() => {}),
+    );
+    vi.mocked(commands.whiteboardList).mockReturnValue(
+      new Promise(() => {}),
+    );
+    renderKanban("/kanban");
+    expect(
+      screen.getByTestId("kanban-column-inbox-skeleton"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("kanban-column-next-skeleton"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("kanban-column-active-skeleton"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("kanban-column-blocked-skeleton"),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByTestId("kanban-column-done-skeleton"),
+    ).toBeInTheDocument();
+  });
+
   it("query 失败时显示加载失败 + Retry 按钮", async () => {
     vi.mocked(commands.taskQueryKanban).mockResolvedValue({
       status: "error",

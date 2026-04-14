@@ -61,6 +61,62 @@ describe("KanbanToolbar", () => {
     expect(handler).toHaveBeenCalled();
   });
 
+  it("dropdown 选具体 project 时导航到 /kanban?project={name}", () => {
+    render(
+      <MemoryRouter initialEntries={["/kanban"]}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <KanbanToolbar
+                  currentProject={null}
+                  projects={["alpha", "beta"]}
+                  onCreateTask={vi.fn()}
+                />
+                <LocationReadout />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText(/切换 project/), {
+      target: { value: "beta" },
+    });
+    expect(screen.getByTestId("current-location")).toHaveTextContent(
+      "/kanban?project=beta",
+    );
+  });
+
+  it("dropdown 选 All projects 时清空 ?project= query", () => {
+    render(
+      <MemoryRouter initialEntries={["/kanban?project=alpha"]}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <KanbanToolbar
+                  currentProject="alpha"
+                  projects={["alpha", "beta"]}
+                  onCreateTask={vi.fn()}
+                />
+                <LocationReadout />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.change(screen.getByLabelText(/切换 project/), {
+      target: { value: "__all__" },
+    });
+    expect(screen.getByTestId("current-location")).toHaveTextContent(
+      "/kanban",
+    );
+  });
+
   it("点击 Reveal Graph 导航到 /keysight?wb=projects/{name}", () => {
     render(
       <MemoryRouter initialEntries={["/kanban?project=alpha"]}>
