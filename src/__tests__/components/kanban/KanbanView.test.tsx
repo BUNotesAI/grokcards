@@ -91,6 +91,43 @@ describe("KanbanView", () => {
     expect(screen.getByDisplayValue("Inbox")).toBeInTheDocument();
   });
 
+  it("端到端 happy path: query → board → modal → create → taskCreate called", async () => {
+    vi.mocked(commands.whiteboardList).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          whiteboardId: "projects/alpha",
+          cards: 0,
+          notes: 0,
+          sections: 0,
+          aliases: 0,
+          tasks: 0,
+          questions: 0,
+        },
+      ],
+    });
+
+    renderKanban("/kanban?project=alpha");
+
+    await waitFor(() => screen.getByText("New task"));
+    fireEvent.click(screen.getByText("New task"));
+    fireEvent.change(screen.getByPlaceholderText(/What needs doing/), {
+      target: { value: "Build kanban" },
+    });
+    fireEvent.click(screen.getByText("Create"));
+
+    await waitFor(() => {
+      expect(commands.taskCreate).toHaveBeenCalledWith(
+        "alpha",
+        "Build kanban",
+        null,
+        "inbox",
+        null,
+        null,
+      );
+    });
+  });
+
   it("query 失败时显示加载失败 + Retry 按钮", async () => {
     vi.mocked(commands.taskQueryKanban).mockResolvedValue({
       status: "error",

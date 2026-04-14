@@ -1,10 +1,21 @@
 import { render, screen, fireEvent, renderHook } from "@testing-library/react";
-import { MemoryRouter } from "react-router-dom";
+import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 
 // useNavigate in GraphToolbar requires a Router context,
 // 本文件所有 render 用 renderT 包裹 MemoryRouter
 function renderT(element: React.ReactElement) {
   return render(<MemoryRouter>{element}</MemoryRouter>);
+}
+
+// 跳转断言 helper:渲染当前 pathname + search,click 后断言位置变化
+function LocationReadout() {
+  const location = useLocation();
+  return (
+    <div data-testid="current-location">
+      {location.pathname}
+      {location.search}
+    </div>
+  );
 }
 import { GraphToolbar } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
@@ -394,5 +405,35 @@ describe("GraphToolbar", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: /show kanban/i })).not.toBeInTheDocument();
+  });
+
+  it("点击 Show Kanban 导航到 /kanban?project={name}", () => {
+    const viewport = createTestViewport();
+    render(
+      <MemoryRouter initialEntries={["/keysight?wb=projects/super-tauri"]}>
+        <Routes>
+          <Route
+            path="*"
+            element={
+              <>
+                <GraphToolbar
+                  viewport={viewport}
+                  entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+                  onSync={vi.fn()}
+                  onCreateSection={vi.fn()}
+                  onCreateNote={vi.fn()}
+                  currentWhiteboardId="projects/super-tauri"
+                />
+                <LocationReadout />
+              </>
+            }
+          />
+        </Routes>
+      </MemoryRouter>,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /show kanban/i }));
+    expect(screen.getByTestId("current-location")).toHaveTextContent(
+      "/kanban?project=super-tauri",
+    );
   });
 });
