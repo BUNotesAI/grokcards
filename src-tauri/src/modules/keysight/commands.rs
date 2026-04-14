@@ -1046,9 +1046,8 @@ pub fn entity_connect(
         Edge::AliasLink { .. } => {
             // alias 无独立文件内容(继承 owning card),不 sync
         }
-        Edge::QuestionLink { .. } => {
-            // TODO(sub-stage 2b): question 的 file sync 待补(currently question
-            // 没有 sync_links_to_file,UI 扩展到位后可添加)
+        Edge::QuestionLink { from, .. } => {
+            question::sync_links_to_file(&conn, &vault_fs, from.as_str()).map_err(AppError::from)?;
         }
         Edge::CardToAlias { .. } => {
             // alias 定义关系的反查路径,不单独写回 card file

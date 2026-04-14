@@ -296,6 +296,16 @@ pub struct QuestionEntity {
     /// 问题卡片背景色 — B2 新增,`None` 表示默认色。
     #[serde(default)]
     pub color: Option<String>,
+    #[serde(default)]
+    pub linked_section_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub linked_card_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub linked_note_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub linked_question_ids: Option<Vec<String>>,
+    #[serde(default)]
+    pub linked_task_ids: Option<Vec<String>>,
 }
 
 /// `edges` 表一行的投影（DB 原始列 + 透明字符串字段），供 graph reader 返回原始边数据。

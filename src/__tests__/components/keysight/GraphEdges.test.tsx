@@ -8,12 +8,14 @@ describe("GraphEdges", () => {
     c1: { x: 0, y: 0 },
     c2: { x: 600, y: 0 },
     n1: { x: 0, y: 400 },
+    q1: { x: 610, y: 430 },
     s1: { x: 600, y: 400 },
   };
   const dimensions: Record<string, { width: number; height: number }> = {
     c1: { width: 520, height: 220 },
     c2: { width: 520, height: 220 },
     n1: { width: 520, height: 180 },
+    q1: { width: 320, height: 140 },
     s1: { width: 400, height: 300 },
   };
 
@@ -79,5 +81,21 @@ describe("GraphEdges", () => {
       3,
     );
     expect(container.querySelectorAll("svg marker")).toHaveLength(3);
+  });
+
+  it("近距离 note -> question 连线仍保留可见路径长度", () => {
+    const edges: RenderEdge[] = [{ from: "n1", to: "q1", kind: "question_link" }];
+    const { container } = render(
+      <GraphEdges edges={edges} positions={positions} dimensions={dimensions} />,
+    );
+    const path = container.querySelector("svg g > path[data-edge-kind='question_link']");
+    expect(path).not.toBeNull();
+
+    const d = path!.getAttribute("d")!;
+    const match = d.match(/^M ([\d.-]+),([\d.-]+) Q .* ([\d.-]+),([\d.-]+)$/);
+    expect(match).not.toBeNull();
+    const startX = parseFloat(match![1]);
+    const endX = parseFloat(match![3]);
+    expect(endX - startX).toBeGreaterThan(30);
   });
 });

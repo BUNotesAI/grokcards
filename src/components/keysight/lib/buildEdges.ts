@@ -1,7 +1,7 @@
-import type { AtomicCard, CardAlias, GraphNote } from "@/bindings";
+import type { AtomicCard, CardAlias, GraphNote, QuestionEntity } from "@/bindings";
 
 /** 可渲染的 edge 类型 */
-export type EdgeKind = "link_to" | "note_link" | "alias_link";
+export type EdgeKind = "link_to" | "note_link" | "alias_link" | "question_link";
 
 export interface RenderEdge {
   from: string;
@@ -10,12 +10,13 @@ export interface RenderEdge {
 }
 
 /**
- * 从当前白板的 cards / notes / aliases 数据构建可渲染的 edge 列表。
+ * 从当前白板的 cards / notes / aliases / questions 数据构建可渲染的 edge 列表。
  *
  * 包含的 edge 类型：
  * - card.linkTo → link_to edge（橙色实线）
  * - note.linkedCardIds / linkedNoteIds / linkedSectionIds / linkedQuestionIds / linkedTaskIds → note_link edge（青色虚线）
  * - alias.linkedCardIds / linkedNoteIds / linkedSectionIds / linkedQuestionIds / linkedTaskIds → alias_link edge（青色虚线）
+ * - question.linkedCardIds / linkedNoteIds / linkedSectionIds / linkedQuestionIds / linkedTaskIds → question_link edge（青色虚线）
  *
  * 不包含：
  * - card.related — 通过 picker 添加，只在卡片展开后的 Related 列表里显示
@@ -27,6 +28,7 @@ export function buildEdges(
   cards: AtomicCard[],
   notes: GraphNote[],
   aliases: CardAlias[],
+  questions: QuestionEntity[],
   entitySet: Set<string>,
 ): RenderEdge[] {
   const edges: RenderEdge[] = [];
@@ -72,6 +74,21 @@ export function buildEdges(
     for (const cardId of alias.incomingCardIds ?? []) {
       if (cardId === alias.aliasId || !entitySet.has(cardId)) continue;
       edges.push({ from: cardId, to: alias.aliasId, kind: "alias_link" });
+    }
+  }
+
+  for (const question of questions) {
+    if (!entitySet.has(question.id)) continue;
+    const targets = [
+      ...(question.linkedCardIds ?? []),
+      ...(question.linkedNoteIds ?? []),
+      ...(question.linkedSectionIds ?? []),
+      ...(question.linkedQuestionIds ?? []),
+      ...(question.linkedTaskIds ?? []),
+    ];
+    for (const target of targets) {
+      if (target === question.id || !entitySet.has(target)) continue;
+      edges.push({ from: question.id, to: target, kind: "question_link" });
     }
   }
 

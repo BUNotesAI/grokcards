@@ -16,6 +16,71 @@ export interface EdgePath {
 }
 
 const EDGE_ARROW_CLEARANCE = 12;
+const EDGE_CORNER_INSET = 18;
+
+function clamp(value: number, min: number, max: number) {
+  return Math.min(Math.max(value, min), max);
+}
+
+function facingAnchor(
+  from: EdgeBox,
+  to: EdgeBox,
+  padding: number,
+): { p1: { x: number; y: number }; p2: { x: number; y: number } } {
+  const fromCenterX = from.x + from.width / 2;
+  const fromCenterY = from.y + from.height / 2;
+  const toCenterX = to.x + to.width / 2;
+  const toCenterY = to.y + to.height / 2;
+
+  const horizontalGap = Math.max(
+    to.x - (from.x + from.width),
+    from.x - (to.x + to.width),
+    0,
+  );
+  const verticalGap = Math.max(
+    to.y - (from.y + from.height),
+    from.y - (to.y + to.height),
+    0,
+  );
+
+  if (horizontalGap >= verticalGap) {
+    const fromOnRight = toCenterX >= fromCenterX;
+    const fromEdgeX = fromOnRight ? from.x + from.width + padding : from.x - padding;
+    const toEdgeX = fromOnRight ? to.x - padding : to.x + to.width + padding;
+    const fromY = clamp(
+      toCenterY,
+      from.y + EDGE_CORNER_INSET,
+      from.y + from.height - EDGE_CORNER_INSET,
+    );
+    const toY = clamp(
+      fromCenterY,
+      to.y + EDGE_CORNER_INSET,
+      to.y + to.height - EDGE_CORNER_INSET,
+    );
+    return {
+      p1: { x: fromEdgeX, y: fromY },
+      p2: { x: toEdgeX, y: toY },
+    };
+  }
+
+  const fromBelow = toCenterY >= fromCenterY;
+  const fromEdgeY = fromBelow ? from.y + from.height + padding : from.y - padding;
+  const toEdgeY = fromBelow ? to.y - padding : to.y + to.height + padding;
+  const fromX = clamp(
+    toCenterX,
+    from.x + EDGE_CORNER_INSET,
+    from.x + from.width - EDGE_CORNER_INSET,
+  );
+  const toX = clamp(
+    fromCenterX,
+    to.x + EDGE_CORNER_INSET,
+    to.x + to.width - EDGE_CORNER_INSET,
+  );
+  return {
+    p1: { x: fromX, y: fromEdgeY },
+    p2: { x: toX, y: toEdgeY },
+  };
+}
 
 /**
  * 构造 from→to 两矩形之间的 SVG 二次贝塞尔曲线 path。
@@ -53,27 +118,33 @@ export function buildEdgePath(
   const cx2 = to.x + to.width / 2;
   const cy2 = to.y + to.height / 2;
 
-  // 矩形外扩 padding，让连线端点离卡片边缘有缝隙
-  const p1 = clipToRect(
-    cx1,
-    cy1,
-    cx2,
-    cy2,
-    from.x - padding,
-    from.y - padding,
-    from.width + padding * 2,
-    from.height + padding * 2,
-  );
-  const p2 = clipToRect(
-    cx2,
-    cy2,
-    cx1,
-    cy1,
-    to.x - padding,
-    to.y - padding,
-    to.width + padding * 2,
-    to.height + padding * 2,
-  );
+  // 优先使用相对面的锚点。对宽卡片近距离轻微错位的场景更稳定，
+  // 不会把起终点都吸到邻近角落，导致可见箭头长度被回退吃掉。
+  let { p1, p2 } = facingAnchor(from, to, padding);
+
+  // 保底：若极端几何下锚点退化，再回到中心射线裁切。
+  if (p1.x === p2.x && p1.y === p2.y) {
+    p1 = clipToRect(
+      cx1,
+      cy1,
+      cx2,
+      cy2,
+      from.x - padding,
+      from.y - padding,
+      from.width + padding * 2,
+      from.height + padding * 2,
+    );
+    p2 = clipToRect(
+      cx2,
+      cy2,
+      cx1,
+      cy1,
+      to.x - padding,
+      to.y - padding,
+      to.width + padding * 2,
+      to.height + padding * 2,
+    );
+  }
 
   const dx = p2.x - p1.x;
   const dy = p2.y - p1.y;
@@ -83,7 +154,7 @@ export function buildEdgePath(
   // 二次贝塞尔控制点 — 中点 + 法向量偏移 curvature
   const midX = (p1.x + p2.x) / 2;
   const midY = (p1.y + p2.y) / 2;
-  const curvature = Math.min(len * 0.15, 40);
+  const curvature = Math.max(18, Math.min(len * 0.15, 40));
   const nx = -dy / len; // 法向量
   const ny = dx / len;
   const cpX = midX + nx * curvature;
@@ -95,10 +166,9 @@ export function buildEdgePath(
   const tangentX = p2.x - cpX;
   const tangentY = p2.y - cpY;
   const tangentLen = Math.sqrt(tangentX * tangentX + tangentY * tangentY);
-  const endX =
-    tangentLen > 0 ? p2.x - (tangentX / tangentLen) * EDGE_ARROW_CLEARANCE : p2.x;
-  const endY =
-    tangentLen > 0 ? p2.y - (tangentY / tangentLen) * EDGE_ARROW_CLEARANCE : p2.y;
+  const arrowClearance = Math.min(EDGE_ARROW_CLEARANCE, Math.max(4, len * 0.28));
+  const endX = tangentLen > 0 ? p2.x - (tangentX / tangentLen) * arrowClearance : p2.x;
+  const endY = tangentLen > 0 ? p2.y - (tangentY / tangentLen) * arrowClearance : p2.y;
 
   const path = `M ${p1.x},${p1.y} Q ${cpX},${cpY} ${endX},${endY}`;
   return { path, midX: cpX, midY: cpY };

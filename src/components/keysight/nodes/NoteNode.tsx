@@ -69,6 +69,7 @@ export const NoteNode = memo(function NoteNode({
       ? "0 0 0 2px rgba(16, 185, 129, 0.75), 0 8px 24px rgba(16, 185, 129, 0.1)"
       : "none";
   const opacity = dimmed ? 0.35 : 1;
+  const backgroundColor = note.color ?? "#ecf7f2";
 
   if (lodLevel === 2) {
     return (
@@ -99,7 +100,7 @@ export const NoteNode = memo(function NoteNode({
           width: 520,
           padding: "8px 14px",
           borderRadius: 12,
-          background: "#ecf7f2",
+          background: backgroundColor,
           boxShadow: emphasisRing,
           opacity,
           userSelect: "none",
@@ -169,7 +170,7 @@ export const NoteNode = memo(function NoteNode({
         minHeight: 60,
         padding: "14px 16px",
         borderRadius: 12,
-        background: "#ecf7f2", // #E1F5EE 40% mix on white
+        background: backgroundColor,
         boxShadow: emphasisRing,
         opacity,
         userSelect: "none",

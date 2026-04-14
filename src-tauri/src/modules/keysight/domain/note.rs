@@ -43,7 +43,21 @@ struct NoteFileState<'a> {
     linked_card_ids: &'a [String],
     linked_note_ids: &'a [String],
     linked_section_ids: &'a [String],
+    linked_question_ids: &'a [String],
+    linked_task_ids: &'a [String],
     file_path: Option<&'a str>,
+}
+
+struct NoteRenderInputs<'a> {
+    id: &'a str,
+    title: &'a str,
+    content: &'a str,
+    color: Option<&'a str>,
+    linked_card_ids: &'a [String],
+    linked_note_ids: &'a [String],
+    linked_section_ids: &'a [String],
+    linked_question_ids: &'a [String],
+    linked_task_ids: &'a [String],
 }
 
 impl<'a> SqliteNoteStore<'a> {
@@ -89,15 +103,17 @@ impl<'a> SqliteNoteStore<'a> {
             state.title,
             state.file_path,
         );
-        let markdown = render_note_markdown(
-            state.id,
-            state.title,
-            state.content,
-            state.color,
-            state.linked_card_ids,
-            state.linked_note_ids,
-            state.linked_section_ids,
-        );
+        let markdown = render_note_markdown(NoteRenderInputs {
+            id: state.id,
+            title: state.title,
+            content: state.content,
+            color: state.color,
+            linked_card_ids: state.linked_card_ids,
+            linked_note_ids: state.linked_note_ids,
+            linked_section_ids: state.linked_section_ids,
+            linked_question_ids: state.linked_question_ids,
+            linked_task_ids: state.linked_task_ids,
+        });
         vault_fs.write_file(&relative_path, &markdown)?;
         sync::sync_file(self.conn, &relative_path, &markdown, current_mtime_ms())?;
         if let Some(previous_path) = state.file_path
@@ -122,6 +138,8 @@ impl<'a> SqliteNoteStore<'a> {
             linked_card_ids: snapshot.note.linked_card_ids.as_deref().unwrap_or(&[]),
             linked_note_ids: snapshot.note.linked_note_ids.as_deref().unwrap_or(&[]),
             linked_section_ids: snapshot.note.linked_section_ids.as_deref().unwrap_or(&[]),
+            linked_question_ids: snapshot.note.linked_question_ids.as_deref().unwrap_or(&[]),
+            linked_task_ids: snapshot.note.linked_task_ids.as_deref().unwrap_or(&[]),
             file_path: snapshot.file_path.as_deref(),
         })?;
         Ok(())
@@ -136,7 +154,17 @@ impl NoteStore for SqliteNoteStore<'_> {
             .map(parser::normalize_legacy_toggle_syntax)
             .unwrap_or_default();
         let relative_path = note_relative_path(whiteboard_id, &note_id, title);
-        let markdown = render_note_markdown(&note_id, title, &normalized_content, color, &[], &[], &[]);
+        let markdown = render_note_markdown(NoteRenderInputs {
+            id: &note_id,
+            title,
+            content: &normalized_content,
+            color,
+            linked_card_ids: &[],
+            linked_note_ids: &[],
+            linked_section_ids: &[],
+            linked_question_ids: &[],
+            linked_task_ids: &[],
+        });
 
         self.require_vault_fs("create")?
             .write_file(&relative_path, &markdown)?;
@@ -190,6 +218,8 @@ impl NoteStore for SqliteNoteStore<'_> {
             linked_card_ids: snapshot.note.linked_card_ids.as_deref().unwrap_or(&[]),
             linked_note_ids: snapshot.note.linked_note_ids.as_deref().unwrap_or(&[]),
             linked_section_ids: snapshot.note.linked_section_ids.as_deref().unwrap_or(&[]),
+            linked_question_ids: snapshot.note.linked_question_ids.as_deref().unwrap_or(&[]),
+            linked_task_ids: snapshot.note.linked_task_ids.as_deref().unwrap_or(&[]),
             file_path: snapshot.file_path.as_deref(),
         })?;
         Ok(())
@@ -398,34 +428,34 @@ fn yaml_list(items: &[String]) -> String {
     }
 }
 
-fn render_note_markdown(
-    id: &str,
-    title: &str,
-    content: &str,
-    color: Option<&str>,
-    linked_card_ids: &[String],
-    linked_note_ids: &[String],
-    linked_section_ids: &[String],
-) -> String {
-    let normalized_body = parser::normalize_legacy_toggle_syntax(content).trim_end().to_string();
-    let mut link_to = linked_card_ids.to_vec();
-    link_to.extend(linked_note_ids.iter().cloned());
+fn render_note_markdown(input: NoteRenderInputs<'_>) -> String {
+    let normalized_body = parser::normalize_legacy_toggle_syntax(input.content)
+        .trim_end()
+        .to_string();
+    let mut link_to = input.linked_card_ids.to_vec();
+    link_to.extend(input.linked_note_ids.iter().cloned());
+    link_to.extend(input.linked_question_ids.iter().cloned());
+    link_to.extend(input.linked_task_ids.iter().cloned());
 
     let mut lines = vec![
         "---".to_string(),
         "type: note".to_string(),
-        format!("id: {id}"),
+        format!("id: {}", input.id),
         "tags: []".to_string(),
         format!("linkTo:{}", yaml_list(&link_to)),
         "related: []".to_string(),
-        format!("see-also:{}", yaml_list(linked_section_ids)),
+        format!("see-also:{}", yaml_list(input.linked_section_ids)),
     ];
-    if let Some(color) = color.filter(|value| !value.is_empty()) {
-        lines.push(format!("color: {color}"));
+    if let Some(color) = input.color.filter(|value| !value.is_empty()) {
+        if color.starts_with('#') {
+            lines.push(format!("color: \"{color}\""));
+        } else {
+            lines.push(format!("color: {color}"));
+        }
     }
     lines.push("---".to_string());
     lines.push(String::new());
-    lines.push(format!("# 【NOTE】{title}"));
+    lines.push(format!("# 【NOTE】{}", input.title));
     lines.push(String::new());
     if !normalized_body.is_empty() {
         lines.push(normalized_body);
@@ -683,6 +713,54 @@ mod tests {
         let file = vfs.get_file(&file_path).unwrap();
         assert!(file.contains("linkTo:\n  - card_target"));
         assert!(file.contains("see-also:\n  - sec_target"));
+    }
+
+    #[test]
+    fn test_sync_links_to_file_preserves_question_and_task_targets() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let note = store.create("projects/super-tauri", "Links", Some("body"), None).unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
+            params![note.id, "q_target"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
+            params![note.id, "task_target"],
+        )
+        .unwrap();
+
+        store.sync_links_to_file(&note.id).unwrap();
+
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        let file = vfs.get_file(&file_path).unwrap();
+        assert!(file.contains("linkTo:"));
+        assert!(file.contains("- q_target"));
+        assert!(file.contains("- task_target"));
+    }
+
+    #[test]
+    fn test_update_note_writes_hex_color_with_quotes() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let note = store.create("wb_root", "Color", Some("body"), None).unwrap();
+
+        store
+            .update(&note.id, None, None, Some("#fff8b3"))
+            .unwrap();
+
+        let loaded = store.get(&note.id).unwrap();
+        assert_eq!(loaded.color, Some("#fff8b3".to_string()));
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
+            .unwrap();
+        let file = vfs.get_file(&file_path).unwrap();
+        assert!(file.contains("color: \"#fff8b3\""));
     }
 
     #[test]

@@ -62,4 +62,18 @@ describe("buildEdgePath", () => {
     expect(endY).toBeGreaterThan(190);
     expect(endX).toBeLessThan(50);
   });
+
+  it("宽卡片近距离轻微错位时仍应保留可见路径长度", () => {
+    const note = { x: 0, y: 0, width: 520, height: 80 };
+    const question = { x: 610, y: 30, width: 320, height: 80 };
+    const result = buildEdgePath(note, question);
+
+    expect(result).not.toBeNull();
+    const match = result!.path.match(/^M ([\d.-]+),([\d.-]+) Q .* ([\d.-]+),([\d.-]+)$/);
+    expect(match).not.toBeNull();
+    const startX = parseFloat(match![1]);
+    const endX = parseFloat(match![3]);
+
+    expect(endX - startX).toBeGreaterThan(30);
+  });
 });

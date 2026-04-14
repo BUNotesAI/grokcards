@@ -10,6 +10,7 @@ const mockQuestion: QuestionEntity = {
   content: "问题详细描述",
   whiteboardId: "wb_root",
   status: "pending",
+  color: null,
 };
 
 /** 构造 question 菜单 config — 各 handler 都是 vi.fn */
@@ -46,6 +47,13 @@ describe("QuestionNode", () => {
     const doing = { ...mockQuestion, status: "doing" };
     render(<QuestionNode question={doing} style={{}} />);
     expect(screen.getByText("doing")).toBeInTheDocument();
+  });
+
+  it("有 color 时使用该背景色", () => {
+    const colored = { ...mockQuestion, color: "#ffadad" };
+    const { container } = render(<QuestionNode question={colored} style={{}} />);
+    const node = container.firstElementChild as HTMLElement;
+    expect(node.style.backgroundColor).toBe("rgb(255, 173, 173)");
   });
 
   it("双击 title -> onStartEdit('question-title')", () => {

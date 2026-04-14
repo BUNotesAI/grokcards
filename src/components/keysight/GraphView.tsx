@@ -732,8 +732,8 @@ export function GraphView({
   // 仅包含 from 和 to 都在当前白板内的 edge，避免渲染断头连线
   const renderEdges = useMemo(() => {
     const entitySet = new Set<string>(Object.keys(allKinds));
-    return buildEdges(data.cards, data.notes, data.aliases, entitySet);
-  }, [data.cards, data.notes, data.aliases, allKinds]);
+    return buildEdges(data.cards, data.notes, data.aliases, data.questions, entitySet);
+  }, [data.cards, data.notes, data.aliases, data.questions, allKinds]);
 
   const hasExpandedSpotlight = expandedId !== null;
 

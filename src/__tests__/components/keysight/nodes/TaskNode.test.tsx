@@ -12,6 +12,7 @@ const mockTask: TaskEntity = {
   status: "active",
   area: "backend",
   project: "keysight",
+  color: null,
 };
 
 describe("TaskNode", () => {
@@ -37,6 +38,13 @@ describe("TaskNode", () => {
     const noMeta = { ...mockTask, area: null, project: null };
     render(<TaskNode task={noMeta} style={{}} />);
     expect(screen.getByText("【TASK】实现搜索功能")).toBeInTheDocument();
+  });
+
+  it("有 color 时使用该背景色", () => {
+    const colored = { ...mockTask, color: "#caffbf" };
+    const { container } = render(<TaskNode task={colored} style={{}} />);
+    const node = container.firstElementChild as HTMLElement;
+    expect(node.style.backgroundColor).toBe("rgb(202, 255, 191)");
   });
 
   it("未传 contextMenu 时不渲染 ⋯ 按钮", () => {

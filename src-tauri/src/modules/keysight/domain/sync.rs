@@ -143,6 +143,13 @@ pub(in crate::modules::keysight) fn sync_file(
                 params![id, target],
             )?;
         }
+    } else if kind_str == "question" {
+        for target in &parsed.link_to {
+            conn.execute(
+                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
+                params![id, target],
+            )?;
+        }
     } else {
         for target in &parsed.link_to {
             conn.execute(

@@ -239,20 +239,19 @@ impl VaultFs for MockVaultFs {
         let mut results = std::collections::HashSet::new();
 
         for path in self.dirs.borrow().iter() {
-            if let Some(rest) = path.strip_prefix(&prefix) {
-                if !rest.is_empty() && !rest.contains('/') {
-                    results.insert(rest.to_string());
-                }
+            if let Some(rest) = path.strip_prefix(&prefix)
+                && !rest.is_empty() && !rest.contains('/')
+            {
+                results.insert(rest.to_string());
             }
         }
 
         for path in self.files.borrow().keys() {
-            if let Some(rest) = path.strip_prefix(&prefix) {
-                if let Some((dir, _)) = rest.split_once('/') {
-                    if !dir.is_empty() {
-                        results.insert(dir.to_string());
-                    }
-                }
+            if let Some(rest) = path.strip_prefix(&prefix)
+                && let Some((dir, _)) = rest.split_once('/')
+                && !dir.is_empty()
+            {
+                results.insert(dir.to_string());
             }
         }
 

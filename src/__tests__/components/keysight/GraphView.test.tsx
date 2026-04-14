@@ -158,6 +158,14 @@ function renderGraphView(props: Partial<ComponentProps<typeof GraphView>> = {}) 
   );
 }
 
+function getEntityNode(entityId: string): HTMLElement {
+  const node = document.querySelector(`[data-entity-id="${entityId}"]`);
+  if (!(node instanceof HTMLElement)) {
+    throw new Error(`Entity node not found: ${entityId}`);
+  }
+  return node;
+}
+
 describe("GraphView", () => {
   beforeEach(() => {
     mockEntityConnect.mockReset();
@@ -477,5 +485,131 @@ describe("GraphView", () => {
         expect.any(Number),
       );
     });
+  });
+
+  it("通过节点菜单进入 Draw connection 模式，再点击目标节点时调用 entityConnect", async () => {
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      tasks: [],
+      notes: [
+        {
+          id: "note_draw_1",
+          title: "Source Note",
+          content: "body",
+          color: null,
+          linkedCardIds: [],
+          linkedNoteIds: [],
+          linkedSectionIds: [],
+          linkedQuestionIds: [],
+          linkedTaskIds: [],
+        },
+      ],
+      questions: [
+        {
+          id: "q_draw_1",
+          title: "Target Question",
+          content: "body",
+          whiteboardId: "wb_root",
+          status: "pending",
+          color: null,
+          linkedCardIds: [],
+          linkedNoteIds: [],
+          linkedSectionIds: [],
+          linkedQuestionIds: [],
+          linkedTaskIds: [],
+        },
+      ],
+      positions: {
+        note_draw_1: { x: 100, y: 120 },
+        q_draw_1: { x: 760, y: 160 },
+      },
+    };
+
+    renderGraphView();
+
+    act(() => {
+      fireEvent.click(within(getEntityNode("note_draw_1")).getByRole("button", { name: /open menu/i }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText("Draw connection"));
+    });
+
+    expect(screen.getByText(/draw connection mode/i)).toBeInTheDocument();
+    expect(screen.getByTestId("graph-viewport")).toHaveStyle({ cursor: "crosshair" });
+
+    act(() => {
+      fireEvent.click(getEntityNode("q_draw_1"));
+    });
+
+    await waitFor(() => {
+      expect(mockEntityConnect).toHaveBeenCalledWith("note_draw_1", "q_draw_1");
+    });
+    await waitFor(() => {
+      expect(screen.queryByText(/draw connection mode/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it("project whiteboard 场景下渲染 note/question/task 颜色并显示连线", () => {
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      notes: [
+        {
+          id: "note_proj_1",
+          title: "Project Note",
+          content: "aha",
+          color: "#caffbf",
+          linkedCardIds: [],
+          linkedNoteIds: [],
+          linkedSectionIds: [],
+          linkedQuestionIds: ["q_proj_1"],
+          linkedTaskIds: [],
+        },
+      ],
+      questions: [
+        {
+          id: "q_proj_1",
+          title: "Question1",
+          content: "and you?",
+          whiteboardId: "projects/super-tauri",
+          status: "pending",
+          color: "#fff8b3",
+          linkedCardIds: [],
+          linkedNoteIds: [],
+          linkedSectionIds: [],
+          linkedQuestionIds: [],
+          linkedTaskIds: [],
+        },
+      ],
+      tasks: [
+        {
+          id: "task_proj_1",
+          title: "haha sandbox 2",
+          content: "",
+          whiteboardId: "projects/super-tauri",
+          status: "next",
+          area: null,
+          project: "super-tauri",
+          color: "#bdb2ff",
+        },
+      ],
+      positions: {
+        note_proj_1: { x: 80, y: 60 },
+        q_proj_1: { x: 720, y: 220 },
+        task_proj_1: { x: 60, y: 360 },
+      },
+    };
+
+    const { container } = renderGraphView({ currentWhiteboardId: "projects/super-tauri" });
+
+    expect(getEntityNode("note_proj_1").style.backgroundColor).toBe("rgb(202, 255, 191)");
+    expect(getEntityNode("q_proj_1").style.backgroundColor).toBe("rgb(255, 248, 179)");
+    expect(getEntityNode("task_proj_1").style.backgroundColor).toBe("rgb(189, 178, 255)");
+    expect(container.querySelectorAll("path[data-edge-kind='note_link']")).toHaveLength(1);
   });
 });

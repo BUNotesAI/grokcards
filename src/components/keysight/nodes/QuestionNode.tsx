@@ -57,6 +57,7 @@ export function QuestionNode({
       ? "0 0 0 2px rgba(16, 185, 129, 0.7)"
       : undefined;
   const opacity = dimmed ? 0.35 : 1;
+  const backgroundColor = question.color ?? "#ffffff";
   const isEditingTitle = editingField === "question-title";
   const isEditingBody = editingField === "question-body";
 
@@ -99,11 +100,11 @@ export function QuestionNode({
   }
 
   return (
-    <div
-      data-entity-id={question.id}
-      className="select-none rounded-xl border border-border/50 bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04)]"
-      style={{ ...style, width: 320, opacity, boxShadow: ring }}
-    >
+      <div
+        data-entity-id={question.id}
+        className="select-none rounded-xl border border-border/50 bg-card shadow-[0_1px_3px_rgba(0,0,0,0.06),0_4px_12px_rgba(0,0,0,0.04)]"
+        style={{ ...style, width: 320, opacity, boxShadow: ring, backgroundColor }}
+      >
       <div className="flex items-center gap-2 px-4 pt-3 pb-1">
         <span className="flex h-5 w-5 items-center justify-center rounded bg-gradient-to-br from-amber-400 to-orange-500 text-[10px] font-bold text-white">
           Q

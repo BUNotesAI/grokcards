@@ -7,6 +7,7 @@ const mockNote: GraphNote = {
   id: "note_test0001",
   title: "测试笔记",
   content: "笔记内容详情",
+  color: null,
 };
 
 describe("NoteNode", () => {
@@ -29,9 +30,10 @@ describe("NoteNode", () => {
     expect(screen.getByText("测试笔记")).toBeInTheDocument();
   });
   it("指定 color 时正常渲染", () => {
-    const blueNote: GraphNote = { ...mockNote, color: "blue" };
-    render(<NoteNode note={blueNote} style={{}} />);
-    expect(screen.getByText("测试笔记")).toBeInTheDocument();
+    const blueNote: GraphNote = { ...mockNote, color: "#a0c4ff" };
+    const { container } = render(<NoteNode note={blueNote} style={{}} />);
+    const node = container.firstElementChild as HTMLElement;
+    expect(node.style.backgroundColor).toBe("rgb(160, 196, 255)");
   });
 
   describe("inline editing", () => {

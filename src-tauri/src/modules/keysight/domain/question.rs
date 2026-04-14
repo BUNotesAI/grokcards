@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::modules::keysight::domain::edge::EntityId;
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
 use crate::modules::keysight::models::QuestionEntity;
@@ -20,8 +21,54 @@ pub(super) fn transition_status(conn: &Connection, id: &str, status: &str) -> Re
     Ok(())
 }
 
+struct QuestionLinkTargets {
+    linked_card_ids: Vec<String>,
+    linked_note_ids: Vec<String>,
+    linked_section_ids: Vec<String>,
+    linked_question_ids: Vec<String>,
+    linked_task_ids: Vec<String>,
+}
+
+fn load_linked_targets(
+    conn: &Connection,
+    id: &str,
+) -> Result<QuestionLinkTargets, KeysightError> {
+    let mut stmt = conn.prepare(
+        "SELECT to_id FROM edges WHERE from_id = ?1 AND edge_type = 'question_link'"
+    )?;
+    let targets: Vec<String> = stmt.query_map([id], |r| r.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+
+    let mut linked_card_ids = Vec::new();
+    let mut linked_section_ids = Vec::new();
+    let mut linked_note_ids = Vec::new();
+    let mut linked_question_ids = Vec::new();
+    let mut linked_task_ids = Vec::new();
+    for target_str in targets {
+        let entity_id = EntityId::parse(&target_str).map_err(|e| {
+            KeysightError::ParseError(format!(
+                "question_link target 无法 parse 为 EntityId: {target_str} ({e})"
+            ))
+        })?;
+        match entity_id {
+            EntityId::Card(_) | EntityId::Alias(_) => linked_card_ids.push(target_str),
+            EntityId::Section(_) => linked_section_ids.push(target_str),
+            EntityId::Note(_) => linked_note_ids.push(target_str),
+            EntityId::Question(_) => linked_question_ids.push(target_str),
+            EntityId::Task(_) => linked_task_ids.push(target_str),
+        }
+    }
+    Ok(QuestionLinkTargets {
+        linked_card_ids,
+        linked_note_ids,
+        linked_section_ids,
+        linked_question_ids,
+        linked_task_ids,
+    })
+}
+
 pub(in crate::modules::keysight) fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError> {
-    conn.query_row(
+    let mut question = conn.query_row(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, q.status, e.color \
          FROM entities e JOIN question_fields q ON e.id = q.entity_id \
          WHERE e.id = ?1 AND e.kind = 'question'",
@@ -34,13 +81,26 @@ pub(in crate::modules::keysight) fn get(conn: &Connection, id: &str) -> Result<Q
                 whiteboard_id: r.get(3)?,
                 status: r.get(4)?,
                 color: r.get(5)?,
+                linked_section_ids: None,
+                linked_card_ids: None,
+                linked_note_ids: None,
+                linked_question_ids: None,
+                linked_task_ids: None,
             })
         },
     )
     .map_err(|e| match e {
         rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
         other => KeysightError::Database(other),
-    })
+    })?;
+
+    let targets = load_linked_targets(conn, id)?;
+    question.linked_card_ids = (!targets.linked_card_ids.is_empty()).then_some(targets.linked_card_ids);
+    question.linked_note_ids = (!targets.linked_note_ids.is_empty()).then_some(targets.linked_note_ids);
+    question.linked_section_ids = (!targets.linked_section_ids.is_empty()).then_some(targets.linked_section_ids);
+    question.linked_question_ids = (!targets.linked_question_ids.is_empty()).then_some(targets.linked_question_ids);
+    question.linked_task_ids = (!targets.linked_task_ids.is_empty()).then_some(targets.linked_task_ids);
+    Ok(question)
 }
 
 pub(in crate::modules::keysight) fn create(
@@ -61,6 +121,11 @@ pub(in crate::modules::keysight) fn create(
         whiteboard_id: whiteboard_id.to_string(),
         status: status.unwrap_or("pending").to_string(),
         color: color.filter(|v| !v.is_empty()).map(|v| v.to_string()),
+        linked_section_ids: None,
+        linked_card_ids: None,
+        linked_note_ids: None,
+        linked_question_ids: None,
+        linked_task_ids: None,
     };
     let file_path = question_relative_path(whiteboard_id, &question_id, title);
     let markdown = render_question_markdown(&question);
@@ -100,10 +165,43 @@ pub(in crate::modules::keysight) fn update(
         whiteboard_id: current.whiteboard_id.clone(),
         status: status.unwrap_or(&current.status).to_string(),
         color: next_color,
+        linked_section_ids: current.linked_section_ids.clone(),
+        linked_card_ids: current.linked_card_ids.clone(),
+        linked_note_ids: current.linked_note_ids.clone(),
+        linked_question_ids: current.linked_question_ids.clone(),
+        linked_task_ids: current.linked_task_ids.clone(),
     };
     let previous_path = file_path.filter(|path| !path.is_empty());
     let relative_path = desired_question_relative_path(&next.whiteboard_id, id, &next.title, previous_path.as_deref());
     let markdown = render_question_markdown(&next);
+    vault_fs.write_file(&relative_path, &markdown)?;
+    sync::sync_file(conn, &relative_path, &markdown, current_mtime_ms())?;
+    if let Some(previous_path) = previous_path
+        && previous_path != relative_path
+    {
+        vault_fs.delete_file(&previous_path)?;
+        conn.execute("DELETE FROM file_mtimes WHERE filePath = ?1", [&previous_path])?;
+    }
+    Ok(())
+}
+
+pub(in crate::modules::keysight) fn sync_links_to_file(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+    id: &str,
+) -> Result<(), KeysightError> {
+    let current = get(conn, id)?;
+    let file_path: Option<String> = conn
+        .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id], |r| r.get(0))
+        .optional()?;
+    let previous_path = file_path.filter(|path| !path.is_empty());
+    let relative_path = desired_question_relative_path(
+        &current.whiteboard_id,
+        id,
+        &current.title,
+        previous_path.as_deref(),
+    );
+    let markdown = render_question_markdown(&current);
     vault_fs.write_file(&relative_path, &markdown)?;
     sync::sync_file(conn, &relative_path, &markdown, current_mtime_ms())?;
     if let Some(previous_path) = previous_path
@@ -143,22 +241,11 @@ pub(in crate::modules::keysight) fn delete(
 /// 查询指定白板的所有问题。
 pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<QuestionEntity>, KeysightError> {
     let mut stmt = conn.prepare(
-        "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
-         q.status, e.color \
-         FROM entities e JOIN question_fields q ON e.id = q.entity_id \
-         WHERE e.whiteboard_id = ?1 ORDER BY e.title"
+        "SELECT e.id FROM entities e WHERE e.kind = 'question' AND e.whiteboard_id = ?1 ORDER BY e.title"
     )?;
-    let rows = stmt.query_map([whiteboard_id], |r| {
-        Ok(QuestionEntity {
-            id: r.get(0)?,
-            title: r.get(1)?,
-            content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
-            whiteboard_id: r.get(3)?,
-            status: r.get(4)?,
-            color: r.get(5)?,
-        })
-    })?;
-    rows.collect::<rusqlite::Result<Vec<_>>>().map_err(KeysightError::from)
+    let ids: Vec<String> = stmt.query_map([whiteboard_id], |r| r.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    ids.iter().map(|id| get(conn, id)).collect()
 }
 
 /// 按状态查询问题。
@@ -260,11 +347,17 @@ fn question_relative_path(whiteboard_id: &str, question_id: &str, title: &str) -
 
 fn render_question_markdown(question: &QuestionEntity) -> String {
     let body = question.content.trim_end();
+    let mut link_to = question.linked_card_ids.clone().unwrap_or_default();
+    link_to.extend(question.linked_note_ids.clone().unwrap_or_default());
+    link_to.extend(question.linked_section_ids.clone().unwrap_or_default());
+    link_to.extend(question.linked_question_ids.clone().unwrap_or_default());
+    link_to.extend(question.linked_task_ids.clone().unwrap_or_default());
     let mut lines = vec![
         "---".to_string(),
         "type: question".to_string(),
         format!("id: {}", question.id),
         format!("status: {}", question.status),
+        format!("linkTo:{}", yaml_list(&link_to)),
     ];
     if let Some(color) = question.color.as_deref().filter(|v| !v.is_empty()) {
         // YAML 里裸的 `#` 会被当成行内注释,hex 色值必须加引号。
@@ -281,6 +374,21 @@ fn render_question_markdown(question: &QuestionEntity) -> String {
     }
     lines.push(String::new());
     lines.join("\n")
+}
+
+fn yaml_list(items: &[String]) -> String {
+    if items.is_empty() {
+        " []".to_string()
+    } else {
+        format!(
+            "\n{}",
+            items
+                .iter()
+                .map(|item| format!("  - {item}"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    }
 }
 
 #[cfg(test)]
@@ -509,5 +617,57 @@ mod tests {
         let loaded = get(&conn, &question.id).unwrap();
         assert_eq!(loaded.color, Some("#ffadad".to_string()));
         assert_eq!(loaded.title, "New title");
+    }
+
+    #[test]
+    fn test_get_question_reads_question_link_targets() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let question = create(&conn, &vfs, "projects/super-tauri", "Links", Some("body"), None, None).unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
+            params![question.id, "note_target"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
+            params![question.id, "task_target"],
+        )
+        .unwrap();
+
+        let loaded = get(&conn, &question.id).unwrap();
+        assert_eq!(loaded.linked_note_ids, Some(vec!["note_target".to_string()]));
+        assert_eq!(loaded.linked_task_ids, Some(vec!["task_target".to_string()]));
+    }
+
+    #[test]
+    fn test_update_question_preserves_question_links_in_markdown() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let question = create(&conn, &vfs, "projects/super-tauri", "Links", Some("body"), None, None).unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
+            params![question.id, "note_target"],
+        )
+        .unwrap();
+        conn.execute(
+            "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
+            params![question.id, "sec_target"],
+        )
+        .unwrap();
+
+        update(&conn, &vfs, &question.id, Some("Renamed"), None, None, None).unwrap();
+
+        let loaded = get(&conn, &question.id).unwrap();
+        assert_eq!(loaded.linked_note_ids, Some(vec!["note_target".to_string()]));
+        assert_eq!(loaded.linked_section_ids, Some(vec!["sec_target".to_string()]));
+
+        let file_path: String = conn
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .unwrap();
+        let content = vfs.get_file(&file_path).unwrap();
+        assert!(content.contains("linkTo:"));
+        assert!(content.contains("- note_target"));
+        assert!(content.contains("- sec_target"));
     }
 }
