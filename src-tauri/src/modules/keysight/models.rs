@@ -201,6 +201,9 @@ pub struct AtomicCard {
     pub see_also: Vec<String>,
     #[serde(default)]
     pub mtime: Option<f64>,
+    /// 卡片背景色 — B2 新增,`None` 表示默认色。
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// 图谱分组。
@@ -276,6 +279,9 @@ pub struct TaskEntity {
     pub area: Option<String>,
     #[serde(default)]
     pub project: Option<String>,
+    /// 任务卡片背景色 — B2 新增,`None` 表示默认色。
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// 问题实体（entities + question_fields 的联合查询结果）。
@@ -287,6 +293,9 @@ pub struct QuestionEntity {
     pub content: String,
     pub whiteboard_id: String,
     pub status: String,
+    /// 问题卡片背景色 — B2 新增,`None` 表示默认色。
+    #[serde(default)]
+    pub color: Option<String>,
 }
 
 /// `edges` 表一行的投影（DB 原始列 + 透明字符串字段），供 graph reader 返回原始边数据。

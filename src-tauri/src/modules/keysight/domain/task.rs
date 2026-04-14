@@ -44,7 +44,7 @@ pub(super) fn update_project(conn: &Connection, id: &str, project: &str) -> Resu
 pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<TaskEntity>, KeysightError> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
-         t.status, t.area, t.project \
+         t.status, t.area, t.project, e.color \
          FROM entities e JOIN task_fields t ON e.id = t.entity_id \
          WHERE e.whiteboard_id = ?1 ORDER BY e.title"
     )?;
@@ -57,6 +57,7 @@ pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: 
             status: r.get(4)?,
             area: r.get(5)?,
             project: r.get(6)?,
+            color: r.get(7)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(KeysightError::from)

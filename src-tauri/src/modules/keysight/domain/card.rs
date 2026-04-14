@@ -144,6 +144,7 @@ struct CardRow {
     understanding: String,
     source: String,
     mtime: Option<f64>,
+    color: Option<String>,
 }
 
 /// 用新的 title 重写卡片 markdown 的 H1 行。
@@ -168,7 +169,7 @@ fn query_card_rows(conn: &Connection, where_clause: &str, params: &[&dyn rusqlit
     let sql = format!(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, COALESCE(e.file_path, '') AS file_path, \
          COALESCE(c.understanding, '') AS understanding, COALESCE(c.source, '') AS source, \
-         f.mtime \
+         f.mtime, e.color \
          FROM entities e \
          LEFT JOIN card_fields c ON e.id = c.entity_id \
          LEFT JOIN file_mtimes f ON e.file_path = f.filePath \
@@ -185,6 +186,7 @@ fn query_card_rows(conn: &Connection, where_clause: &str, params: &[&dyn rusqlit
             understanding: row.get(4)?,
             source: row.get(5)?,
             mtime: row.get(6)?,
+            color: row.get(7)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(KeysightError::from)
@@ -216,6 +218,7 @@ fn assemble_cards(conn: &Connection, card_rows: Vec<CardRow>) -> Result<Vec<Atom
                 source: row.source,
                 see_also,
                 mtime: row.mtime,
+                color: row.color,
             }
         })
         .collect();
@@ -371,7 +374,7 @@ impl CardStore for SqliteCardStore<'_> {
                 format!(
                     "SELECT e.id, e.title, COALESCE(e.content, '') AS content, COALESCE(e.file_path, '') AS file_path, \
                      COALESCE(c.understanding, '') AS understanding, COALESCE(c.source, '') AS source, \
-                     f.mtime \
+                     f.mtime, e.color \
                      FROM entities e \
                      LEFT JOIN card_fields c ON e.id = c.entity_id \
                      LEFT JOIN file_mtimes f ON e.file_path = f.filePath \
@@ -383,7 +386,7 @@ impl CardStore for SqliteCardStore<'_> {
                 format!(
                     "SELECT e.id, e.title, COALESCE(e.content, '') AS content, COALESCE(e.file_path, '') AS file_path, \
                      COALESCE(c.understanding, '') AS understanding, COALESCE(c.source, '') AS source, \
-                     f.mtime \
+                     f.mtime, e.color \
                      FROM entities e \
                      LEFT JOIN card_fields c ON e.id = c.entity_id \
                      LEFT JOIN file_mtimes f ON e.file_path = f.filePath \
@@ -395,7 +398,7 @@ impl CardStore for SqliteCardStore<'_> {
         } else {
             "SELECT e.id, e.title, COALESCE(e.content, '') AS content, COALESCE(e.file_path, '') AS file_path, \
              COALESCE(c.understanding, '') AS understanding, COALESCE(c.source, '') AS source, \
-             f.mtime \
+             f.mtime, e.color \
              FROM entities e \
              LEFT JOIN card_fields c ON e.id = c.entity_id \
              LEFT JOIN file_mtimes f ON e.file_path = f.filePath \
@@ -413,6 +416,7 @@ impl CardStore for SqliteCardStore<'_> {
                 understanding: row.get(4)?,
                 source: row.get(5)?,
                 mtime: row.get(6)?,
+                color: row.get(7)?,
             })
         })?;
         let card_rows: Vec<CardRow> = rows.collect::<rusqlite::Result<Vec<_>>>()?;

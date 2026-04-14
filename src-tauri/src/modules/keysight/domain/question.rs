@@ -22,7 +22,7 @@ pub(super) fn transition_status(conn: &Connection, id: &str, status: &str) -> Re
 
 pub(in crate::modules::keysight) fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError> {
     conn.query_row(
-        "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, q.status \
+        "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, q.status, e.color \
          FROM entities e JOIN question_fields q ON e.id = q.entity_id \
          WHERE e.id = ?1 AND e.kind = 'question'",
         [id],
@@ -33,6 +33,7 @@ pub(in crate::modules::keysight) fn get(conn: &Connection, id: &str) -> Result<Q
                 content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
                 whiteboard_id: r.get(3)?,
                 status: r.get(4)?,
+                color: r.get(5)?,
             })
         },
     )
@@ -58,6 +59,7 @@ pub(in crate::modules::keysight) fn create(
         content: content.unwrap_or_default().to_string(),
         whiteboard_id: whiteboard_id.to_string(),
         status: status.unwrap_or("pending").to_string(),
+        color: None,
     };
     let file_path = question_relative_path(whiteboard_id, &question_id, title);
     let markdown = render_question_markdown(&question);
@@ -88,6 +90,7 @@ pub(in crate::modules::keysight) fn update(
         content: content.unwrap_or(&current.content).to_string(),
         whiteboard_id: current.whiteboard_id.clone(),
         status: status.unwrap_or(&current.status).to_string(),
+        color: current.color.clone(),
     };
     let previous_path = file_path.filter(|path| !path.is_empty());
     let relative_path = desired_question_relative_path(&next.whiteboard_id, id, &next.title, previous_path.as_deref());
@@ -132,7 +135,7 @@ pub(in crate::modules::keysight) fn delete(
 pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<QuestionEntity>, KeysightError> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
-         q.status \
+         q.status, e.color \
          FROM entities e JOIN question_fields q ON e.id = q.entity_id \
          WHERE e.whiteboard_id = ?1 ORDER BY e.title"
     )?;
@@ -143,6 +146,7 @@ pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: 
             content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
             whiteboard_id: r.get(3)?,
             status: r.get(4)?,
+            color: r.get(5)?,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>().map_err(KeysightError::from)
