@@ -28,6 +28,11 @@ pub(in crate::modules::keysight) trait CardStore {
     fn edit_body(&self, id: &str, new_body: &str) -> Result<(), KeysightError>;
     /// 更新理解笔记（同时写回文件 frontmatter）。
     fn update_understanding(&self, id: &str, text: &str) -> Result<(), KeysightError>;
+    /// 设置或清空卡片背景色(同时写回 frontmatter)。
+    ///
+    /// `color == "default"` 时清空,其他值直接写入。用 serde_yaml 序列化避免
+    /// hex `#ffadad` 被 YAML 当行内注释。
+    fn set_color(&self, id: &str, color: &str) -> Result<(), KeysightError>;
     /// 全文搜索卡片。
     fn search(&self, text: &str) -> Result<Vec<AtomicCard>, KeysightError>;
     /// 查询单卡片完整链接图谱。
@@ -544,6 +549,38 @@ impl CardStore for SqliteCardStore<'_> {
         Ok(())
     }
 
+    fn set_color(&self, id: &str, color: &str) -> Result<(), KeysightError> {
+        let vault_fs = self.vault_fs.ok_or_else(|| {
+            KeysightError::FileError("set_color 需要 VaultFs".to_string())
+        })?;
+
+        let file_path: String = self.conn.query_row(
+            "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
+            [id],
+            |r| r.get(0),
+        ).map_err(|e| match e {
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            other => KeysightError::Database(other),
+        })?;
+
+        // 读文件,用 serde_yaml 更新/移除 color,写回
+        let content = vault_fs.read_file(&file_path)?;
+        let updated = parser::write_color_frontmatter(&content, color);
+        vault_fs.write_file(&file_path, &updated)?;
+
+        // 同步到 entities.color 列(sync 的 update path 按 file_path 找到 entity)
+        let next_color = if color == "default" {
+            None
+        } else {
+            Some(color.to_string())
+        };
+        self.conn.execute(
+            "UPDATE entities SET color = ?1 WHERE id = ?2 AND kind = 'card'",
+            params![next_color, id],
+        )?;
+        Ok(())
+    }
+
     fn search(&self, text: &str) -> Result<Vec<AtomicCard>, KeysightError> {
         let text = text.trim();
         if text.is_empty() {
@@ -958,6 +995,64 @@ Dirty body content.
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
         let result = store.edit_title("card_nonexist", "X");
+        assert!(matches!(result, Err(KeysightError::NotFound(_))));
+    }
+
+    #[test]
+    fn test_set_color_writes_frontmatter_and_db() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        store.set_color("card_test0001", "#ffadad").unwrap();
+
+        // DB 更新
+        let color: Option<String> = conn
+            .query_row(
+                "SELECT color FROM entities WHERE id = 'card_test0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(color, Some("#ffadad".to_string()));
+
+        // 文件 frontmatter 更新 —— serde_yaml 会处理 hex 引号
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
+        assert!(file.contains("color:"));
+        assert!(file.contains("ffadad"));
+    }
+
+    #[test]
+    fn test_set_color_default_clears_frontmatter_and_db() {
+        let conn = test_conn();
+        let vfs = seed_card_with_file(&conn);
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        // 先设颜色
+        store.set_color("card_test0001", "#ffadad").unwrap();
+        // 再用 "default" 清空
+        store.set_color("card_test0001", "default").unwrap();
+
+        let color: Option<String> = conn
+            .query_row(
+                "SELECT color FROM entities WHERE id = 'card_test0001'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(color, None);
+
+        let file = vfs.get_file("whiteboard/test.md").unwrap();
+        assert!(!file.contains("color:"));
+    }
+
+    #[test]
+    fn test_set_color_not_found() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
+
+        let result = store.set_color("card_nonexist", "#ffadad");
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 

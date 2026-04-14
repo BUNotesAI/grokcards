@@ -326,6 +326,32 @@ pub(super) fn write_frontmatter(markdown: &str, updates: FrontmatterUpdate) -> S
     format!("---\n{}---\n{}", yaml, after_fm)
 }
 
+/// 设置或清空 frontmatter 的 `color` 字段。
+///
+/// - `color == "default"` → 移除 color 字段(清空)
+/// - 其他 → 写入 `color: {value}`
+///
+/// 用 serde_yaml 序列化,自动处理 hex 值(以 `#` 开头)被 YAML 当行内注释的坑。
+pub(super) fn write_color_frontmatter(markdown: &str, color: &str) -> String {
+    let fm_str = extract_frontmatter(markdown);
+    let mut map: serde_yaml::Mapping = match &fm_str {
+        Some(s) => serde_yaml::from_str(s).unwrap_or_default(),
+        None => serde_yaml::Mapping::new(),
+    };
+    let color_key = serde_yaml::Value::String("color".to_string());
+    if color == "default" {
+        map.remove(&color_key);
+    } else {
+        map.insert(
+            color_key,
+            serde_yaml::Value::String(color.to_string()),
+        );
+    }
+    let after_fm = skip_frontmatter(markdown);
+    let yaml = serde_yaml::to_string(&map).unwrap_or_default();
+    format!("---\n{}---\n{}", yaml, after_fm)
+}
+
 /// understanding 字段可以是 string 或 list（旧版兼容）。
 fn string_or_list<'de, D>(deserializer: D) -> Result<Option<String>, D::Error>
 where

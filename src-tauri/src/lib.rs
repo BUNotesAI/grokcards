@@ -33,6 +33,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::card_edit_title,
         modules::keysight::commands::card_edit_body,
         modules::keysight::commands::card_update_understanding,
+        modules::keysight::commands::card_set_color,
         // keysight: section
         modules::keysight::commands::section_get,
         modules::keysight::commands::section_query_all,
@@ -44,6 +45,10 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::section_move_to_whiteboard,
         // keysight: task
         modules::keysight::commands::task_query_all,
+        modules::keysight::commands::task_create,
+        modules::keysight::commands::task_update,
+        modules::keysight::commands::task_delete,
+        modules::keysight::commands::task_set_color,
         // keysight: question
         modules::keysight::commands::question_query_all,
         modules::keysight::commands::question_create,

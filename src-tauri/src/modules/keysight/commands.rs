@@ -15,7 +15,7 @@ use super::domain::{overview, question, sync, task, whiteboard};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, EdgeRow, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, NoteFileMigrationReport, Position,
-    QuestionEntity, StatsResponse, SyncFileResponse, SyncVaultReport, TaskEntity,
+    QuestionEntity, StatsResponse, SyncFileResponse, SyncVaultReport, TaskEntity, TaskStatus,
     VaultInfoResponse, WhiteboardSummary,
 };
 use super::state::KeysightState;
@@ -213,6 +213,34 @@ pub fn card_update_understanding(
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
     let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
     store.update_understanding(&id, &text).map_err(Into::into)
+}
+
+/// # card_set_color
+///
+/// ## 前置条件
+/// - id 对应的 card 必须存在
+///
+/// ## 执行效果
+/// 1. 读取 card 的 markdown 文件(通过 VaultFs)
+/// 2. 在 frontmatter 中设置/清空 `color` 字段(serde_yaml 序列化,自动处理 hex)
+/// 3. 写回文件
+/// 4. 更新 entities.color 列
+///
+/// ## 参数
+/// - `color == "default"` → 清空 color(移除 frontmatter 字段 + entities.color = NULL)
+/// - 其他 → 设置 color 为该值
+#[tauri::command]
+#[specta::specta]
+pub fn card_set_color(
+    state: State<'_, KeysightState>,
+    id: String,
+    color: String,
+) -> Result<(), AppError> {
+    let _t = ScopedTimer::new("cmd:card_set_color");
+    let conn = lock_db(&state.db, "card_set_color");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
+    let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
+    store.set_color(&id, &color).map_err(Into::into)
 }
 
 // ============================================================
@@ -429,6 +457,12 @@ pub fn section_move_to_whiteboard(
 // Task
 // ============================================================
 
+/// 在 command 边界把 UI 传来的 TaskStatus(serde lowercase 字符串) 解析成枚举。
+fn parse_task_status_from_ipc(status: &str) -> Result<TaskStatus, AppError> {
+    serde_json::from_value::<TaskStatus>(serde_json::Value::String(status.to_string()))
+        .map_err(|_| AppError::Keysight(format!("task 状态不合法: {status}")))
+}
+
 /// 查询指定白板的所有 task。
 #[tauri::command]
 #[specta::specta]
@@ -439,6 +473,125 @@ pub fn task_query_all(
     let _t = ScopedTimer::new("cmd:task_query_all");
     let conn = lock_db(&state.db, "task_query_all");
     task::query_all(&conn, &whiteboard_id).map_err(Into::into)
+}
+
+/// 创建新 task,写 markdown 文件 + 同步 DB。
+///
+/// ## 前置条件
+/// - `project` 不能为空且不含路径分隔符(由 ProjectName 校验)
+/// - `title` trim 后不能为空
+/// - `status` 必须是合法的 TaskStatus 字符串
+///
+/// ## 执行效果
+/// 1. ProjectName::new 校验 project
+/// 2. parse_task_status 校验 status
+/// 3. 调 domain::task::create —— 生成 task_id、渲染 markdown、写
+///    `whiteboard/projects/{project}/{id} 【TASK】{title}.md`、sync 回 DB
+/// 4. 返回新 TaskEntity
+#[tauri::command]
+#[specta::specta]
+pub fn task_create(
+    state: State<'_, KeysightState>,
+    project: String,
+    title: String,
+    content: Option<String>,
+    status: String,
+    area: Option<String>,
+    color: Option<String>,
+) -> Result<TaskEntity, AppError> {
+    let _t = ScopedTimer::new("cmd:task_create");
+    let conn = lock_db(&state.db, "task_create");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
+    let project_name =
+        task::ProjectName::new(&project).map_err(Into::<AppError>::into)?;
+    let parsed_status = parse_task_status_from_ipc(&status)?;
+    task::create(
+        &conn,
+        &vault_fs,
+        &project_name,
+        task::TaskCreateInput {
+            title: &title,
+            content: content.as_deref(),
+            status: parsed_status,
+            area: area.as_deref(),
+            color: color.as_deref(),
+        },
+    )
+    .map_err(Into::into)
+}
+
+/// 更新已有 task 的任意字段(title / content / status / area / color),
+/// None 保留 current。color "default" sentinel 清空。
+#[tauri::command]
+#[specta::specta]
+pub fn task_update(
+    state: State<'_, KeysightState>,
+    id: String,
+    title: Option<String>,
+    content: Option<String>,
+    status: Option<String>,
+    area: Option<String>,
+    color: Option<String>,
+) -> Result<(), AppError> {
+    let _t = ScopedTimer::new("cmd:task_update");
+    let conn = lock_db(&state.db, "task_update");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
+    let parsed_status = match status {
+        Some(s) => Some(parse_task_status_from_ipc(&s)?),
+        None => None,
+    };
+    task::update(
+        &conn,
+        &vault_fs,
+        &id,
+        task::TaskUpdateInput {
+            title: title.as_deref(),
+            content: content.as_deref(),
+            status: parsed_status,
+            area: area.as_deref(),
+            color: color.as_deref(),
+        },
+    )
+    .map_err(Into::into)
+}
+
+/// 删除 task —— 文件 + DB 级联。
+#[tauri::command]
+#[specta::specta]
+pub fn task_delete(state: State<'_, KeysightState>, id: String) -> Result<(), AppError> {
+    let _t = ScopedTimer::new("cmd:task_delete");
+    let conn = lock_db(&state.db, "task_delete");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
+    task::delete(&conn, &vault_fs, &id).map_err(Into::into)
+}
+
+/// 设置或清空 task 背景色 —— 便捷命令,等价于 task_update 只传 color。
+///
+/// - `color == "default"` → 清空 color(和 note/card 的 "default" sentinel 一致)
+/// - 其他 → 设置 color
+#[tauri::command]
+#[specta::specta]
+pub fn task_set_color(
+    state: State<'_, KeysightState>,
+    id: String,
+    color: String,
+) -> Result<(), AppError> {
+    let _t = ScopedTimer::new("cmd:task_set_color");
+    let conn = lock_db(&state.db, "task_set_color");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
+    task::update(
+        &conn,
+        &vault_fs,
+        &id,
+        task::TaskUpdateInput {
+            title: None,
+            content: None,
+            status: None,
+            area: None,
+            color: Some(&color),
+        },
+    )
+    .map_err(Into::into)
 }
 
 // ============================================================
