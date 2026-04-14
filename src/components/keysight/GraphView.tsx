@@ -960,8 +960,10 @@ export function GraphView({
             break;
           }
           case "task":
+            title = data.tasks.find((t) => t.id === entityId)?.title;
+            break;
           case "whiteboard":
-            return; // Task 预留,whiteboard 无菜单 —— B1 不接入
+            return; // whiteboard 无菜单
         }
         if (title === undefined) return;
         void navigator.clipboard.writeText(
@@ -1108,6 +1110,7 @@ export function GraphView({
       data.questions,
       data.aliases,
       data.sections,
+      data.tasks,
       effectivePositions,
       entityToSectionId,
       allDimensions,

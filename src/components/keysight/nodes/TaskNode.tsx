@@ -1,6 +1,11 @@
 import type { CSSProperties } from "react";
 import type { TaskEntity } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
+import {
+  NodeContextMenu,
+  type TaskMenuConfig,
+  type SectionListItem,
+} from "./NodeContextMenu";
 
 interface TaskNodeProps {
   task: TaskEntity;
@@ -9,6 +14,12 @@ interface TaskNodeProps {
   selected?: boolean;
   highlighted?: boolean;
   dimmed?: boolean;
+  /** ⋯ 菜单配置；null/undefined 时不渲染菜单 */
+  contextMenu?: TaskMenuConfig | null;
+  /** 可选择加入的 sections(当前白板) */
+  menuSections?: SectionListItem[];
+  /** 当前 task 所属 section;null 表示未在任何 section */
+  currentSectionId?: string | null;
 }
 
 /** 任务状态 badge 样式映射 */
@@ -30,6 +41,9 @@ export function TaskNode({
   selected = false,
   highlighted = false,
   dimmed = false,
+  contextMenu = null,
+  menuSections = [],
+  currentSectionId = null,
 }: TaskNodeProps) {
   const badgeClass = STATUS_STYLES[task.status] ?? STATUS_STYLES.next;
   const ring = selected
@@ -63,6 +77,13 @@ export function TaskNode({
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}>
           {task.status}
         </span>
+        {contextMenu && (
+          <NodeContextMenu
+            menu={contextMenu}
+            sections={menuSections}
+            currentSectionId={currentSectionId}
+          />
+        )}
       </div>
       {lodLevel === 0 && task.content && (
         <p className="px-4 pb-2 text-xs leading-relaxed text-muted-foreground">

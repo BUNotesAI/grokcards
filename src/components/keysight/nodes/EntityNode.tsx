@@ -19,6 +19,7 @@ import type {
   NoteMenuConfig,
   QuestionMenuConfig,
   SectionMenuConfig,
+  TaskMenuConfig,
   SectionListItem,
 } from "./NodeContextMenu";
 
@@ -223,6 +224,18 @@ function EntityNodeImpl({
     };
   }, [menuHandlers, entity.id, entity.kind]);
 
+  const taskMenu = useMemo<TaskMenuConfig | null>(() => {
+    if (!menuHandlers || entity.kind !== "task") return null;
+    return {
+      kind: "task",
+      handlers: {
+        copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "task"),
+        move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
+        remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
+      },
+    };
+  }, [menuHandlers, entity.id, entity.kind]);
+
   // 使用 transform 而非 left/top — GPU 合成，避免 layout reflow，拖拽更丝滑
   const wrapperStyle: CSSProperties = {
     position: "absolute",
@@ -306,6 +319,9 @@ function EntityNodeImpl({
             selected={selected}
             highlighted={highlighted}
             dimmed={dimmed}
+            contextMenu={taskMenu}
+            menuSections={menuSections}
+            currentSectionId={currentSectionId}
           />
         </div>
       );
