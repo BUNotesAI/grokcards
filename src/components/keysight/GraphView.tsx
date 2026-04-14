@@ -286,7 +286,8 @@ export function GraphView({
   }, []);
 
   // 行内编辑状态：同时只能编辑一个字段
-  // field 区分：card-title / card-understanding / note-title / note-body / section-title
+  // field 区分：card-title / card-understanding / note-title / note-body / section-title / task-title
+  // 注意:此处和 EntityNode.tsx 的 EditingField 是同步副本,扩展时两处都要改
   type EditingField =
     | "card-title"
     | "card-understanding"
@@ -294,7 +295,8 @@ export function GraphView({
     | "note-body"
     | "question-title"
     | "question-body"
-    | "section-title";
+    | "section-title"
+    | "task-title";
   const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
 
   // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
@@ -352,6 +354,9 @@ export function GraphView({
           case "question-body":
             await unwrapCommand(commands.questionUpdate(id, null, value, null, null));
             break;
+          case "task-title":
+            await unwrapCommand(commands.taskUpdate(id, value, null, null, null, null));
+            break;
         }
         if (field === "card-title" || field === "card-understanding") {
           queryClient.invalidateQueries({ queryKey: ["cards"] });
@@ -359,6 +364,8 @@ export function GraphView({
           queryClient.invalidateQueries({ queryKey: ["sections", currentWhiteboardId] });
         } else if (field === "question-title" || field === "question-body") {
           queryClient.invalidateQueries({ queryKey: ["questions", currentWhiteboardId] });
+        } else if (field === "task-title") {
+          queryClient.invalidateQueries({ queryKey: ["tasks", currentWhiteboardId] });
         } else {
           queryClient.invalidateQueries({ queryKey: ["notes", currentWhiteboardId] });
         }
@@ -1182,6 +1189,8 @@ export function GraphView({
           console.error("更新 question 颜色失败:", e);
         }
       },
+      // Task: Edit title → 复用已有 inline 编辑 (P1 Task 4)
+      onEditTaskTitle: (taskId) => setEditing({ id: taskId, field: "task-title" }),
       // Task: Delete (B2 新增)
       onDeleteTask: async (taskId) => {
         try {

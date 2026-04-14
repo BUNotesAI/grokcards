@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { vi } from "vitest";
 import { TaskNode } from "@/components/keysight/nodes/TaskNode";
 import type { TaskEntity } from "@/bindings";
@@ -49,6 +49,7 @@ describe("TaskNode", () => {
       kind: "task",
       handlers: {
         copy_uuid_title: vi.fn(),
+        edit_title: vi.fn(),
         move_to_section: vi.fn(),
         remove_from_group: vi.fn(),
         set_color: vi.fn(),
@@ -57,5 +58,20 @@ describe("TaskNode", () => {
     };
     render(<TaskNode task={mockTask} style={{}} contextMenu={taskMenu} />);
     expect(screen.getByRole("button", { name: /open menu/i })).toBeInTheDocument();
+  });
+
+  it("双击 title -> onStartEdit('task-title')", () => {
+    const onStartEdit = vi.fn();
+    render(<TaskNode task={mockTask} style={{}} onStartEdit={onStartEdit} />);
+    fireEvent.doubleClick(screen.getByText("【TASK】实现搜索功能"));
+    expect(onStartEdit).toHaveBeenCalledWith("task_test0001", "task-title");
+  });
+
+  it("editingField='task-title' -> 渲染 input 显示 draft title", () => {
+    render(
+      <TaskNode task={mockTask} style={{}} editingField="task-title" />,
+    );
+    const input = screen.getByDisplayValue("【TASK】实现搜索功能");
+    expect(input.tagName).toBe("INPUT");
   });
 });

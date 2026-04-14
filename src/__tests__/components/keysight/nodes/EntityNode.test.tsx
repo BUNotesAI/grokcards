@@ -93,6 +93,7 @@ describe("EntityNode", () => {
       onSetQuestionColor: vi.fn(),
       onDeleteSection: vi.fn(),
       onSetSectionColor: vi.fn(),
+      onEditTaskTitle: vi.fn(),
       onDeleteTask: vi.fn(),
       onSetTaskColor: vi.fn(),
       onMoveToSection: vi.fn(),

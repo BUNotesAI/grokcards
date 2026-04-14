@@ -459,6 +459,7 @@ describe("NodeContextMenu", () => {
       kind: "task",
       handlers: {
         copy_uuid_title: vi.fn(),
+        edit_title: vi.fn(),
         move_to_section: vi.fn(),
         remove_from_group: vi.fn(),
         set_color: vi.fn(),
@@ -560,13 +561,29 @@ describe("NodeContextMenu", () => {
       expect(taskConfig.handlers.delete).toHaveBeenCalledTimes(1);
     });
 
-    it("Task 菜单不含 Draw connection / Edit title / Related / Create alias / Jump to source card(白名单边界锁死,B2 剩余未接入的能力)", () => {
+    it("Task 菜单**显示** Edit title(P1 Task 4 接入 inline editor)", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      expect(screen.getByText("Edit title")).toBeInTheDocument();
+    });
+
+    it("点击 Edit title → edit_title 被调用", () => {
+      render(
+        <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId={null} />,
+      );
+      act(() => openMenu());
+      act(() => fireEvent.click(screen.getByText("Edit title")));
+      expect(taskConfig.handlers.edit_title).toHaveBeenCalledTimes(1);
+    });
+
+    it("Task 菜单不含 Draw connection / Related / Create alias / Jump to source card(白名单边界锁死,B2 剩余未接入的能力)", () => {
       render(
         <NodeContextMenu menu={taskConfig} sections={baseSections} currentSectionId="sec_a" />,
       );
       act(() => openMenu());
       expect(screen.queryByText("Draw connection")).not.toBeInTheDocument();
-      expect(screen.queryByText("Edit title")).not.toBeInTheDocument();
       expect(screen.queryByText("Related")).not.toBeInTheDocument();
       expect(screen.queryByText("Create alias")).not.toBeInTheDocument();
       expect(screen.queryByText("→ Jump to source card")).not.toBeInTheDocument();

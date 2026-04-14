@@ -62,7 +62,8 @@ export interface NodeContextMenuHandlers {
   /** Section 专属 */
   onDeleteSection: (sectionId: string) => void;
   onSetSectionColor: (sectionId: string, color: string) => void;
-  /** Task 专属(B2 新增):删除 + 背景色 */
+  /** Task 专属(B2 新增):删除 + 背景色;P1 Task 4 新增:编辑标题 */
+  onEditTaskTitle: (taskId: string) => void;
   onDeleteTask: (taskId: string) => void;
   onSetTaskColor: (taskId: string, color: string) => void;
   /** 共享:分组 */
@@ -79,6 +80,7 @@ export type EditingField =
   | "question-title"
   | "question-body"
   | "section-title"
+  | "task-title"
   | null;
 
 interface EntityNodeProps {
@@ -239,6 +241,7 @@ function EntityNodeImpl({
       kind: "task",
       handlers: {
         copy_uuid_title: () => menuHandlers.onCopyEntityUuidTitle(entity.id, "task"),
+        edit_title: () => menuHandlers.onEditTaskTitle(entity.id),
         move_to_section: (sid) => menuHandlers.onMoveToSection(entity.id, sid),
         remove_from_group: () => menuHandlers.onRemoveFromGroup(entity.id),
         set_color: (color) => menuHandlers.onSetTaskColor(entity.id, color),
@@ -291,6 +294,7 @@ function EntityNodeImpl({
   const questionEditingField =
     editing === "question-title" || editing === "question-body" ? editing : null;
   const sectionEditingField = editing === "section-title" ? editing : null;
+  const taskEditingField = editing === "task-title" ? editing : null;
 
   switch (entity.kind) {
     case "card":
@@ -330,6 +334,10 @@ function EntityNodeImpl({
             selected={selected}
             highlighted={highlighted}
             dimmed={dimmed}
+            editingField={taskEditingField}
+            onStartEdit={onStartEdit}
+            onCommitEdit={onCommitEdit}
+            onCancelEdit={onCancelEdit}
             contextMenu={taskMenu}
             menuSections={menuSections}
             currentSectionId={currentSectionId}

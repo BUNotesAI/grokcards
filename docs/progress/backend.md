@@ -12,6 +12,15 @@
 
 ### 2026-04-14
 
+- [x] **TaskNode 接入 edit_title inline editor (P1 Task 4)** — 把 Task 节点纳入现有 Note/Question 的 inline 编辑模式,Task 菜单 Edit title 启用:
+  - **NodeCapabilityCatalog**:`edit_title.applies_to` 加 `task`,`TaskNodeHandlers` Pick 加 `edit_title` (5→6 项),doc comment 更新到 6 项能力
+  - **TaskNode**:加 4 个 edit-related props (`editingField`/`onStartEdit`/`onCommitEdit`/`onCancelEdit`),mirror QuestionNode 的 state+ref+2 个 useEffect 模式(sync title state / focus on edit),`<h3>` 替换为条件 `isEditingTitle ? <input> : <h3 onDoubleClick>`,Enter/Blur 提交,Escape 取消
+  - **EntityNode**:`NodeContextMenuHandlers` 加 `onEditTaskTitle`,`EditingField` union 加 `"task-title"`,`taskMenu` useMemo 加 `edit_title` handler,`taskEditingField` 计算,`case "task"` 渲染传 4 prop
+  - **GraphView**:本地 `EditingField` union 同步加 `"task-title"` (含同步注释提醒),`handleCommitEdit` 加 `case "task-title"` → `commands.taskUpdate(id, value, null, null, null, null)`,invalidate 显式加 `["tasks", currentWhiteboardId]` 分支(避免 fall-through 到 notes),`menuHandlers` 加 `onEditTaskTitle: (taskId) => setEditing({id: taskId, field: "task-title"})`
+  - **测试 +4**:TaskNode 双击 title → `onStartEdit('task-title')`;TaskNode `editingField='task-title'` → 渲染 input;NodeContextMenu task variant 显示 Edit title;点击 Edit title → `edit_title` handler 被调用。负面 assertion 移除 "Edit title 不应出现"
+  - TS 234 → **238** (+4);Rust / bindings.ts 不变(纯 TS,复用现有 task_update 命令)
+  - 防火墙机制:catalog 是单一声明源,扩 applies_to + Pick 让 EntityNode taskMenu 立刻被 TS 编译期强制补齐 `edit_title` handler;NodeContextMenuHandlers 加 `onEditTaskTitle` 让 GraphView menuHandlers 立刻被强制补齐;两个本地副本 `EditingField` 通过 同步注释 + 编译期类型对齐保证一致
+
 - [x] **GraphToolbar 加 Task 创建按钮(project 白板专属)** — Task feature 端到端最后一步前的 UI 入口:
   - GraphToolbar 加 6 个 task-* props + 条件渲染:Task 按钮仅在 `currentWhiteboardId.startsWith("projects/")` 时出现,内联 Input 输入 title,Enter/Blur 提交,Escape 取消(完美对齐 Whiteboard-on-root 的条件渲染先例)
   - GraphView `handleSubmitCreateTask`:project 从 `currentWhiteboardId.slice("projects/".length)` 派生,防御性 re-check 前缀 + 非空,然后 `commands.taskCreate(project, title, null, "next", null, null)` → `layoutSetPosition` viewport 中心 → `onSelectEntity` → invalidate;失败 loud `console.error`

@@ -17,17 +17,20 @@
  * - 每个 Capability variant 把 ui_kind / destructive 写死在类型里,const 初始化时
  *   shape 与 kind 不一致会编译失败(例如 set_color 的 ui_kind 只能是 "custom")。
  *
- * ## Task 已接入(3 项能力)
+ * ## Task 已接入(6 项能力)
  *
- * Task 作为第 6 个 NodeKind 接入菜单,当前 scope 只含 **3 项能力**:
+ * Task 作为第 6 个 NodeKind 接入菜单,当前 scope 含 **6 项能力**:
  *   - `copy_uuid_title` — Task 有 title,走统一 normalize pipeline
- *   - `move_to_section` — `section_members` schema 通用,接受任意 entity kind
+ *   - `edit_title` — P1 Task 4 接入 inline editor 后启用
+ *   - `move_to_section` — `section_members` schema 通用
  *   - `remove_from_group` — 同上
+ *   - `set_color` — Phase B2 给 TaskEntity 加 color 字段后启用
+ *   - `delete` — Phase B2 加 task_delete 命令后启用
  *
- * 未接入的能力(留给后续 task):
+ * 未接入的能力:
  *   - `draw_connection` — Edge 判别联合编译期禁 Task 作 from(edge.rs:101-102)
- *   - `edit_title` / `delete` — 后端无 `task_update` / `task_delete`,需 Rust 扩张(Phase B2)
- *   - `set_color` — Task 模型无 color 字段,需 schema 扩张(Phase B2)
+ *   - `related` / `create_alias` — Card 专属
+ *   - `jump_to_source_card` — Alias 专属
  */
 
 // ============================================================================
@@ -189,7 +192,7 @@ export const NODE_CAPABILITIES: readonly NodeCapability[] = [
   },
   {
     kind: "edit_title",
-    applies_to: new Set<NodeKind>(["note", "question"]),
+    applies_to: new Set<NodeKind>(["note", "question", "task"]),
     ui_kind: "plain",
     order: 60,
     label: "Edit title",
@@ -290,16 +293,10 @@ export type SectionNodeHandlers = Pick<
   "copy_uuid_title" | "set_color" | "delete"
 >;
 
-/**
- * Task 节点菜单 handlers (5 个)
- *
- * 注意:`edit_title` 暂未纳入 —— TaskNode 当前无 inline editor(和
- * QuestionNode/NoteNode 的模式不同),加一个 edit_title 能力需要先在
- * TaskNode 加 inline editor,独立 task 处理。
- */
+/** Task 节点菜单 handlers (6 个) */
 export type TaskNodeHandlers = Pick<
   NodeCapabilityHandlerMap,
-  "copy_uuid_title" | "move_to_section" | "remove_from_group" | "set_color" | "delete"
+  "copy_uuid_title" | "edit_title" | "move_to_section" | "remove_from_group" | "set_color" | "delete"
 >;
 
 /**

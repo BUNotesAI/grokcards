@@ -1,4 +1,4 @@
-import type { CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import type { TaskEntity } from "@/bindings";
 import type { LodLevel } from "@/components/keysight/types";
 import {
@@ -7,6 +7,8 @@ import {
   type SectionListItem,
 } from "./NodeContextMenu";
 
+type TaskEditField = "task-title";
+
 interface TaskNodeProps {
   task: TaskEntity;
   style: CSSProperties;
@@ -14,6 +16,14 @@ interface TaskNodeProps {
   selected?: boolean;
   highlighted?: boolean;
   dimmed?: boolean;
+  /** 当前正在编辑的字段;null 表示未编辑 */
+  editingField?: TaskEditField | null;
+  /** 双击进入编辑模式回调 */
+  onStartEdit?: (id: string, field: TaskEditField) => void;
+  /** 提交编辑回调(onBlur / Enter 时触发) */
+  onCommitEdit?: (id: string, field: TaskEditField, value: string) => void;
+  /** 取消编辑回调(Escape) */
+  onCancelEdit?: () => void;
   /** ⋯ 菜单配置；null/undefined 时不渲染菜单 */
   contextMenu?: TaskMenuConfig | null;
   /** 可选择加入的 sections(当前白板) */
@@ -41,6 +51,10 @@ export function TaskNode({
   selected = false,
   highlighted = false,
   dimmed = false,
+  editingField = null,
+  onStartEdit,
+  onCommitEdit,
+  onCancelEdit,
   contextMenu = null,
   menuSections = [],
   currentSectionId = null,
@@ -52,6 +66,21 @@ export function TaskNode({
       ? "0 0 0 2px rgba(16, 185, 129, 0.7)"
       : undefined;
   const opacity = dimmed ? 0.35 : 1;
+  const isEditingTitle = editingField === "task-title";
+
+  const [draftTitle, setDraftTitle] = useState(task.title);
+  const titleInputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    setDraftTitle(task.title);
+  }, [task.title]);
+
+  useEffect(() => {
+    if (isEditingTitle) {
+      titleInputRef.current?.focus();
+      titleInputRef.current?.select();
+    }
+  }, [isEditingTitle]);
 
   if (lodLevel === 2) {
     return (
@@ -73,7 +102,33 @@ export function TaskNode({
         <span className="flex h-5 w-5 items-center justify-center rounded bg-gradient-to-br from-emerald-400 to-green-600 text-[10px] font-bold text-white">
           T
         </span>
-        <h3 className="flex-1 truncate text-sm font-semibold text-foreground">{task.title}</h3>
+        {isEditingTitle ? (
+          <input
+            ref={titleInputRef}
+            value={draftTitle}
+            onChange={(event) => setDraftTitle(event.target.value)}
+            onBlur={(event) =>
+              onCommitEdit?.(task.id, "task-title", event.currentTarget.value)
+            }
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                onCommitEdit?.(task.id, "task-title", draftTitle);
+              } else if (event.key === "Escape") {
+                event.preventDefault();
+                onCancelEdit?.();
+              }
+            }}
+            className="h-7 flex-1 rounded-md border border-emerald-300 bg-white px-2 text-sm font-semibold text-foreground outline-none"
+          />
+        ) : (
+          <h3
+            className="flex-1 truncate text-sm font-semibold text-foreground"
+            onDoubleClick={() => onStartEdit?.(task.id, "task-title")}
+          >
+            {task.title}
+          </h3>
+        )}
         <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${badgeClass}`}>
           {task.status}
         </span>
