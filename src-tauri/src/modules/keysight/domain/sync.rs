@@ -188,15 +188,26 @@ pub(in crate::modules::keysight) fn sync_file(
 
 /// 从 file_path 推导 whiteboard_id。
 ///
-/// 规则：`whiteboard/{sub}/...` → `sub`，其他 → `wb_root`
+/// 规则:
+/// - `whiteboard/projects/{name}/...` → `projects/{name}`(reserved 命名空间,
+///   用于 task kanban whiteboard,wb_id 是一个二级路径)
+/// - `whiteboard/{sub}/...` → `sub`(普通 whiteboard,wb_id 是扁平单级)
+/// - 其他 → `wb_root`(根白板,文件直接在 `whiteboard/` 下)
 pub(super) fn derive_whiteboard_id(file_path: &str) -> String {
-    let path = file_path
-        .strip_prefix("whiteboard/")
-        .unwrap_or(file_path);
-    // 如果 strip 成功，取第一个 / 之前的部分作为子白板 id
-    if path.len() < file_path.len()
-        && let Some(slash_pos) = path.find('/')
+    let Some(path) = file_path.strip_prefix("whiteboard/") else {
+        return "wb_root".to_string();
+    };
+    // 优先识别 reserved `projects/{name}/...` 作为二级 wb_id
+    if let Some(rest) = path.strip_prefix("projects/")
+        && let Some(slash_pos) = rest.find('/')
     {
+        let project_name = &rest[..slash_pos];
+        if !project_name.is_empty() {
+            return format!("projects/{project_name}");
+        }
+    }
+    // 否则取第一个 / 之前的部分作为扁平 wb_id
+    if let Some(slash_pos) = path.find('/') {
         let sub_wb = &path[..slash_pos];
         if !sub_wb.is_empty() {
             return sub_wb.to_string();
@@ -581,6 +592,29 @@ Question body.
     #[test]
     fn test_derive_whiteboard_id_sub() {
         assert_eq!(derive_whiteboard_id("whiteboard/myboard/test.md"), "myboard");
+    }
+
+    #[test]
+    fn test_derive_whiteboard_id_project() {
+        // projects/ 下二级目录作为 project whiteboard id
+        assert_eq!(
+            derive_whiteboard_id("whiteboard/projects/super-tauri/task_abc 【TASK】Add login.md"),
+            "projects/super-tauri"
+        );
+        assert_eq!(
+            derive_whiteboard_id("whiteboard/projects/agent-slipbox/note_xyz 【NOTE】Thoughts.md"),
+            "projects/agent-slipbox"
+        );
+    }
+
+    #[test]
+    fn test_derive_whiteboard_id_projects_no_subdir() {
+        // projects/ 下直接放文件(没有 project 子目录)→ 退化为扁平 "projects"
+        // 这是一个边界 case,实际上 task 不应该这样放,但 derive 逻辑要能退化处理
+        assert_eq!(
+            derive_whiteboard_id("whiteboard/projects/loose.md"),
+            "projects"
+        );
     }
 
     // --- remove_file ---

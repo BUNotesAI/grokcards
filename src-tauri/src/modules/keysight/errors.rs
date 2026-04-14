@@ -24,6 +24,14 @@ pub(in crate::modules::keysight) enum KeysightError {
     #[error("连接不合法: {from_kind} 不能作为 edge 的 from (业务规则)")]
     ConnectionNotAllowed { from_kind: &'static str },
 
+    /// Project 名不合法 —— 空串 / 含路径分隔符 / 含 Windows 禁用字符。
+    #[error("project 名不合法: {0}")]
+    InvalidProjectName(String),
+
+    /// Task 状态字符串不合法 —— 不在 next/active/blocked/done 枚举内。
+    #[error("task 状态不合法: {0}")]
+    InvalidTaskStatus(String),
+
     #[error("数据库错误: {0}")]
     Database(#[from] rusqlite::Error),
 }
