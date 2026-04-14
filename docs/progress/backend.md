@@ -6,12 +6,23 @@
 
 ## Next
 
-- [ ] **Keysight 节点菜单 Phase B2** — 扩 Card/Question/Task 的 `color` schema：`entities` 表 color 列 + migration、`card_set_color` / `question_set_color` / `task_set_color` commands，然后把 catalog 的 `set_color` `applies_to` 扩到全集。依赖 B1 完成。涉及 Rust schema 变更,风险面较大,要独立 task 做。
-- [ ] **Keysight Task 节点菜单接入** — 把 Task 作为第 6 个 NodeKind 加到 catalog，接入 `copy_uuid_title` / `draw_connection` / `edit_title` / `move_to_section` / `remove_from_group` / `delete`（复用现有 `task_update` / `task_delete` 等 command）。依赖 B1 完成，是纯 TS 工作。
+- [ ] **Keysight 节点菜单 Phase B2** — 扩 Card/Question/Task 的 `color` schema + Task 的 `edit_title` / `delete` domain:`entities` 表 color 列 + migration、`card_set_color` / `question_set_color` / `task_set_color` commands、`task_update` / `task_delete` domain + commands,然后把 catalog 的 `set_color` / `edit_title` / `delete` applies_to 对应扩到 Task。依赖 B1 + Task 菜单接入完成。涉及 Rust schema 变更,风险面较大,要独立 task 做。
 
 ## Done
 
 ### 2026-04-14
+
+- [x] **Keysight Task 节点菜单接入(Phase B1 后续)完成** — 分 3 commit 落地,纯 TS 增量扩张:
+  - `18ba92a` feat: type sketch — NodeCapabilityCatalog NodeKind union 扩 task;copy_uuid_title / move_to_section / remove_from_group 的 applies_to 加 task;新增 TaskNodeHandlers + NodeMenuConfig.task 变体 + TaskMenuConfig 别名;NodeContextMenu re-export TaskMenuConfig;文件头注释从「Task 预留」改为「Task 已接入(3 项能力)」
+  - `2ba46c6` feat: 装配 — TaskNode 加 contextMenu/menuSections/currentSectionId 三个 prop + JSX 渲染 NodeContextMenu;EntityNode 新增 taskMenu useMemo + case "task" 传菜单 prop;GraphView.onCopyEntityUuidTitle 的 case "task" 从 return 改为 data.tasks.find,deps 加 data.tasks
+  - `68bde5f` test: NodeContextMenu.test.tsx 新增 variant='task' 描述套(8 case):菜单项 presence / sections 空态 / in-section visibility / copy click / submenu move / remove click / **白名单边界锁死(7 个不该出现的菜单项)**
+  - `154ceae` test: harness-check-tests 补缺 — TaskNode.test.tsx +2(contextMenu null/非 null);EntityNode.test.tsx +2(kind=task dispatch + 完整菜单接线链路)
+  - 能力范围:Task 菜单只含 **3 项能力**(copy_uuid_title / move_to_section / remove_from_group),其余在 applies_to 中排除:
+    - `draw_connection` 被 Edge 判别联合编译期禁止(edge.rs:101-102 无 TaskLink 变体)
+    - `edit_title` / `delete` 留给后续 task(后端无 task_update / task_delete)
+    - `set_color` 留给 Phase B2(Task 模型无 color 字段)
+  - 防火墙机制:NodeKind union 扩后 Task 只能搭配白名单中的 3 项能力,添加 Task 到其他 applies_to 需改 catalog + 新增 handler 字段,编译器强制穷尽;白名单边界测试锁死 UI 渲染路径
+  - 测试计数:TS vitest 215 → 227(+12:8 NodeContextMenu task variant + 2 TaskNode prop + 2 EntityNode dispatch);Rust 不变
 
 - [x] **Keysight 节点菜单能力类型化（Phase B1）完成** — 分 2 子阶段落地,共 2 commit:
   - `6a37f25` feat: Phase B1 type sketch — 新建 `src/components/keysight/nodes/NodeCapabilityCatalog.ts`,判别联合 type sketch(NodeKind 5 种 + 10 个 Capability variant + NODE_CAPABILITIES + per-NodeKind handlers via `Pick<NodeCapabilityHandlerMap, ...>` + NodeMenuConfig 判别联合)
