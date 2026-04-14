@@ -2,11 +2,15 @@
 
 ## Active
 
-（无）
+（无 — session 结束;下次 session 优先 Next 的 P0 bug）
 
 ## Next
 
-- [ ] **Task 前端 UI 入口 + edit_title inline editor** — B2 把 task CRUD 从 Rust 到菜单都串通了,但仍缺:(1) "新建 task" 的 UI 入口(右键菜单?工具栏?)(2) TaskNode 加 inline editor 支持 edit_title 能力。这两个是独立的 UI/UX 工作。
+- [ ] **🚨 P0 — Project 白板上 set_color / draw_connection 全失效 (跨 Note/Question/Task)** — 用户在 dev server `projects/super-tauri` 验证 Task 4 时顺带发现:三种 entity 的 ⋯ 菜单**色块出现但点击节点背景色不变**;Note/Question 的 Draw connection **点了完全没动静**(无 source 高亮 / 无 cursor / 第二次点击不画线)。**对照组 wb_root 完全正常**。已确认菜单渲染层 wb-agnostic + 本 session 3 个 commit 没碰 set_color/draw_connection 代码路径。完整调查报告 + 6 个开放假设(优先看 H1: Rust 写回路径 wb_id 派生不识别嵌套 `projects/{name}`)+ 推荐排查顺序见 [`docs/collaboration/2026-04-14-project-whiteboard-set-color-and-draw-connection-broken.md`](../collaboration/2026-04-14-project-whiteboard-set-color-and-draw-connection-broken.md)。**修复需 TDD + 回归测试 + dev 手动验证,不要先碰前端**。
+
+- [ ] **P2 — TaskNode 不渲染 `task.color` 字段(独立缺口)** — Phase B2 给 TaskEntity 加了 color schema + Rust set_color 命令,但 `src/components/keysight/nodes/TaskNode.tsx` 没有读 `task.color` 来设 background style。可以独立修复(不依赖上面的 P0 bug 调查)。注意:即便修了这条,P0 bug 仍然存在,因为 P0 bug 跨 Note/Question/Task 三种节点。
+
+- [ ] **P3 — Kanban view (大 feature)** — 用户的核心业务需求"类似 kanban 统计项目任务进展,点 task 进去做 note/alias 连线标注"完全没实装。需要先 brainstorm 5 个决策点(UI 形态 / status 列实现 / 拖拽 / 进入标注模式 / 与新建 task 关系),建议**独立 session**先走 brainstorm 再实施,不和 P0/P1 同 session 做(规模差一个数量级)。详见上一份 handoff(`git show 7e2f828:docs/handoff/backend.md`)的 P3 Task 3 段落。
 
 ## Done
 
