@@ -261,6 +261,8 @@ export function GraphView({
   const [questionDraft, setQuestionDraft] = useState("");
   const [creatingWhiteboard, setCreatingWhiteboard] = useState(false);
   const [whiteboardDraft, setWhiteboardDraft] = useState("");
+  const [creatingTask, setCreatingTask] = useState(false);
+  const [taskDraft, setTaskDraft] = useState("");
   const handleToggleExpand = useCallback((entityId: string) => {
     // click 之前如果发生了拖拽就不切换
     if (lastDidDragRef.current) {
@@ -833,6 +835,8 @@ export function GraphView({
     setWhiteboardDraft("");
     setCreatingQuestion(false);
     setQuestionDraft("");
+    setCreatingTask(false);
+    setTaskDraft("");
     setNoteDraft("");
     setCreatingNote(true);
   }, []);
@@ -869,6 +873,8 @@ export function GraphView({
     setWhiteboardDraft("");
     setCreatingNote(false);
     setNoteDraft("");
+    setCreatingTask(false);
+    setTaskDraft("");
     setQuestionDraft("");
     setCreatingQuestion(true);
   }, []);
@@ -900,12 +906,65 @@ export function GraphView({
     }
   }, [questionDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
 
+  // 创建 Task 回调 — 仅在 currentWhiteboardId 形如 "projects/{name}" 时由 GraphToolbar 触发
+  const handleCreateTask = useCallback(() => {
+    setCreatingWhiteboard(false);
+    setWhiteboardDraft("");
+    setCreatingNote(false);
+    setNoteDraft("");
+    setCreatingQuestion(false);
+    setQuestionDraft("");
+    setTaskDraft("");
+    setCreatingTask(true);
+  }, []);
+
+  const handleCancelCreateTask = useCallback(() => {
+    setCreatingTask(false);
+    setTaskDraft("");
+  }, []);
+
+  const handleSubmitCreateTask = useCallback(async () => {
+    const title = taskDraft.trim();
+    setCreatingTask(false);
+    setTaskDraft("");
+    if (!title) return;
+
+    // project 从 currentWhiteboardId 剥 "projects/" 前缀推导:按钮仅在该上下文渲染,
+    // 但防御性地再校验一次,避免静默写入错 project
+    const projectPrefix = "projects/";
+    if (!currentWhiteboardId.startsWith(projectPrefix)) {
+      console.error("handleSubmitCreateTask 在非 project 白板被调用", { currentWhiteboardId });
+      return;
+    }
+    const project = currentWhiteboardId.slice(projectPrefix.length);
+    if (!project) {
+      console.error("handleSubmitCreateTask 派生出空 project name", { currentWhiteboardId });
+      return;
+    }
+
+    try {
+      const result = await unwrapCommand(
+        commands.taskCreate(project, title, null, "next", null, null),
+      );
+      const pos = newEntityPositionAtCenter(320, 140);
+      await unwrapCommand(
+        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
+      );
+      onSelectEntity?.({ id: result.id, kind: "task" });
+      queryClient.invalidateQueries();
+    } catch (e) {
+      console.error("创建 task 失败:", e);
+    }
+  }, [taskDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+
   const handleCreateWhiteboard = useCallback(async () => {
     if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
     setCreatingNote(false);
     setNoteDraft("");
     setCreatingQuestion(false);
     setQuestionDraft("");
+    setCreatingTask(false);
+    setTaskDraft("");
     setWhiteboardDraft("");
     setCreatingWhiteboard(true);
   }, [currentWhiteboardId]);
@@ -1293,6 +1352,12 @@ export function GraphView({
         onQuestionDraftChange={setQuestionDraft}
         onSubmitQuestion={handleSubmitCreateQuestion}
         onCancelQuestion={handleCancelCreateQuestion}
+        onCreateTask={handleCreateTask}
+        creatingTask={creatingTask}
+        taskDraft={taskDraft}
+        onTaskDraftChange={setTaskDraft}
+        onSubmitTask={handleSubmitCreateTask}
+        onCancelTask={handleCancelCreateTask}
         onCreateWhiteboard={handleCreateWhiteboard}
         creatingWhiteboard={creatingWhiteboard}
         whiteboardDraft={whiteboardDraft}

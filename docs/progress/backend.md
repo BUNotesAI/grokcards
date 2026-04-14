@@ -12,6 +12,15 @@
 
 ### 2026-04-14
 
+- [x] **GraphToolbar 加 Task 创建按钮(project 白板专属)** — Task feature 端到端最后一步前的 UI 入口:
+  - GraphToolbar 加 6 个 task-* props + 条件渲染:Task 按钮仅在 `currentWhiteboardId.startsWith("projects/")` 时出现,内联 Input 输入 title,Enter/Blur 提交,Escape 取消(完美对齐 Whiteboard-on-root 的条件渲染先例)
+  - GraphView `handleSubmitCreateTask`:project 从 `currentWhiteboardId.slice("projects/".length)` 派生,防御性 re-check 前缀 + 非空,然后 `commands.taskCreate(project, title, null, "next", null, null)` → `layoutSetPosition` viewport 中心 → `onSelectEntity` → invalidate;失败 loud `console.error`
+  - 互斥 state 清理:Note/Question/Whiteboard 创建态切换时同步 `setCreatingTask(false)` + `setTaskDraft("")`(双向)
+  - 测试 +4:按钮在 project 白板出现 / 在 wb_root 不出现 / 在普通子白板不出现 / `creatingTask` 时显示 inline input
+  - 端到端验证:Real `projects/super-tauri` 白板,创建 task "task 1 - sandbox",卡片渲染正确 + project tag + status badge ✓
+  - TS 230 → **234** (+4);Rust 不变;bindings.ts 未变(只用现成的 taskCreate 命令)
+  - 防火墙机制:UI 条件渲染 + handler 防御性 re-check 双重保证不在错误上下文调 taskCreate;project 派生集中在 handler 一处,避免分散字符串拼接
+
 - [x] **list_whiteboards 递归 `projects/*` 嵌套白板** — 修复"裸 projects 假白板 + 空 project 目录不显示"两个缺口:
   - `vault_fs.rs` — `VaultFs` trait 新增 **default method** `list_project_whiteboards`,委托 `list_first_level_dirs("whiteboard/projects")`。Real/Mock 都继承默认实现,零额外 impl
   - `domain/overview.rs::list_whiteboards` — folder_whiteboards 构造:top-level 结果过滤字面 `"projects"` + chain `list_project_whiteboards()` 的带 `projects/` 前缀 wb_id

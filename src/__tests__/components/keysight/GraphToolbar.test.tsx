@@ -298,4 +298,72 @@ describe("GraphToolbar", () => {
     fireEvent.click(screen.getByText("Root"));
     expect(onNavigateBack).toHaveBeenCalledTimes(1);
   });
+
+  it("project 白板时显示 Task 按钮并调用 onCreateTask", () => {
+    const viewport = createTestViewport();
+    const onCreateTask = vi.fn();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        onCreateTask={onCreateTask}
+        currentWhiteboardId="projects/super-tauri"
+      />,
+    );
+    fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+    expect(onCreateTask).toHaveBeenCalledTimes(1);
+  });
+
+  it("根白板时不显示 Task 按钮", () => {
+    const viewport = createTestViewport();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        onCreateTask={vi.fn()}
+        currentWhiteboardId="wb_root"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /create task/i })).not.toBeInTheDocument();
+  });
+
+  it("非 project 子白板时不显示 Task 按钮", () => {
+    const viewport = createTestViewport();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        onCreateTask={vi.fn()}
+        currentWhiteboardId="rust"
+      />,
+    );
+    expect(screen.queryByRole("button", { name: /create task/i })).not.toBeInTheDocument();
+  });
+
+  it("创建 task 时显示内联输入框", () => {
+    const viewport = createTestViewport();
+    render(
+      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        creatingTask
+        taskDraft="My Task"
+        currentWhiteboardId="projects/super-tauri"
+      />,
+    );
+    expect(screen.getByRole("textbox", { name: /task title/i })).toHaveValue("My Task");
+    expect(screen.queryByRole("button", { name: /create task/i })).not.toBeInTheDocument();
+  });
 });

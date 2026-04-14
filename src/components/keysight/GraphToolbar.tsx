@@ -11,6 +11,7 @@ import {
 import {
   BookOpen,
   Boxes,
+  CheckSquare,
   CircleHelp,
   FolderKanban,
   FolderPlus,
@@ -54,6 +55,12 @@ interface GraphToolbarProps {
   onQuestionDraftChange?: (value: string) => void;
   onSubmitQuestion?: () => void;
   onCancelQuestion?: () => void;
+  onCreateTask?: () => void;
+  creatingTask?: boolean;
+  taskDraft?: string;
+  onTaskDraftChange?: (value: string) => void;
+  onSubmitTask?: () => void;
+  onCancelTask?: () => void;
   onCreateWhiteboard?: () => void;
   creatingWhiteboard?: boolean;
   whiteboardDraft?: string;
@@ -100,6 +107,12 @@ export function GraphToolbar({
   onQuestionDraftChange,
   onSubmitQuestion,
   onCancelQuestion,
+  onCreateTask,
+  creatingTask = false,
+  taskDraft = "",
+  onTaskDraftChange,
+  onSubmitTask,
+  onCancelTask,
   onCreateWhiteboard,
   creatingWhiteboard = false,
   whiteboardDraft = "",
@@ -217,6 +230,31 @@ export function GraphToolbar({
           <CircleHelp className="mr-1 h-4 w-4" />
           Question
         </Button>
+      )}
+      {currentWhiteboardId.startsWith("projects/") && (
+        creatingTask ? (
+          <Input
+            autoFocus
+            value={taskDraft}
+            placeholder="Task title…"
+            aria-label="Task title"
+            className="h-9 w-56 bg-white"
+            onChange={(event) => onTaskDraftChange?.(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === "Enter") {
+                event.preventDefault();
+                event.currentTarget.blur();
+              }
+              if (event.key === "Escape") onCancelTask?.();
+            }}
+            onBlur={() => onSubmitTask?.()}
+          />
+        ) : (
+          <Button variant="outline" size="sm" onClick={onCreateTask} aria-label="Create Task">
+            <CheckSquare className="mr-1 h-4 w-4" />
+            Task
+          </Button>
+        )
       )}
       {currentWhiteboardId === "wb_root" && (
         creatingWhiteboard ? (
