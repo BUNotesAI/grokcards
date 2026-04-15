@@ -2,17 +2,23 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
-import type { TaskStatus } from "@/bindings";
+import type { Subtask, TaskEntity, TaskStatus } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { KanbanBoard } from "./KanbanBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
 import { CreateTaskModal } from "./CreateTaskModal";
+import { TaskEditModal } from "./TaskEditModal";
 import { invalidateAllTaskCaches } from "./invalidateAllTaskCaches";
 import { COLUMN_ORDER } from "./columns";
 
 interface ModalState {
   open: boolean;
   status: TaskStatus;
+}
+
+interface EditState {
+  open: boolean;
+  task: TaskEntity | null;
 }
 
 /**
@@ -52,11 +58,21 @@ export function KanbanView() {
     status: "inbox",
   });
 
+  // V1.1 Phase 6.6: 双击打开 TaskEditModal
+  const [editState, setEditState] = useState<EditState>({
+    open: false,
+    task: null,
+  });
+
   const openModal = (status: TaskStatus) =>
     setModalState({ open: true, status });
 
   const closeModal = () =>
     setModalState((prev) => ({ ...prev, open: false }));
+
+  const openEdit = (task: TaskEntity) => setEditState({ open: true, task });
+
+  const closeEdit = () => setEditState((prev) => ({ ...prev, open: false }));
 
   const handleCreateTask = async (data: {
     project: string;
@@ -87,6 +103,29 @@ export function KanbanView() {
       // V1 不做 optimistic update,失败时 loud 报 console + query refetch 自动回滚视觉
       console.error("Task move failed:", err);
     }
+  };
+
+  // V1.1 Phase 6.6: modal submit → 单个 command `task_update_with_subtasks`
+  const handleEditSubmit = async (data: {
+    id: string;
+    title: string;
+    subtasks: Subtask[];
+    status: TaskStatus;
+    area: string | null;
+    color: string | null;
+  }) => {
+    await unwrapCommand(
+      commands.taskUpdateWithSubtasks(
+        data.id,
+        data.title,
+        data.subtasks,
+        data.status,
+        data.area,
+        data.color,
+      ),
+    );
+    invalidateAllTaskCaches(queryClient);
+    closeEdit();
   };
 
   if (tasksQuery.isLoading) {
@@ -154,6 +193,7 @@ export function KanbanView() {
           showProjectTags={showProjectTags}
           onAddTask={openModal}
           onTaskMove={handleTaskMove}
+          onTaskDoubleClick={openEdit}
         />
       </div>
       {modalState.open && (
@@ -163,6 +203,13 @@ export function KanbanView() {
           availableProjects={projects}
           onSubmit={handleCreateTask}
           onCancel={closeModal}
+        />
+      )}
+      {editState.open && editState.task && (
+        <TaskEditModal
+          task={editState.task}
+          onSubmit={handleEditSubmit}
+          onCancel={closeEdit}
         />
       )}
     </div>

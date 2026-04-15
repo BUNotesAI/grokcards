@@ -10,6 +10,8 @@ vi.mock("@/bindings", () => ({
     taskQueryKanban: vi.fn(),
     whiteboardList: vi.fn(),
     taskCreate: vi.fn(),
+    taskUpdate: vi.fn(),
+    taskUpdateWithSubtasks: vi.fn(),
   },
 }));
 
@@ -164,5 +166,81 @@ describe("KanbanView", () => {
       expect(screen.getByText(/加载失败/)).toBeInTheDocument(),
     );
     expect(screen.getByText(/Retry/)).toBeInTheDocument();
+  });
+
+  // V1.1 Phase 6.6: 双击端到端 → TaskEditModal → submit → taskUpdateWithSubtasks
+
+  it("双击 kanban card 打开 TaskEditModal,submit 调 taskUpdateWithSubtasks", async () => {
+    const existingTask = {
+      id: "task_abc",
+      title: "Existing task",
+      whiteboardId: "projects/alpha",
+      content: "- [ ] a\n- [x] b",
+      status: "next" as const,
+      area: "backend",
+      project: "alpha",
+      color: null,
+      subtasks: [
+        { text: "a", done: false },
+        { text: "b", done: true },
+      ],
+    };
+    vi.mocked(commands.taskQueryKanban).mockResolvedValue({
+      status: "ok",
+      data: [existingTask],
+    });
+    vi.mocked(commands.whiteboardList).mockResolvedValue({
+      status: "ok",
+      data: [
+        {
+          whiteboardId: "projects/alpha",
+          cards: 0,
+          notes: 0,
+          sections: 0,
+          aliases: 0,
+          tasks: 1,
+          questions: 0,
+        },
+      ],
+    });
+    vi.mocked(commands.taskUpdateWithSubtasks).mockResolvedValue({
+      status: "ok",
+      data: { ...existingTask, title: "New title" },
+    });
+
+    renderKanban("/kanban?project=alpha");
+
+    // 等 query 完成 → card 渲染
+    await waitFor(() => screen.getByTestId("kanban-card-task_abc"));
+
+    // 双击打开 modal
+    fireEvent.doubleClick(screen.getByTestId("kanban-card-task_abc"));
+    expect(screen.getByTestId("task-edit-modal")).toBeInTheDocument();
+
+    // 改 title 并 submit
+    const titleInput = screen.getByDisplayValue("Existing task");
+    fireEvent.change(titleInput, { target: { value: "New title" } });
+    const form = screen.getByTestId("task-edit-modal").querySelector("form")!;
+    fireEvent.submit(form);
+
+    await waitFor(() => {
+      expect(commands.taskUpdateWithSubtasks).toHaveBeenCalledTimes(1);
+    });
+    const call = vi.mocked(commands.taskUpdateWithSubtasks).mock.calls[0];
+    expect(call[0]).toBe("task_abc");
+    expect(call[1]).toBe("New title");
+    // subtasks 无 uiKey
+    expect(call[2]).toEqual([
+      { text: "a", done: false },
+      { text: "b", done: true },
+    ]);
+    expect(call[3]).toBe("next");
+    expect(call[4]).toBe("backend");
+    expect(call[5]).toBe(null);
+
+    // submit 成功后 modal 应关闭
+    await waitFor(() => {
+      expect(screen.queryByTestId("task-edit-modal")).not.toBeInTheDocument();
+    });
   });
 });

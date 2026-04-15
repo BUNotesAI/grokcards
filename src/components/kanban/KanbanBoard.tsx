@@ -1,4 +1,10 @@
-import { DndContext, type DragEndEvent } from "@dnd-kit/core";
+import {
+  DndContext,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
 import type { TaskEntity, TaskStatus } from "@/bindings";
 import { KanbanColumn } from "./KanbanColumn";
 import { KanbanCard } from "./KanbanCard";
@@ -11,6 +17,8 @@ interface KanbanBoardProps {
   onAddTask: (status: TaskStatus) => void;
   /** dnd drop 落到合法列时触发,由 parent 调 taskUpdate。 */
   onTaskMove: (taskId: string, newStatus: TaskStatus) => void;
+  /** V1.1 Phase 6.6: 双击卡片的回调,由 KanbanView 打开 TaskEditModal。 */
+  onTaskDoubleClick?: (task: TaskEntity) => void;
 }
 
 /**
@@ -53,7 +61,18 @@ export function KanbanBoard({
   showProjectTags,
   onAddTask,
   onTaskMove,
+  onTaskDoubleClick,
 }: KanbanBoardProps) {
+  // V1.1 Phase 6.6: PointerSensor + activationConstraint 防止双击手势被误判为 drag
+  // distance: 8 — drag 只在 pointer 移动 > 8px 后激活,纯 click / double-click
+  // 永远不会触发 drag,保证双击编辑和拖拽状态变更可以安全共存。@dnd-kit 官方
+  // 推荐做法,比 drag handle 或手写 isDragging check 更干净。
+  const sensors = useSensors(
+    useSensor(PointerSensor, {
+      activationConstraint: { distance: 8 },
+    }),
+  );
+
   const handleDragEnd = (event: DragEndEvent) => {
     const parsed = parseDragEnd(event);
     if (!parsed) return;
@@ -61,7 +80,7 @@ export function KanbanBoard({
   };
 
   return (
-    <DndContext onDragEnd={handleDragEnd}>
+    <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
       <div
         className="flex gap-4 overflow-x-auto p-4"
         data-testid="kanban-board"
@@ -80,6 +99,7 @@ export function KanbanBoard({
                   key={task.id}
                   task={task}
                   showProjectTag={showProjectTags}
+                  onDoubleClick={onTaskDoubleClick}
                 />
               ))}
             </KanbanColumn>
