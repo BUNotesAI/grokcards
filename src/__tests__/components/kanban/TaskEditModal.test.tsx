@@ -37,7 +37,41 @@ describe("TaskEditModal", () => {
     expect(screen.getByTestId("task-edit-modal")).toBeInTheDocument();
     expect(screen.getByDisplayValue("Original title")).toBeInTheDocument();
     expect(screen.getByDisplayValue("backend")).toBeInTheDocument();
-    expect(screen.getByDisplayValue("#ffadad")).toBeInTheDocument();
+    // color 预填成 `#ffadad` 的 swatch 被 aria-pressed=true 高亮
+    const pressed = screen.getByTestId("task-edit-color-#ffadad");
+    expect(pressed).toHaveAttribute("aria-pressed", "true");
+  });
+
+  // V1.1 Phase 6.6 follow-up: Color swatch picker(不再是文本 hex 输入)
+
+  it("color swatch 选中态高亮预填色", () => {
+    renderModal();
+    // 未选中的其他色
+    const notSelected = screen.getByTestId("task-edit-color-#fff8b3");
+    expect(notSelected).toHaveAttribute("aria-pressed", "false");
+    // 选中 clear 按钮
+    const clearBtn = screen.getByTestId("task-edit-color-clear");
+    expect(clearBtn).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("点 color swatch 切换选中", () => {
+    renderModal();
+    fireEvent.click(screen.getByTestId("task-edit-color-#caffbf"));
+    expect(
+      screen.getByTestId("task-edit-color-#caffbf"),
+    ).toHaveAttribute("aria-pressed", "true");
+    // 原先的 #ffadad 不再 pressed
+    expect(
+      screen.getByTestId("task-edit-color-#ffadad"),
+    ).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("点 clear 按钮清空 color", () => {
+    renderModal();
+    fireEvent.click(screen.getByTestId("task-edit-color-clear"));
+    expect(
+      screen.getByTestId("task-edit-color-clear"),
+    ).toHaveAttribute("aria-pressed", "true");
   });
 
   it("project 以只读形式显示,不是 input", () => {

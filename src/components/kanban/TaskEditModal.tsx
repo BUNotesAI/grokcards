@@ -1,5 +1,6 @@
 import { useState, type FormEventHandler } from "react";
 import type { Subtask, TaskEntity, TaskStatus } from "@/bindings";
+import { NOTE_COLORS } from "@/components/keysight/nodes/NodeContextMenu";
 import { COLUMN_ORDER, COLUMNS } from "./columns";
 
 /**
@@ -148,16 +149,46 @@ export function TaskEditModal({ task, onSubmit, onCancel }: TaskEditModalProps) 
           />
         </label>
 
-        <label className="mb-3 block">
+        <div className="mb-3 block">
           <div className="mb-1 text-sm font-medium">Color</div>
-          <input
-            type="text"
-            value={color}
-            onChange={(e) => setColor(e.target.value)}
-            className="w-full rounded border px-2 py-1.5"
-            placeholder="#hex or leave empty"
-          />
-        </label>
+          <div className="flex items-center gap-1.5" data-testid="task-edit-color-row">
+            <button
+              type="button"
+              aria-label="Clear color"
+              aria-pressed={color === ""}
+              onClick={() => setColor("")}
+              data-testid="task-edit-color-clear"
+              className={`flex h-6 w-6 items-center justify-center rounded-full border text-xs ${
+                color === ""
+                  ? "border-foreground ring-2 ring-foreground/40"
+                  : "border-foreground/20 hover:border-foreground/40"
+              }`}
+              title="Clear color"
+            >
+              ⌀
+            </button>
+            {NOTE_COLORS.map((preset) => {
+              const selected = color === preset;
+              return (
+                <button
+                  key={preset}
+                  type="button"
+                  aria-label={`Set color ${preset}`}
+                  aria-pressed={selected}
+                  onClick={() => setColor(preset)}
+                  data-testid={`task-edit-color-${preset}`}
+                  className={`h-6 w-6 rounded-full border transition-transform hover:scale-110 ${
+                    selected
+                      ? "border-foreground ring-2 ring-foreground/40"
+                      : "border-foreground/15"
+                  }`}
+                  style={{ background: preset }}
+                  title={preset}
+                />
+              );
+            })}
+          </div>
+        </div>
 
         <div className="mb-4 block">
           <div className="mb-1 text-sm font-medium">Checklist</div>

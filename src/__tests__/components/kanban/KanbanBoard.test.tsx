@@ -84,47 +84,49 @@ describe("KanbanBoard", () => {
     expect(projectTags.length).toBe(3);
   });
 
-  // V1.1 Phase 6.6: 双击 card 触发 onTaskDoubleClick
+  // V1.1 Phase 6.6 follow-up: 单击 card 触发 onTaskClick(用户反馈从双击改单击)
 
-  it("双击卡片触发 onTaskDoubleClick with 对应 task", () => {
-    const onTaskDoubleClick = vi.fn();
+  it("单击卡片触发 onTaskClick with 对应 task", () => {
+    const onTaskClick = vi.fn();
     render(
       <KanbanBoard
         tasks={tasks}
         showProjectTags={false}
         onAddTask={vi.fn()}
         onTaskMove={vi.fn()}
-        onTaskDoubleClick={onTaskDoubleClick}
+        onTaskClick={onTaskClick}
       />,
     );
     const card = screen.getByTestId("kanban-card-1");
-    fireEvent.doubleClick(card);
-    expect(onTaskDoubleClick).toHaveBeenCalledTimes(1);
-    expect(onTaskDoubleClick).toHaveBeenCalledWith(tasks[0]);
+    fireEvent.click(card);
+    expect(onTaskClick).toHaveBeenCalledTimes(1);
+    expect(onTaskClick).toHaveBeenCalledWith(tasks[0]);
   });
 
-  it("drag 手势(pointer move > 8px)不触发 onTaskDoubleClick", () => {
+  it("drag 手势(pointer move > 8px)不触发 onTaskClick", () => {
     // codex review 要求的冲突防护测试:PointerSensor 的 activationConstraint
-    // 应该让 drag 手势只走 dnd-kit 通道,不额外触发 React onDoubleClick。
-    // 单一 pointer down/move/up 序列本身也不会产生 double click(需要两次 click
-    // 事件才行),但这个测试是 V1.1 决策留的回归锚点 —— 未来移除 activationConstraint
-    // 时必须有人意识到双击可能被破坏。
-    const onTaskDoubleClick = vi.fn();
+    // 应该让 drag 手势只走 dnd-kit 通道,不额外触发 React onClick。
+    //
+    // 浏览器默认行为:pointer down → move → up 如果 up 时 hit test 发现移动
+    // 发生,不会 fire click 事件 —— 天然互斥。本测试是 V1.1 决策的回归锚点,
+    // 未来移除 activationConstraint 或改 sensor 时必须有人意识到 click 可能被破坏。
+    const onTaskClick = vi.fn();
     render(
       <KanbanBoard
         tasks={tasks}
         showProjectTags={false}
         onAddTask={vi.fn()}
         onTaskMove={vi.fn()}
-        onTaskDoubleClick={onTaskDoubleClick}
+        onTaskClick={onTaskClick}
       />,
     );
     const card = screen.getByTestId("kanban-card-1");
     // 模拟 drag: pointerDown → pointerMove(10px) → pointerUp
+    // 注意:jsdom 不会自动 fire click(真实浏览器发现移动也不 fire click)
     fireEvent.pointerDown(card, { clientX: 0, clientY: 0 });
     fireEvent.pointerMove(card, { clientX: 10, clientY: 0 });
     fireEvent.pointerUp(card, { clientX: 10, clientY: 0 });
-    expect(onTaskDoubleClick).not.toHaveBeenCalled();
+    expect(onTaskClick).not.toHaveBeenCalled();
   });
 });
 

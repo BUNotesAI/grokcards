@@ -168,9 +168,9 @@ describe("KanbanView", () => {
     expect(screen.getByText(/Retry/)).toBeInTheDocument();
   });
 
-  // V1.1 Phase 6.6: 双击端到端 → TaskEditModal → submit → taskUpdateWithSubtasks
+  // V1.1 Phase 6.6 follow-up: 单击端到端 → TaskEditModal → submit → taskUpdateWithSubtasks
 
-  it("双击 kanban card 打开 TaskEditModal,submit 调 taskUpdateWithSubtasks", async () => {
+  it("单击 kanban card 打开 TaskEditModal,submit 调 taskUpdateWithSubtasks", async () => {
     const existingTask = {
       id: "task_abc",
       title: "Existing task",
@@ -213,8 +213,8 @@ describe("KanbanView", () => {
     // 等 query 完成 → card 渲染
     await waitFor(() => screen.getByTestId("kanban-card-task_abc"));
 
-    // 双击打开 modal
-    fireEvent.doubleClick(screen.getByTestId("kanban-card-task_abc"));
+    // 单击打开 modal
+    fireEvent.click(screen.getByTestId("kanban-card-task_abc"));
     expect(screen.getByTestId("task-edit-modal")).toBeInTheDocument();
 
     // 改 title 并 submit

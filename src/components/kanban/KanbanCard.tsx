@@ -5,8 +5,8 @@ interface KanbanCardProps {
   task: TaskEntity;
   /** "All projects" 模式下显示 project 标签,单项目模式隐藏。 */
   showProjectTag?: boolean;
-  /** 双击卡片的回调(V1.1 Phase 6.6),由 KanbanView 打开 TaskEditModal。 */
-  onDoubleClick?: (task: TaskEntity) => void;
+  /** 单击卡片的回调(V1.1 Phase 6.6 follow-up),由 KanbanView 打开 TaskEditModal。 */
+  onClick?: (task: TaskEntity) => void;
 }
 
 /**
@@ -17,14 +17,16 @@ interface KanbanCardProps {
  * V1.1 Phase 6.4: 右上角显示 `done/total` progress 徽章(仅当 subtasks 非空),
  * 让用户在 Kanban 卡片粒度直接看到 checklist 完成进度。
  *
- * V1.1 Phase 6.6: `onDoubleClick` 双击打开 TaskEditModal。配合 KanbanBoard 的
+ * V1.1 Phase 6.6 follow-up: `onClick` 单击打开 TaskEditModal。配合 KanbanBoard 的
  * `PointerSensor` `activationConstraint: { distance: 8 }`,drag 只在 pointer 移动
- * > 8px 后激活,纯 click / double-click 永不触发 drag,所以双击和拖拽可以安全共存。
+ * > 8px 后激活,纯 click 永不触发 drag;反过来 drag gesture(移动 > 8px)的 pointer
+ * up 之后浏览器默认不会 fire click 事件(因为目标 hit test 判断发生移动),所以
+ * click 和 drag 在事件层面天然互斥。
  */
 export function KanbanCard({
   task,
   showProjectTag = false,
-  onDoubleClick,
+  onClick,
 }: KanbanCardProps) {
   const color = task.color ?? undefined;
   const { attributes, listeners, setNodeRef, transform, isDragging } =
@@ -50,7 +52,7 @@ export function KanbanCard({
       ref={setNodeRef}
       {...listeners}
       {...attributes}
-      onDoubleClick={onDoubleClick ? () => onDoubleClick(task) : undefined}
+      onClick={onClick ? () => onClick(task) : undefined}
       className="cursor-grab rounded-md border bg-card p-3 shadow-sm active:cursor-grabbing"
       style={style}
       data-testid={`kanban-card-${task.id}`}

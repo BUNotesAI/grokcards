@@ -193,7 +193,7 @@ export function KanbanView() {
           showProjectTags={showProjectTags}
           onAddTask={openModal}
           onTaskMove={handleTaskMove}
-          onTaskDoubleClick={openEdit}
+          onTaskClick={openEdit}
         />
       </div>
       {modalState.open && (

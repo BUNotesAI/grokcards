@@ -17,8 +17,8 @@ interface KanbanBoardProps {
   onAddTask: (status: TaskStatus) => void;
   /** dnd drop 落到合法列时触发,由 parent 调 taskUpdate。 */
   onTaskMove: (taskId: string, newStatus: TaskStatus) => void;
-  /** V1.1 Phase 6.6: 双击卡片的回调,由 KanbanView 打开 TaskEditModal。 */
-  onTaskDoubleClick?: (task: TaskEntity) => void;
+  /** V1.1 Phase 6.6 follow-up: 单击卡片的回调,由 KanbanView 打开 TaskEditModal。 */
+  onTaskClick?: (task: TaskEntity) => void;
 }
 
 /**
@@ -61,7 +61,7 @@ export function KanbanBoard({
   showProjectTags,
   onAddTask,
   onTaskMove,
-  onTaskDoubleClick,
+  onTaskClick,
 }: KanbanBoardProps) {
   // V1.1 Phase 6.6: PointerSensor + activationConstraint 防止双击手势被误判为 drag
   // distance: 8 — drag 只在 pointer 移动 > 8px 后激活,纯 click / double-click
@@ -99,7 +99,7 @@ export function KanbanBoard({
                   key={task.id}
                   task={task}
                   showProjectTag={showProjectTags}
-                  onDoubleClick={onTaskDoubleClick}
+                  onClick={onTaskClick}
                 />
               ))}
             </KanbanColumn>
