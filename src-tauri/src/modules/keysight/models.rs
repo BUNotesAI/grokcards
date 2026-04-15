@@ -301,6 +301,11 @@ pub struct TaskEntity {
     /// 任务卡片背景色 — B2 新增,`None` 表示默认色。
     #[serde(default)]
     pub color: Option<String>,
+    /// 从 `content` body 中 parse 出的 GFM checklist 子任务列表(V1.1 Phase 6.2 新增)。
+    /// 空 Vec 表示 body 中没有任何符合格式的 checklist 行。
+    /// Parse 规则见 `domain::task::parse_task_checklist`(V1 严格 `^- \[( |x|X)\] .+$`)。
+    #[serde(default)]
+    pub subtasks: Vec<Subtask>,
 }
 
 /// 问题实体（entities + question_fields 的联合查询结果）。

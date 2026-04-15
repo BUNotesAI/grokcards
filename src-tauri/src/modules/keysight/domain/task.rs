@@ -452,15 +452,18 @@ pub(in crate::modules::keysight) fn get(
          WHERE e.id = ?1 AND e.kind = 'task'",
         [id],
         |r| {
+            let content = r.get::<_, String>(2)?.trim_end_matches('\n').to_string();
+            let subtasks = parse_task_checklist(&content);
             Ok(TaskEntity {
                 id: r.get(0)?,
                 title: r.get(1)?,
-                content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
+                content,
                 whiteboard_id: r.get(3)?,
                 status: r.get(4)?,
                 area: r.get(5)?,
                 project: r.get(6)?,
                 color: r.get(7)?,
+                subtasks,
             })
         },
     )
@@ -482,15 +485,18 @@ pub(in crate::modules::keysight) fn query_all(
          WHERE e.whiteboard_id = ?1 ORDER BY e.title",
     )?;
     let rows = stmt.query_map([whiteboard_id], |r| {
+        let content = r.get::<_, String>(2)?.trim_end_matches('\n').to_string();
+        let subtasks = parse_task_checklist(&content);
         Ok(TaskEntity {
             id: r.get(0)?,
             title: r.get(1)?,
-            content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
+            content,
             whiteboard_id: r.get(3)?,
             status: r.get(4)?,
             area: r.get(5)?,
             project: r.get(6)?,
             color: r.get(7)?,
+            subtasks,
         })
     })?;
     rows.collect::<rusqlite::Result<Vec<_>>>()
@@ -512,15 +518,18 @@ pub(in crate::modules::keysight) fn query_kanban(
     // 两条 SQL 只差一个 WHERE 子句。为了避免动态 param 借用生命周期纠结,
     // 分支展开成两个独立的 prepare/query_map 调用,mapper 复用同一个 closure。
     let mapper = |r: &rusqlite::Row<'_>| -> rusqlite::Result<TaskEntity> {
+        let content = r.get::<_, String>(2)?.trim_end_matches('\n').to_string();
+        let subtasks = parse_task_checklist(&content);
         Ok(TaskEntity {
             id: r.get(0)?,
             title: r.get(1)?,
-            content: r.get::<_, String>(2)?.trim_end_matches('\n').to_string(),
+            content,
             whiteboard_id: r.get(3)?,
             status: r.get(4)?,
             area: r.get(5)?,
             project: r.get(6)?,
             color: r.get(7)?,
+            subtasks,
         })
     };
 
@@ -1279,6 +1288,127 @@ mod tests {
 
         let result = create(&conn, &vfs, &project, task_create_defaults("  "));
         assert!(matches!(result, Err(KeysightError::EmptyTitle)));
+    }
+
+    // --- Subtasks 填充 (V1.1 Phase 6.2) ---
+
+    /// 创建一个含 GFM checklist body 的 task,通过 get 读回后 subtasks 应该被
+    /// parse_task_checklist 正确填充(不为空)。
+    #[test]
+    fn test_get_task_populates_subtasks_from_checklist_body() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let body = "描述段\n\n- [ ] step one\n- [x] step two\n- [X] step three\n\n备注";
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some(body),
+                ..task_create_defaults("With checklist")
+            },
+        )
+        .unwrap();
+
+        let loaded = get(&conn, &task.id).unwrap();
+        assert_eq!(
+            loaded.subtasks,
+            vec![
+                subtask("step one", false),
+                subtask("step two", true),
+                subtask("step three", true),
+            ]
+        );
+    }
+
+    /// 没有 checklist 行的 task body → subtasks 为空 Vec(不是缺失字段)。
+    #[test]
+    fn test_get_task_empty_subtasks_when_body_has_no_checklist() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("只是一段自由文本\n没有任何 checklist"),
+                ..task_create_defaults("No checklist")
+            },
+        )
+        .unwrap();
+
+        let loaded = get(&conn, &task.id).unwrap();
+        assert!(loaded.subtasks.is_empty());
+    }
+
+    /// query_all 返回的所有 task 都应该有 subtasks 字段正确填充(不是全部空)。
+    #[test]
+    fn test_query_all_populates_subtasks_per_task() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("- [ ] a\n- [x] b"),
+                ..task_create_defaults("Task one")
+            },
+        )
+        .unwrap();
+        create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("free text only"),
+                ..task_create_defaults("Task two")
+            },
+        )
+        .unwrap();
+
+        let tasks = query_all(&conn, "projects/super-tauri").unwrap();
+        assert_eq!(tasks.len(), 2);
+        // tasks 按 title ASC 排序 → Task one 先,Task two 后
+        let one = tasks.iter().find(|t| t.title == "Task one").unwrap();
+        let two = tasks.iter().find(|t| t.title == "Task two").unwrap();
+        assert_eq!(
+            one.subtasks,
+            vec![subtask("a", false), subtask("b", true)]
+        );
+        assert!(two.subtasks.is_empty());
+    }
+
+    /// query_kanban 跨项目 + 单项目两种模式都要填充 subtasks。
+    #[test]
+    fn test_query_kanban_populates_subtasks() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("- [ ] one\n- [ ] two\n- [x] done"),
+                ..task_create_defaults("K task")
+            },
+        )
+        .unwrap();
+
+        // 单项目模式
+        let single = query_kanban(&conn, Some(&project)).unwrap();
+        assert_eq!(single.len(), 1);
+        assert_eq!(single[0].subtasks.len(), 3);
+        assert_eq!(single[0].subtasks[2], subtask("done", true));
+
+        // 跨项目模式
+        let all = query_kanban(&conn, None).unwrap();
+        assert_eq!(all.len(), 1);
+        assert_eq!(all[0].subtasks.len(), 3);
     }
 
     #[test]
