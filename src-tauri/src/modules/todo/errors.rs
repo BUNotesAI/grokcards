@@ -14,6 +14,8 @@ pub(super) enum TodoError {
 
 impl From<TodoError> for AppError {
     fn from(e: TodoError) -> Self {
-        AppError::Todo(e.to_string())
+        AppError::Todo {
+            message: e.to_string(),
+        }
     }
 }

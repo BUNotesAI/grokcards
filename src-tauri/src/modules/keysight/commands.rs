@@ -1023,10 +1023,12 @@ pub fn entity_connect(
 ) -> Result<(), AppError> {
     let conn = state.db.lock().unwrap();
 
-    let from = EntityId::parse(&from_id)
-        .map_err(|e| AppError::Keysight(format!("from_id 解析失败: {e}")))?;
-    let to = EntityId::parse(&to_id)
-        .map_err(|e| AppError::Keysight(format!("to_id 解析失败: {e}")))?;
+    let from = EntityId::parse(&from_id).map_err(|e| AppError::Keysight {
+        message: format!("from_id 解析失败: {e}"),
+    })?;
+    let to = EntityId::parse(&to_id).map_err(|e| AppError::Keysight {
+        message: format!("to_id 解析失败: {e}"),
+    })?;
 
     let edge = user_draw_edge(from, to).map_err(AppError::from)?;
 
@@ -1088,17 +1090,19 @@ pub fn entity_relate(
 ) -> Result<(), AppError> {
     let conn = state.db.lock().unwrap();
 
-    let from_entity = EntityId::parse(&from_card_id)
-        .map_err(|e| AppError::Keysight(format!("from_card_id 解析失败: {e}")))?;
-    let to_entity = EntityId::parse(&to_card_id)
-        .map_err(|e| AppError::Keysight(format!("to_card_id 解析失败: {e}")))?;
+    let from_entity = EntityId::parse(&from_card_id).map_err(|e| AppError::Keysight {
+        message: format!("from_card_id 解析失败: {e}"),
+    })?;
+    let to_entity = EntityId::parse(&to_card_id).map_err(|e| AppError::Keysight {
+        message: format!("to_card_id 解析失败: {e}"),
+    })?;
 
     let (from, to) = match (from_entity, to_entity) {
         (EntityId::Card(a), EntityId::Card(b)) => (a, b),
         _ => {
-            return Err(AppError::Keysight(
-                "entity_relate 只接受 card → card 关系".to_string(),
-            ))
+            return Err(AppError::Keysight {
+                message: "entity_relate 只接受 card → card 关系".to_string(),
+            })
         }
     };
 
@@ -1356,21 +1360,26 @@ pub fn import_legacy_db(
 ) -> Result<ImportSummary, AppError> {
     let path = std::path::Path::new(&old_db_path);
     if !path.exists() {
-        return Err(AppError::Keysight(format!("旧 DB 文件不存在: {old_db_path}")));
+        return Err(AppError::Keysight {
+            message: format!("旧 DB 文件不存在: {old_db_path}"),
+        });
     }
 
     // 1. 备份旧 DB
     let timestamp = chrono::Local::now().format("%Y%m%d%H%M%S");
     let backup_path = format!("{old_db_path}.bak-import-{timestamp}");
-    std::fs::copy(path, &backup_path)
-        .map_err(|e| AppError::Keysight(format!("备份旧 DB 失败: {e}")))?;
+    std::fs::copy(path, &backup_path).map_err(|e| AppError::Keysight {
+        message: format!("备份旧 DB 失败: {e}"),
+    })?;
 
     // 2. 只读打开旧 DB
     let old_conn = Connection::open_with_flags(
         path,
         rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY,
     )
-    .map_err(|e| AppError::Keysight(format!("打开旧 DB 失败: {e}")))?;
+    .map_err(|e| AppError::Keysight {
+        message: format!("打开旧 DB 失败: {e}"),
+    })?;
 
     // 3. 导入
     let new_conn = state.db.lock().unwrap();

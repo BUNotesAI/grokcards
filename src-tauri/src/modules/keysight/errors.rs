@@ -32,12 +32,38 @@ pub(in crate::modules::keysight) enum KeysightError {
     #[error("task 状态不合法: {0}")]
     InvalidTaskStatus(String),
 
+    /// V1.1 Phase 6.0 新增 —— Kanban subtask 结构化编辑遇到多 block checklist。
+    ///
+    /// 由 `render_subtasks_into_body` 检测 checklist 行不连续时抛出。透传到
+    /// `AppError::MultiBlockChecklist { task_id, block_count }`(保留结构化字段,
+    /// 不走 `AppError::Keysight(String)` 的 flatten 路径),让 TS 侧可按 typed
+    /// variant 做分支而不是字符串匹配。
+    #[error("task {task_id} 的 checklist 有 {block_count} 个不连续 block")]
+    MultiBlockChecklist {
+        task_id: String,
+        block_count: usize,
+    },
+
     #[error("数据库错误: {0}")]
     Database(#[from] rusqlite::Error),
 }
 
 impl From<KeysightError> for AppError {
     fn from(e: KeysightError) -> Self {
-        AppError::Keysight(e.to_string())
+        // MultiBlockChecklist 走独立的 AppError variant 保留结构化字段;
+        // 其他所有 KeysightError 变体 flatten 为 AppError::Keysight { message } 字符串
+        // (V1.2 若把 KeysightError 全面 typed through IPC,这一段可以整体换成嵌套传递)。
+        match e {
+            KeysightError::MultiBlockChecklist {
+                task_id,
+                block_count,
+            } => AppError::MultiBlockChecklist {
+                task_id,
+                block_count,
+            },
+            other => AppError::Keysight {
+                message: other.to_string(),
+            },
+        }
     }
 }
