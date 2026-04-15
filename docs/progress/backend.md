@@ -6,11 +6,50 @@
 
 ## Next
 
-- [ ] **P3 Kanban V1.1 — Subtask 抽象 + 双击编辑 modal** —— V1 收口时用户提出新需求:task 粒度 = area,body 是 GFM checklist,每项对标子任务。V1.1 scope:Rust `Subtask { text, done, line_index }` + `parse_task_checklist` parser + `TaskEntity.subtasks` 字段 + `task_update_subtasks` command(Rust 负责 re-render body)+ TS KanbanCard progress 徽章(done/total)+ `TaskEditModal`(title + content + checklist 编辑器 + status/area/color,project 只读)+ 双击 KanbanCard 打开 edit modal。7 个子 task 详见 TaskList #10-#16。
+（无 —— V1.1 已完成收口,V1.2 / B3 等后续 epic 待独立立项)
 
 ## Done
 
 ### 2026-04-15
+
+- [x] **P3 Kanban V1.1 — Subtask + 单击编辑 modal 完成** —— 承接 V1 收口,把 task 语义从"单一 actionable 单位"升级为"area + GFM checklist 子任务"。完整跑过 2 轮 codex review + 2 轮 CC 响应 → V2 定稿 → 8 个 Phase 顺序执行 + 1 个 UX follow-up。
+  - **V2 设计文档(定稿)**: [`docs/collaboration/2026-04-15-kanban-v1-1-subtask-design-v2-via-cc.md`](../collaboration/2026-04-15-kanban-v1-1-subtask-design-v2-via-cc.md)
+  - **能力清单**:
+    - Rust: `Subtask { text, done }` IPC 类型(**不含** line_index,位置信息由私有 `ParsedItem` 管理)
+    - Rust: `parse_task_checklist` 严格 GFM parser(`^- \[( |x|X)\] .+$`,禁前置空白 / 禁 `*+` / 禁非法字符 / 禁空 text)
+    - Rust: `TaskEntity.subtasks` 字段 + 3 reader(get / query_all / query_kanban)统一填充
+    - Rust: `task_update_with_subtasks` command(title / subtasks / status / area / color,**无 content 参数**,内部从 current.content 继承非 checklist 自由文本作 merge base)
+    - Rust: `render_subtasks_into_body` 单连续 block-only,多 block 时 **fail-closed** 返 `KeysightError::MultiBlockChecklist { task_id, block_count }`
+    - Rust: `AppError` 从 tuple variants 重构成 struct variants(Phase 6.0),新增 `AppError::MultiBlockChecklist { taskId, blockCount }` variant 让 TS 侧可 typed catch
+    - TS: `KanbanCard` 右上角显示 `done/total` progress 徽章(仅 subtasks 非空时),aria-label 支持屏幕阅读器
+    - TS: `TaskEditModal` 组件(title / status / area + 与 canvas 共用的 7 色 swatch picker + `ChecklistEditor` 子组件,**无 content textarea**),**单击** KanbanCard 打开
+    - TS: `ChecklistEditor` 增删勾改 subtask,用 `crypto.randomUUID()` 本地生成 uiKey 作 React list key(纯 UI state 例外),submit 时剥掉还原 `Subtask { text, done }`
+    - TS: color swatch picker 复用 keysight `NOTE_COLORS` 7 色 + clear 按钮(视觉和 canvas NoteColorRow 一致,aria-pressed 高亮当前选中)
+    - TS: `TaskEditModal` submit 路径 catch `MultiBlockChecklist` typed error(`err.kind === "MultiBlockChecklist"` 穷尽 match),显示 "edit markdown file directly" 友好提示
+    - TS: `KanbanBoard` 引入 `@dnd-kit` `PointerSensor` + `activationConstraint: { distance: 8 }` 保证 click 和 drag 互斥 —— drag 只在 pointer 移动 > 8px 后激活,pointer up 时若移动过 8px 浏览器本身不 fire click
+    - TS: `KanbanView` editState 管理 modal 开闭,handleEditSubmit 走单一 command `taskUpdateWithSubtasks` + invalidateAllTaskCaches
+  - **Commits(9 个,顺序执行)**:
+    - Phase 6.0: `771e30c` AppError struct variants + MultiBlockChecklist variant
+    - Phase 6.1: `41674b3` parse_task_checklist + Subtask struct + 12 edge case tests
+    - Phase 6.2: `726ae25` TaskEntity.subtasks 字段 + 3 reader 填充 + 4 tests
+    - Phase 6.3: `8a60691` task_update_with_subtasks command + render_subtasks_into_body + 13 tests(9 render + 4 端到端)+ 副作用矩阵更新
+    - Phase 6.4: `a14e128` KanbanCard progress 徽章 + 3 tests
+    - Phase 6.5: `be9d2ac` TaskEditModal + ChecklistEditor 组件 + 13 tests
+    - Phase 6.6: `844f634` 双击接线 + PointerSensor 配置 + 3 tests(2 Board 冲突防护 + 1 View 端到端)
+    - Phase 6.6 follow-up: `e9d3ff4` 单击替换双击 + color swatch picker(复用 NOTE_COLORS)+ 3 新 tests
+    - Phase 6.6 bug fix: `c2419c4` Clear color 发送 "default" sentinel(Rust task::update 的 None = 保留原值契约)+ 2 新 tests
+    - Phase 6.6 bug fix 2: `b2dae84` TaskNode canvas 结构化渲染 subtasks(避免 raw markdown 折叠成一行)+ 3 新 tests
+    - Phase 6.7: 本收口 commit
+  - **防火墙收敛(V1.1 内的类型安全改进)**:
+    - `Subtask { text, done }` 单一 IPC 类型,位置信息内部私有化,不把"parser 读位置"泄漏到跨 IPC 写契约
+    - `render_subtasks_into_body` **单 block only** 约束,多 block 通过 typed error fail-closed,杜绝"全删+首位插回"算法挪动自由文本的风险
+    - `AppError::MultiBlockChecklist` 结构化 variant 让 TS 不做字符串 matching,L0 硬约束("TS 不解析 Rust error message 做控制流")不被破坏
+    - `task_update_with_subtasks` 无 content 参数,Rust 从 current.content 继承自由文本,V1.1 modal 没有机会构造持久化格式
+    - `PointerSensor` activationConstraint 替代手写 isDragging check,drag vs click 的事件冲突在 @dnd-kit sensor 层一次配置解决
+    - `ChecklistEditor` uiKey 用 crypto.randomUUID() 生成纯 UI state key,submit 时强制剥掉(符合 CLAUDE.md "ui_" 前缀例外)
+  - **测试计数**:Rust **264 → 296**(+32);TS **289 → 316**(+27,含 6.6 follow-up 3 swatch + bug fix 2 default sentinel + TaskNode 3 subtasks 渲染);test files **36 → 37**(+1 `TaskEditModal.test.tsx`)
+  - **Canvas TaskNode 增强(bug fix 2 顺带)**:TaskNode 在 canvas 上把 task.subtasks 以结构化 checklist 渲染(disabled checkbox + text,最多 6 项 + 溢出标记)。之前是把 body raw text 塞 `<p>` 里 CSS 折叠成一行。无 subtasks 的 task fallback 到 `whitespace-pre-wrap` 保留换行。canvas 的 checkbox 只读,编辑走 Kanban 单击 modal
+  - **已知限制(非目标,V1.2+)**:嵌套 checklist / 多 block 结构化编辑 / 自由文本 body modal 编辑 / subtask 拖拽排序 / subtask 独立 entity / 跨 task subtask 聚合 / canvas 内交互式 subtask toggle。详见 V2 设计文档 §9
 
 - [x] **P3 Kanban view V1 完成** —— 用户核心业务需求"kanban 统计项目任务进展"端到端落地。跨 2 个 session 共 **36 commit**(Phase 0-5 的 34 commit + 今日 2 个类型安全修复)。
   - **能力清单**:
