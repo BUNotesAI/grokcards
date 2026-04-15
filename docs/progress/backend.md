@@ -6,9 +6,41 @@
 
 ## Next
 
-- [ ] **P3 — Kanban view (大 feature)** — 用户的核心业务需求"类似 kanban 统计项目任务进展,点 task 进去做 note/alias 连线标注"完全没实装。需要先 brainstorm 5 个决策点(UI 形态 / status 列实现 / 拖拽 / 进入标注模式 / 与新建 task 关系),建议**独立 session**先走 brainstorm 再实施,不和 P0/P1 同 session 做(规模差一个数量级)。详见上一份 handoff(`git show 7e2f828:docs/handoff/backend.md`)的 P3 Task 3 段落。
+- [ ] **P3 Kanban V1.1 — Subtask 抽象 + 双击编辑 modal** —— V1 收口时用户提出新需求:task 粒度 = area,body 是 GFM checklist,每项对标子任务。V1.1 scope:Rust `Subtask { text, done, line_index }` + `parse_task_checklist` parser + `TaskEntity.subtasks` 字段 + `task_update_subtasks` command(Rust 负责 re-render body)+ TS KanbanCard progress 徽章(done/total)+ `TaskEditModal`(title + content + checklist 编辑器 + status/area/color,project 只读)+ 双击 KanbanCard 打开 edit modal。7 个子 task 详见 TaskList #10-#16。
 
 ## Done
+
+### 2026-04-15
+
+- [x] **P3 Kanban view V1 完成** —— 用户核心业务需求"kanban 统计项目任务进展"端到端落地。跨 2 个 session 共 **36 commit**(Phase 0-5 的 34 commit + 今日 2 个类型安全修复)。
+  - **能力清单**:
+    - 5 列固定顺序 Kanban view(Inbox / Next / Active / Blocked / Done)+ Record<TaskStatus, ColumnConfig> 编译期穷尽
+    - URL state `?project={name}`(单项目模式)+ All projects 跨项目模式,dropdown 切换
+    - Skeleton loading(5 列 pulse 动画)+ error + empty 状态
+    - `task_query_kanban(project: Option<ProjectName>)` 跨/单项目查询
+    - 列头 "+" + toolbar "+ New task" + CreateTaskModal(parent 条件渲染防 stale state)
+    - **@dnd-kit drag-to-change-status** —— `parseDragEnd` pure function 抽出 4 case 单测,onDragEnd → `taskUpdate` + invalidate
+    - **Auto-position** —— Kanban 创建的 task 立即写 `positions` 行(x=0, y=白板最底元素下方一个 node-height + spacing),空白板落 (0,0)
+    - **Reveal Graph ↔ Show Kanban 双向跳转** —— KanbanToolbar Reveal Graph 按钮(单项目模式显示)+ GraphToolbar Show Kanban 按钮
+    - 端到端 happy path + cross-route 跳转测试覆盖
+  - **Commits(36 个,顺序执行)**:
+    - Phase 0 (2): `6050d12` TaskStatus IPC 边界 String→enum + `9addcd3` KeysightView URL sync
+    - Phase 1 (6): `eb37175` Inbox variant + `31406ab` compute_position + `288e250` auto-position + `3c167cd` query_kanban + `3c6e03d` positions index + `14b3d6a` 副作用矩阵
+    - Phase 2 (5): `7648198` AppShell + `47f1e18` /kanban 路由 + `7a1c842` KanbanColumn + `e4bf3e8` KanbanCard + `b8c67b6` KanbanBoard
+    - Phase 3 (8): `d69280d` invalidate helper + `f1802c1` KanbanView query + `14f630b` KanbanToolbar + Reveal Graph + `6849cd9` CreateTaskModal + `cd79cf7` modal 集成 + `fb65b90` Show Kanban 反向 + `85e7fb4` e2e + cross-route 测试
+    - Phase 4 (2): `5d13c49` @dnd-kit/core + `3634836` DndContext + parseDragEnd + onTaskMove
+    - Phase 5 (4): `1370372` skeleton loading + `a25c319` 测试覆盖 3 缺口 + `5b1d8af` compute_position TODO(B3 P2) + `4a1c782` **TaskEntity.status: String → TaskStatus**
+  - **防火墙收敛(本 feature 内的类型安全提升)**:
+    - `ProjectName` newtype(`/ \\ : * ? " < > |` / 前后空白 / 点开头 / Windows 保留字 / 长度 / 控制字符 校验)
+    - `TaskStatus` 5 值 enum 全链路(Rust pub fn 输入 + TaskEntity 字段 + IPC 参数 + TS literal union),新增 `impl FromSql / ToSql for TaskStatus` 闭合 SQL↔Rust 边界,legacy 脏数据走 `extract_keysight_err` downcast 还原为 `InvalidTaskStatus`
+    - `Record<TaskStatus, ColumnConfig>` + `Record<TaskStatus, ...>` 穷尽约束 —— 加 variant 时编译期强制补齐
+    - `parseDragEnd` 5 字面量显式比较 + type guard(非法直接丢弃,`over=null` 返 null)
+    - CreateTaskModal 条件渲染 `{modalState.open && <CreateTaskModal .../>}` 杜绝 stale default state
+  - **测试计数**:Rust **252 → 264**(+12);TS **246 → 289**(+43);test files 29 → 36(+7 kanban/*)
+  - **dev walkthrough**: 用户 2026-04-15 手动验证通过(场景 1 sidebar / 2 dropdown / 3 创建 / 4 拖拽 status / 5 auto-position / 7 跨项目模式 ✓;场景 6 Reveal Graph 为 toolbar 按钮不是右键菜单,单项目模式显示,用户确认)
+  - **遗留 observations(非阻塞,pre-existing drift)**:
+    - `TaskNode.tsx:36 STATUS_STYLES: Record<string, string>` 缺 `inbox` key,inbox 状态的 task 在 keysight canvas 渲染 fallback 到 "next" 蓝色 badge。Phase 1 新增 Inbox variant 时的漏补,非 P3 引入
+    - `CreateTaskModal.tsx` 的 `FormEventHandler` 在 React 19.2+ deprecated(LSP warning,不影响编译)
 
 ### 2026-04-14
 
