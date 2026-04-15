@@ -141,11 +141,41 @@ export function TaskNode({
           />
         )}
       </div>
-      {lodLevel === 0 && task.content && (
-        <p className="px-4 pb-2 text-xs leading-relaxed text-muted-foreground">
-          {task.content.length > 100 ? task.content.slice(0, 100) + "..." : task.content}
+      {lodLevel === 0 && task.subtasks && task.subtasks.length > 0 ? (
+        <ul
+          className="space-y-0.5 px-4 pb-2 text-xs leading-relaxed text-muted-foreground"
+          data-testid={`task-node-subtasks-${task.id}`}
+        >
+          {task.subtasks.slice(0, 6).map((sub, idx) => (
+            <li key={idx} className="flex items-center gap-2">
+              <input
+                type="checkbox"
+                checked={sub.done}
+                readOnly
+                disabled
+                className="h-3 w-3 flex-shrink-0"
+                aria-label={`subtask ${sub.text}${sub.done ? " (done)" : ""}`}
+              />
+              <span
+                className={`truncate ${sub.done ? "opacity-60 line-through" : ""}`}
+              >
+                {sub.text}
+              </span>
+            </li>
+          ))}
+          {task.subtasks.length > 6 && (
+            <li className="pl-5 text-[10px] italic opacity-60">
+              + {task.subtasks.length - 6} more…
+            </li>
+          )}
+        </ul>
+      ) : lodLevel === 0 && task.content ? (
+        <p className="whitespace-pre-wrap px-4 pb-2 text-xs leading-relaxed text-muted-foreground">
+          {task.content.length > 100
+            ? task.content.slice(0, 100) + "..."
+            : task.content}
         </p>
-      )}
+      ) : null}
       {lodLevel === 0 && (task.area || task.project) && (
         <div className="flex gap-1 px-4 pb-3">
           {task.area && (
