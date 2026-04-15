@@ -1,43 +1,178 @@
 # super-tauri
 
-## 项目管理体系
+## Workflow v4 — Task-Centric
 
-四个正交关注点，覆盖从规划到记录的完整生命周期。
+本项目使用 **v4 task-centric 对话式工作流**。Task 是一等 entity,`task.md` 是总入口,frontmatter 是 index,per-task 子目录放 design / spec / plan / reviews。**所有 doc 物理位置都在 Obsidian vault 里**,repo **不再有 `docs/` 目录**,通过 `vault/` symlink 访问 vault。
 
-### 术语表
+### Vault Symlink Setup(每台机器本地配置)
+
+本 repo **没有 `docs/` 目录** —— 所有 doc(v4 设计文档 / progress / devlog / handoff / tasks / lessons / 历史记录 / project spec)都在 Obsidian vault:
+
+```
+~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/projects/super-tauri/
+```
+
+新机器 clone 后必须先建立 `vault/` symlink:
+
+```bash
+ln -s ~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/projects/super-tauri vault
+```
+
+`vault/` 已在 `.gitignore`,不会被 commit。通过 symlink 访问:
+
+- `vault/docs/progress/*.md` — 功能域进度(legacy 兼容)
+- `vault/docs/devlog/*.md` — 日志
+- `vault/docs/handoff/*.md` — 区级 handoff(legacy)
+- `vault/docs/tasks/{task_id}/*` — **per-task artifacts(v4 核心)**
+- `vault/docs/lessons/modules/*.md` — 模块级 LESSONS(跨 task 真源)
+- `vault/docs/legacy/*` — 历史记录(迁移前的 collab / superpowers)
+- `vault/docs/project.spec.md` — 项目级全局 spec(agent-spec 自动 walk-up 发现)
+- `vault/{task_id} 【TASK】{title}.md` — **task 总入口(和 docs/ 同级,不在 docs/ 下)**
+
+**重要**:Task.md 物理位置**不在 `docs/` 下**,而是 vault 根目录,与 `docs/` 同级。这让 Obsidian 能把 task 文件当成一等 note,享受 graph / backlinks / search 原生能力。
+
+### Agent-Spec CLI(从本地 fork 安装)
+
+本项目使用 `agent-spec` CLI 做 task spec 的 BDD 契约验证。**不从 crates.io 安装**,用本地 fork(以便根据项目特定环境改源码):
+
+```bash
+cargo install --path /Users/alexwang/codes/vibe-coding/agent-spec-fork
+/Users/alexwang/codes/vibe-coding/agent-spec-fork/install-skills.sh  # 幂等,只 copy skills
+```
+
+Fork 路径:`/Users/alexwang/codes/vibe-coding/agent-spec-fork/`
+
+验证:
+
+```bash
+agent-spec --version  # 应显示 0.2.7 或更新版本
+```
+
+`project.spec.md` 放在 `vault/docs/project.spec.md`,task spec 里用 `inherits: project` 声明继承。agent-spec resolver(`spec_parser/resolver.rs::default_search_dirs`)从 task spec 所在目录向上 walk,自动发现 `vault/docs/project.spec.md`,**不需要改 fork 源码**。
+
+### 术语表(v4)
 
 | 术语 | 定义 | 载体 |
 |------|------|------|
-| **设计 (Design)** | 架构决策 + 模块规划 + 动机约束。回答「建什么、为什么」 | `docs/design.md` |
-| **进度 (Progress)** | Task 的执行状态，按功能域拆文件。回答「做到哪、下一步」 | `docs/progress/{功能域}.md` |
-| **质量 (Quality)** | 确保正确性的机制和关卡。回答「怎么保证不出错」 | CLAUDE.md 内嵌 |
-| **日志 (Records)** | 时间线记录 + 经验积累。回答「发生了什么、学到了什么」 | devlog / changelog / LESSONS.md |
-| **功能域** | 项目中长期存在的功能边界，对应独立可演进的子系统。Task 在功能域内产生和完成 | `docs/progress/{name}.md` |
-| **Task** | 功能域内一个可完成的工作项 | progress 文件中的一行 checkbox |
-| **Handoff** | Task 内部的精准执行快照，让下一个会话能精准接续 | `docs/handoff/{area}.md` |
+| **Task** | 项目里一个完整的工作单元(含 design / spec / plan / 实施 / 收口)。Task 是一等 entity | `vault/{task_id} 【TASK】{title}.md` |
+| **Task Frontmatter** | Task 的 index,用 YAML 声明 design / spec / plan / review / commits / lessons / mempal / rules / skills | task.md frontmatter |
+| **Design** | 对话式推敲的架构方案 | `vault/docs/tasks/{id}/design-v{N}-{author}.md` |
+| **Spec** | 从 design 提炼的 Task Contract(agent-spec DSL)+ BDD Scenario + Test: 绑定 | `vault/docs/tasks/{id}/spec.md` |
+| **Plan** | (可选)把 spec 拆为 phase 的实施计划 | `vault/docs/tasks/{id}/plan.md` |
+| **Review** | 独立 reviewer 的 critique(codex / oracle) | `vault/docs/tasks/{id}/reviews/r{N}-{reviewer}.md` |
+| **Handoff(task 级)** | Session 结束时 task 未完成的精准执行快照 | `vault/docs/tasks/{id}/handoff.md` |
+| **Handoff(区级 legacy)** | 无 active task 时的功能域级上下文快照 | `vault/docs/handoff/{area}.md` |
+| **Progress(legacy)** | 功能域级进度总表,v4 下作 legacy 兼容辅助视图 | `vault/docs/progress/{area}.md` |
 
-### 进度 (Progress)
+### Task Frontmatter Schema
 
-- 位置: `docs/progress/{功能域}.md`，一个功能域一个文件
-- 当前功能域: `backend`, `frontend`, `ipc`, `infra`
-- 每个文件格式: `## Active` / `## Next` / `## Done`（Done 按日期分组）
-- 跨功能域 Active 总数不超过 3 个
-- Task 归属于**驱动它的功能域**，不是它触及的每个代码模块
-- 每个 session 只写自己关注的功能域文件（多 session 并发安全）
+```yaml
+---
+# 基础字段
+type: project-task
+id: task_{hex8}
+status: inbox | next | active | blocked | done
+project: super-tauri
+color: "#RRGGBB" | null        # 可选
+area: backend | frontend | ipc | infra | {其他}
 
-### 日志 (Records)
+# 上下文(path 相对 task.md 所在目录 = vault 根)
+design: docs/tasks/{id}/design-v{N}-{author}.md   # 永远指向最新版
+spec: docs/tasks/{id}/spec.md | null              # null = 机械型 task 无 spec
+plan: docs/tasks/{id}/plan.md | null              # null = 简单 task 无 plan
+review:                                            # append-only,按时间顺序
+  - docs/tasks/{id}/reviews/r1-codex.md
+  - docs/tasks/{id}/reviews/r1-cc.md
+  # ...
 
-| 载体 | 位置 | 写入时机 |
-|------|------|---------|
-| Devlog | `docs/devlog/{YYYY-MM-DD}.md` | Session 结束前（追加） |
-| Changelog | slipbox `logs/changelog/{date}.md` | Task 完成时（追加） |
-| LESSONS.md | 各模块目录 | Bug 修复后 |
+# 完成沉淀(05-close 回填)
+commits:
+  - hash: {short_hash}
+    subject: "{commit subject 原文}"
+  # ...
+lessons:
+  - "{非显而易见的经验,一行}"
+  # ...
+mempal:                                            # KG triples
+  - subject: "{entity}"
+    predicate: "{relation}"
+    object: "{target}"
+  # ...
+rules:                                             # task 范围的硬约束(in-context reminder)
+  - "{规则原文}"
+skills:                                            # 适用的 Claude Code skills
+  - {skill_name}
+---
+```
 
-### Handoff 协议
+### Task 生命周期
 
-会话结束时 task 未完成 → `/harness-save-next-context` → `docs/handoff/{area}.md`
-新会话开始 → `/harness-resume-context` → 读取 + 验证 + 汇报，等用户确认后继续
-Devlog「下次从这里开始」简化为 pointer → `docs/handoff/{area}.md`
+```
+inbox ──/harness-01-design──▶ next ──/harness-02-spec──▶ next
+                                           │
+                                           ▼
+                            /harness-03-plan(可选)
+                                           │
+                                           ▼
+                            /harness-04-execute
+                                           │
+                                           ▼
+                             active ──▶ blocked
+                                     │          │
+                                     │  [resume]
+                                     ▼
+                            /harness-05-close
+                                     │
+                                     ▼
+                                   done
+```
+
+### Slash Commands 速查表(v4 核心 7 个 + 4 个辅助)
+
+| 类别 | 命令 | 作用 |
+|---|---|---|
+| **核心 1 — Design** | `/harness-01-design` | 对话式推敲架构,产出 `design-v{N}-cc.md` |
+| **核心 2 — Spec** | `/harness-02-spec` | 从 design 提炼为 agent-spec DSL contract |
+| **核心 3 — Plan** | `/harness-03-plan` | (可选)拆 spec 为实施 phases |
+| **核心 4 — Execute** | `/harness-04-execute` | 严格 TDD Red-Green-Refactor,`status: active` |
+| **核心 5 — Close** | `/harness-05-close` | 质量关卡 + 回填 commits/lessons/mempal,`status: done` |
+| **横向** | `/harness-review` | 请 codex/oracle 对 design/spec/plan/code 做独立 review |
+| **横向** | `/harness-view` | 纯读,渲染 task 全景 summary |
+| 辅助 | `/harness-resume-context` | 新 session 开始时读 handoff 恢复上下文 |
+| 辅助 | `/harness-save-next-context` | Session 结束时写 handoff(task 级优先,fallback 区级) |
+| 辅助 | `/harness-check-tests` | spec Completion Criteria 完整性自查 |
+| 辅助 | `/harness-type-safety-check` | L0 防火墙自查(类型安全 / 建模强度) |
+
+**用户认知负担 = 7 个核心命令**(01-05 + review + view)。辅助命令大多自动触发或由其他命令调用。
+
+**Bug fix 无专用命令** —— 手动调 codex CLI 或通过 `/codex:rescue` skill。
+
+### Progress & Devlog(v4 下的定位)
+
+| 载体 | 位置 | 写入时机 | v4 下的角色 |
+|------|------|---------|------------|
+| Task Frontmatter | task.md | 每个阶段自动更新 | **主状态源** |
+| Devlog | `vault/docs/devlog/{YYYY-MM-DD}.md` | Session 结束前追加 | 时间线记录 |
+| Changelog | slipbox `logs/changelog/{date}.md` | Task 完成时追加 | 个人日报 |
+| Progress(legacy) | `vault/docs/progress/{area}.md` | 功能域级粗粒度追踪 | **辅助**,不是主源 |
+| LESSONS(模块级) | `vault/docs/lessons/modules/{name}.md` | Task 收口时或 bug 修复后 | 跨 task 真源 |
+| LESSONS(task 级) | task.md frontmatter `lessons:` | 05-close 回填 | task 内快照 |
+
+### Handoff 协议(v4)
+
+**有 active task**:
+
+```
+Session 结束 → /harness-save-next-context → vault/docs/tasks/{task_id}/handoff.md(task 级)
+新 Session 开始 → /harness-resume-context → 读取 + 跑 stale_check + 验证 git 状态 → 等用户确认
+```
+
+**无 active task(legacy)**:
+
+```
+Session 结束 → /harness-save-next-context → vault/docs/handoff/{area}.md(区级)
+新 Session → /harness-resume-context → 同上
+```
 
 ---
 
@@ -50,7 +185,10 @@ Devlog「下次从这里开始」简化为 pointer → `docs/handoff/{area}.md`
 | L0 | Operation Contract — pub fn 契约 | 新增/修改 pub fn |
 | L0 | Deep Module 规则 — 窄接口 + 深实现 | 新增模块/重构 |
 | L0 | 数据写回规则 — SQLite 是 source of truth | 修改数据层 |
-| L0 | 功能域完成 Code Review — 强制关卡 | 功能域 Active tasks 全部完成 |
+| L0 | Task Contract — spec.md 作为可验证契约 | 非机械型 task 在 `/harness-02-spec` 阶段 |
+| L0 | agent-spec lifecycle — BDD 契约机械验证 | Task 有 spec.md 时,在 `/harness-05-close` 阶段 |
+| L0 | Task 完成 Code Review — 强制关卡 | Task 进入 `/harness-05-close` 阶段 |
+| L0 | Task-Scoped Commits — Phase 边界 + Task-Id trailer | `/harness-04-execute` 每个 Phase 完成时 |
 | L0 | TS/Rust 职责边界硬约束 — TS 只负责 UI，Rust 独占业务 | 任何 commit |
 | L0 | IPC 类型安全 — tauri-specta 编译期保障 | 新增/修改 command |
 | L0 | 测试真实代码路径 — 禁止 test theater | 新增测试 / Code Review |
@@ -170,31 +308,84 @@ src-tauri/src/
 
 ---
 
-### L0: 功能域完成 Code Review — 强制关卡
+### L0: Task 完成 Code Review — 强制关卡
 
-**触发条件**：功能域的 Active tasks 全部完成时触发，不绑定线性 Phase。
+**触发条件**:Task 进入 `/harness-05-close` 阶段时触发。Close 命令内部按顺序跑完下面的流程。
 
-**完整流程**：
+**完整流程**:
+
 ```
-功能域 Active tasks 全部完成
+Task 所有 execute 完成
   │
-  ├─ 1. /harness-check-tests        ← agent 语义自查，补测试缺口
-  ├─ 2. /harness-type-safety-check  ← agent 类型安全 / 建模强度自查（防火墙）
-  ├─ 3. Code Review                  ← 结构化审查（6 项检查）
-  ├─ 4. git commit                   ← 提交
-  │
-  ▼
-标记 Done
+  ├─ 1. /harness-check-tests        ← spec Completion Criteria 自查
+  ├─ 2. agent-spec lifecycle         ← BDD 契约机械验证(如有 spec.md)
+  ├─ 3. /harness-type-safety-check   ← L0 防火墙 / 类型安全自查
+  ├─ 4. Task Code Review             ← 结构化审查(6 项检查,见下)
+  ├─ 5. 手动 walkthrough             ← 如有 UI 改动,真机/dev server 跑一遍
+  ├─ 6. 自动 grep commits            ← git log --grep="^Task-Id: {id}$" → 填 task.md
+  ├─ 7. 提炼 lessons + mempal triples ← 写入 task.md + 模块级 LESSONS
+  ├─ 8. status → done                ← 收口
+  └─ 9. git commit                   ← 提交(用户决定 message)
 ```
 
-**Review 6 项检查**：
+**Review 6 项检查**:
 
-1. **测试覆盖** — 每个 domain 纯函数至少 happy path + error path 各一个测试。边界条件、跨实体交互是否覆盖
-2. **逻辑正确性** — 特别是从旧代码移植的逻辑，逐行核对
-3. **回归风险** — 未来变更可能静默破坏的场景，是否有测试锁住
+1. **Contract Acceptance** — spec.md 的 Intent 是否被实现覆盖?agent-spec lifecycle 是否全绿?所有 Scenario 的 Test: 绑定都存在且通过?
+2. **逻辑正确性** — 特别是从旧代码移植的逻辑,逐行核对
+3. **回归风险** — 未来变更可能静默破坏的场景,是否有测试锁住
 4. **I/O 正确性** — SQLite 读写完整性、文件操作正确性
-5. **IPC 类型安全** — 所有 command 是否有 `#[specta::specta]`，bindings.ts 是否最新，TS 是否从 bindings import
-6. **建模强度（防火墙）** — pub fn 是否有 `String/bool/&str` 当业务参数？invariant 是被构造器保证还是注释提醒？enum 加 variant 后所有 match 是否被强制穷尽（无 `_` 通配）？跨模块依赖是否走 trait？详见 [L0: 建模优先 + 强类型](#l0-建模优先--强类型--防火墙模型)
+5. **IPC 类型安全** — 所有 command 是否有 `#[specta::specta]`,bindings.ts 是否最新,TS 是否从 bindings import
+6. **建模强度(防火墙)** — pub fn 是否有 `String/bool/&str` 当业务参数?invariant 是被构造器保证还是注释提醒?enum 加 variant 后所有 match 是否被强制穷尽(无 `_` 通配)?跨模块依赖是否走 trait?详见 [L0: 建模优先 + 强类型](#l0-建模优先--强类型--防火墙模型)
+
+---
+
+### L0: Task-Scoped Commits — Phase 边界 + Task-Id Trailer
+
+**触发时机**:`/harness-04-execute` 期间,plan 里每个 Phase 完成(所有 Scenario Green + 5 项 gate pass)后,**进入下一个 Phase 之前必须 commit**。
+
+**动机**:让每个 task 的 commit 可机械过滤(`/harness-05-close` 自动收集 commits),避免手工挑选和漏挑。同时让 git 历史上每个 commit 都能回溯到 task 的 design / spec / review 全景。
+
+**Commit message 格式**(Git trailer 约定):
+
+```
+{type}({scope}): {phase 做的事一句话}
+
+{可选 body,2-3 行说明做了什么}
+
+Task-Id: task_{hex8}
+Phase: {plan 里的 Phase 编号或名称}
+```
+
+- **Subject** —— conventional commit 规范(`feat` / `fix` / `refactor` / `test` / `docs` / `chore`),scope 通常是模块名(`kanban` / `keysight` / `app_error` 等)
+- **Task-Id trailer** —— 必须严格格式 `Task-Id: task_{hex8}`,不能用 `TaskId:` / `task-id:` / 其他变体。`/harness-05-close` 用 `git log --grep="^Task-Id: task_xxx$"` 精确过滤
+- **Phase trailer** —— 可选但推荐,帮助 code archaeology
+
+**示例**:
+
+```
+feat(kanban): TaskEditModal + ChecklistEditor
+
+Implement double-click open flow with controlled ChecklistEditor component.
+Integrates with domain::task::update_with_subtasks for server-side body rewrite.
+
+Task-Id: task_275a92d6
+Phase: 6.5 — TaskEditModal + ChecklistEditor
+```
+
+**硬约束**:
+
+1. **选择性 staging** —— 禁用 `git add -A` / `git add .`,逐文件 add 避免误 commit 敏感文件或不相关改动
+2. **5 项 gate 必须在 commit 之前全过** —— clippy / cargo test / pnpm test / pnpm build / bindings 最新
+3. **pre-commit hook 失败 → 修根因**,不 `--no-verify` 绕过(除非用户明确授权)
+4. **每次 commit 由 agent draft message + 用户确认后执行**,不自动 commit —— 敏感操作的决定权必须在用户
+
+**例外**(不需要 Task-Id trailer):
+
+- 迁移 / 基础设施 / 纯文档改动(不在 `/harness-04-execute` 期间)
+- ad-hoc bug fix(不走 v4 task workflow)
+- Merge commit / Revert commit(revert 的 message 里会保留原 commit 的 Task-Id,间接可查)
+
+**Task rules 冗余提醒**:`/harness-02-spec` 给每个 task 的 `rules:` 字段**自动插入**一条提醒"每个 Phase 边界必须 commit,message 含 `Task-Id: {task_id}` trailer",让执行阶段有 in-context 强化。这是"in-context 重复 > 单一来源"的故意冗余。
 
 ---
 
@@ -837,35 +1028,39 @@ describe('TodoList', () => {
 
 ---
 
-### 质量流程（非 Hook，CLAUDE.md 流程规则）
+### 质量流程(agent 必须遵循的流程规则)
 
-由于不使用 Claude Code hooks，以下质量检查作为 agent 必须遵循的**流程规则**执行。
+由于不使用 Claude Code hooks,以下质量检查作为 agent 必须遵循的**流程规则**执行。
 
 #### 编码中
 
-- **每次 `cargo build`**：改为 `cargo clippy --workspace -- -D warnings`（lint 融入开发，错误自然暴露）
-- **修改 command 签名后**：立即 `cargo test export_bindings` 重新生成 bindings.ts
-- **修改 TS 代码后**：`pnpm test`（组件测试）+ `pnpm build`（tsc 类型检查 + vite 构建）
+- **每次 `cargo build`**:改为 `cargo clippy --workspace --manifest-path src-tauri/Cargo.toml -- -D warnings`(lint 融入开发,错误自然暴露)
+- **修改 command 签名后**:立即 `cargo test export_bindings --manifest-path src-tauri/Cargo.toml` 重新生成 bindings.ts
+- **修改 TS 代码后**:`pnpm test -- --run`(组件测试) + `pnpm build`(tsc 类型检查 + vite 构建)
 
-#### 提交前
-
-```
-1. cargo clippy --workspace -- -D warnings    ← Rust lint
-2. cargo test --workspace                     ← Rust 测试（unit + 集成）
-3. pnpm test                                  ← TS 组件测试
-4. pnpm build                                 ← TS 类型检查 + 构建
-5. 确认 bindings.ts 是最新的
-```
-
-五项全部通过后才可 commit。任何一项失败必须先修复。
-
-#### 功能域完成时
+#### 提交前(5 项 gate)
 
 ```
-1. /harness-check-tests        ← agent 语义自查，补测试缺口
-2. /harness-type-safety-check  ← agent 类型安全 / 建模强度自查（防火墙）
-3. Code Review（6 项检查）     ← 测试覆盖 / 逻辑正确性 / 回归风险 / I/O 正确性 / IPC 类型安全 / 建模强度
-4. git commit                  ← 提交
+1. cargo clippy --workspace --manifest-path src-tauri/Cargo.toml -- -D warnings    ← Rust lint
+2. cargo test --workspace --manifest-path src-tauri/Cargo.toml                     ← Rust 测试(unit + 集成)
+3. pnpm test -- --run                                                              ← TS 组件测试
+4. pnpm build                                                                      ← TS 类型检查 + 构建
+5. 确认 bindings.ts 最新(cargo test export_bindings 后 git status 看 src/bindings.ts)
+```
+
+五项全部通过才可 commit。任何一项失败必须先修复根因,禁止 `--no-verify` 绕过。
+
+#### Task Close 阶段(`/harness-05-close` 内部按此顺序跑)
+
+```
+1. /harness-check-tests        ← spec Completion Criteria 完整性自查
+2. agent-spec lifecycle        ← BDD 契约机械验证(如 task 有 spec.md)
+3. /harness-type-safety-check  ← L0 防火墙 / 类型安全自查
+4. Task Code Review(6 项)     ← Contract Acceptance / 逻辑 / 回归 / I/O / IPC / 建模
+5. 手动 walkthrough            ← 如有 UI 改动,dev server 跑一遍
+6. 自动 grep commits(`git log --grep="^Task-Id: {id}$"`)+ 提炼 lessons + 提取 mempal triples
+7. status → done
+8. git commit(用户决定 message)
 ```
 
 ---
@@ -875,37 +1070,51 @@ describe('TodoList', () => {
 ### 新 Session 开始
 
 ```
-1. /harness-resume-context → 读 docs/handoff/*.md（精准状态 + 验证）
-2. 读 docs/devlog/ 最新一篇 → 背景时间线
-3. 读 docs/progress/*.md → 全局视图，确认 Active 总数 ≤ 3
-4. 确定本 session 要做的功能域
-5. 如果要修改某模块 → 先读该模块 LESSONS.md
-6. 默念 L0 防火墙原则 — 写任何 pub fn 前先问"这签名能不能写出 illegal 调用？"
+1. /harness-resume-context → 读 task 级 handoff (vault/docs/tasks/{id}/handoff.md) 或区级 handoff (vault/docs/handoff/{area}.md)
+2. /harness-view {task_id} 或读 task.md 了解当前 task 全景(含 frontmatter 的 rules / skills / lessons in-context 强化)
+3. 读 vault/docs/devlog/ 最新一篇 → 背景时间线
+4. 如要修改某模块 → 先读该模块 LESSONS(模块级 `src-tauri/src/modules/{name}/LESSONS.md` 或 `vault/docs/lessons/modules/{name}.md`)
+5. 默念 L0 防火墙原则 — 写任何 pub fn 前先问"这签名能不能写出 illegal 调用?"
 ```
 
-### 开发中
+### 开发中(无 active task,要建新 task)
 
 ```
-1. 编译用 clippy 不用 build
-2. 新增 pub fn / pub struct / trait → 自审签名是否有 String/bool/&str 当业务参数；有就回去包 newtype/enum（务实例外要加 // 例外: 注释）
-3. Task 完成 → 更新 docs/progress/{area}.md + changelog
-4. 功能域 Active tasks 全部完成 → 触发质量流程（/harness-check-tests → /harness-type-safety-check → Review → commit）
+1. /harness-01-design 对话式推敲架构 → design-v1-cc.md
+2. (可选)/harness-review 请 codex 做独立 review → r1-codex.md
+3. 根据 review 出 v2 → design-v2-cc.md(status: final)
+4. /harness-02-spec 提炼为 agent-spec DSL contract → spec.md(非机械型 task 必须)
+5. (可选)/harness-03-plan 拆为实施 phases
+6. /harness-04-execute 开始 TDD 实施(status: active)
+```
+
+### 开发中(有 active task)
+
+```
+1. 读 task.md frontmatter 的 rules: / skills: / lessons: 字段 — in-context 强化
+2. 编译用 clippy 不用 build
+3. 新增 pub fn / pub struct / trait → 自审签名是否有 String/bool/&str 当业务参数;有就回去包 newtype/enum(务实例外要加 // 例外: 注释)
+4. TDD Red → 用户确认 → Green → 用户确认 → Refactor(不跳步,不合并关卡)
+5. 所有 Scenario 实施完成 → 跑 5 项提交前 gate → /harness-05-close
 ```
 
 ### Session 结束
 
 ```
-1. Task 未完成 → /harness-save-next-context → docs/handoff/{area}.md
-2. 如果今天加过 pub fn / pub struct / trait → 跑 /harness-type-safety-check
-3. 追加 devlog
-4. 如有踩坑 → 写 LESSONS.md + 路由到五层记忆体系对应层级
+1. 有 active task 未完成 → /harness-save-next-context → vault/docs/tasks/{id}/handoff.md (task 级)
+2. 无 active task 但讨论集中某功能域 → /harness-save-next-context → vault/docs/handoff/{area}.md (legacy 区级)
+3. 如果今天加过 pub fn / pub struct / trait → 跑 /harness-type-safety-check
+4. 追加 devlog 到 vault/docs/devlog/{today}.md
+5. 如有踩坑 → 写 LESSONS.md(模块级 vault/docs/lessons/modules/{name}.md) + 路由到记忆体系对应层级
 ```
 
 ---
 
 ## 新模块 Bootstrap 清单
 
-新增业务模块时，按以下顺序执行：
+**v4 触发时机**:当 task 在 `/harness-02-spec` 阶段决定"需要新建一个 Rust 业务模块"时,spec.md 应把本清单的 step 3-17 映射成 phase plan,然后在 `/harness-04-execute` 阶段按清单执行。Step 1-2(type sketch)通常在 `/harness-01-design` 阶段完成,属于 design v{N} 的一部分。
+
+新增业务模块时,按以下顺序执行:
 
 ```
 1. 创建模块目录 src-tauri/src/modules/{name}/
@@ -959,18 +1168,39 @@ pnpm tauri dev
 # 生产构建
 pnpm tauri build
 
-# 重新生成 TS 类型绑定
-cargo test export_bindings
+# 重新生成 TS 类型绑定(修改 command 签名后必跑)
+cargo test export_bindings --manifest-path src-tauri/Cargo.toml
 
-# Rust lint（编码中用这个代替 cargo build）
-cargo clippy --workspace -- -D warnings
+# Rust lint(编码中用这个代替 cargo build)
+cargo clippy --workspace --manifest-path src-tauri/Cargo.toml -- -D warnings
 
 # Rust 测试
-cargo test --workspace
+cargo test --workspace --manifest-path src-tauri/Cargo.toml
 
 # TS 组件测试
-pnpm test
+pnpm test -- --run
 
-# TS 类型检查
+# TS 类型检查 + 构建
 pnpm build  # tsc && vite build
 ```
+
+## Agent-Spec 命令(v4 task spec 验证)
+
+```bash
+# 渲染 task contract 给 agent 看
+agent-spec contract vault/docs/tasks/{task_id}/spec.md
+
+# 生成 plan(含 Codebase Context + Task Sketch)
+agent-spec plan vault/docs/tasks/{task_id}/spec.md --code . --format markdown
+
+# 跑完整 lifecycle(lint + verify + report) — /harness-05-close 内部用
+agent-spec lifecycle vault/docs/tasks/{task_id}/spec.md --code . --change-scope worktree --format json
+
+# lint 单个 spec
+agent-spec lint vault/docs/tasks/{task_id}/spec.md --min-score 0.7
+
+# 生成 reviewer-friendly 的 Contract Acceptance 总结
+agent-spec explain vault/docs/tasks/{task_id}/spec.md --code . --format markdown
+```
+
+`project.spec.md` 的发现是**自动的**:只要 task spec 有 `inherits: project`,resolver 就会从 task spec 目录向上 walk 找到 `vault/docs/project.spec.md`。不需要 `--spec-dir` 参数。
