@@ -106,13 +106,19 @@ export function KanbanView() {
   };
 
   // V1.1 Phase 6.6: modal submit → 单个 command `task_update_with_subtasks`
+  //
+  // color 类型是 string 不是 string | null —— TaskEditModal 约定:
+  //   "default" sentinel → 清空 color(Rust task::update 约定)
+  //   hex 字符串 → 设置
+  //   **不允许 null**(null 在 Rust 侧是"保留原值",TaskEditModal 编辑场景
+  //   必须明确表达 intent)
   const handleEditSubmit = async (data: {
     id: string;
     title: string;
     subtasks: Subtask[];
     status: TaskStatus;
     area: string | null;
-    color: string | null;
+    color: string;
   }) => {
     await unwrapCommand(
       commands.taskUpdateWithSubtasks(

@@ -66,12 +66,33 @@ describe("TaskEditModal", () => {
     ).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("点 clear 按钮清空 color", () => {
+  it("点 clear 按钮清空 color(UI 高亮切到 clear 按钮)", () => {
     renderModal();
     fireEvent.click(screen.getByTestId("task-edit-color-clear"));
     expect(
       screen.getByTestId("task-edit-color-clear"),
     ).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("点 clear 后 Submit 发送 'default' sentinel(Rust 清空契约)", async () => {
+    const { onSubmit } = renderModal();
+    fireEvent.click(screen.getByTestId("task-edit-color-clear"));
+    const form = screen.getByTestId("task-edit-modal").querySelector("form")!;
+    fireEvent.submit(form);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0];
+    // "default" sentinel: Rust task::update 约定,color=Some("default") 触发清空;
+    // color=None 会被解释为"保留原值",所以这里必须发 sentinel 而不是 null / "".
+    expect(payload.color).toBe("default");
+  });
+
+  it("未改 color 时 Submit 保持原 hex 字符串", async () => {
+    const { onSubmit } = renderModal();
+    const form = screen.getByTestId("task-edit-modal").querySelector("form")!;
+    fireEvent.submit(form);
+    await waitFor(() => expect(onSubmit).toHaveBeenCalledTimes(1));
+    const payload = onSubmit.mock.calls[0][0];
+    expect(payload.color).toBe("#ffadad");
   });
 
   it("project 以只读形式显示,不是 input", () => {

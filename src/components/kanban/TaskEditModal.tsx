@@ -24,7 +24,15 @@ interface TaskEditModalProps {
     subtasks: Subtask[];
     status: TaskStatus;
     area: string | null;
-    color: string | null;
+    /**
+     * Color 传给 Rust command 的字符串。语义:
+     * - `"default"` → 清空(sentinel,Rust task::update 约定)
+     * - hex 字符串(如 `"#ffadad"`)→ 设置为对应色
+     *
+     * **不允许 null** —— `null` 在 Rust 侧被解释为"保留原值",TaskEditModal 既然
+     * 让用户编辑 color,就必须明确表达 intent(清空 or 设置),不应该"无声保留"。
+     */
+    color: string;
   }) => Promise<void>;
   onCancel: () => void;
 }
@@ -61,13 +69,17 @@ export function TaskEditModal({ task, onSubmit, onCancel }: TaskEditModalProps) 
           text: rest.text.trim(),
         }));
 
+      // color 清空要发 "default" sentinel(和 note/card/question 项目约定一致):
+      //   Rust task::update 里 None 语义是"保留原值",Some("default") 才是"清空"。
+      //   如果这里传 null,用户点 Clear 按钮后什么都不会发生 —— 原色被保留。
+      const trimmedColor = color.trim();
       await onSubmit({
         id: task.id,
         title: title.trim(),
         subtasks: cleanSubtasks,
         status,
         area: area.trim() || null,
-        color: color.trim() || null,
+        color: trimmedColor === "" ? "default" : trimmedColor,
       });
     } catch (err) {
       // V1.1 Phase 6.3: Rust 写路径遇多 block checklist 抛 typed error,

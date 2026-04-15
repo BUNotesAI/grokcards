@@ -236,7 +236,11 @@ describe("KanbanView", () => {
     ]);
     expect(call[3]).toBe("next");
     expect(call[4]).toBe("backend");
-    expect(call[5]).toBe(null);
+    // task.color 原为 null,modal 把 null → "" 预填,submit 时空字符串映射为
+    // "default" sentinel(Rust task::update 契约:None=保留原值,Some("default")=清空);
+    // V1.1 TaskEditModal 选择"总是发送明确 intent",所以即便用户没动 color
+    // 也会发 "default"(Rust 侧实际是 no-op,因为当前 color 已经是 None)
+    expect(call[5]).toBe("default");
 
     // submit 成功后 modal 应关闭
     await waitFor(() => {
