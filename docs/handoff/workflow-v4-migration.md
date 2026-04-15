@@ -97,13 +97,53 @@ stale_check: ls ~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/proje
 
 **目的**:拿 V1.1 task 完整走一遍 v4 格式,作为未来模板。这是最重要的一步 —— 没有真实示例,后续 task 不知道该怎么填 frontmatter。
 
-#### 3.1 定位 V1.1 的 task.md
+#### 3.1 新建 V1.1 dogfood task(回溯创建)
 
-- [ ] 3.1.1 找到 V1.1 task 的 id 和文件路径:
+**重要前提**:V1.1 Kanban Subtask 当时是作为**直接开发工作**跑的,**没有在 super-tauri 的 task 系统里建 task entity**。vault 里不存在这个 task.md。迁移时要**回溯创建**一个 task(status = done)作为 v4 格式的第一个完整示例。
+
+- [ ] 3.1.1 生成 task_id(格式 `task_{hex8}`,和 V1.1 `id::gen_task_id()` 惯例一致):
   ```bash
-  ls ~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/projects/super-tauri/*.md
+  TASK_ID=task_$(openssl rand -hex 4)
+  echo $TASK_ID
   ```
-  V1.1 task 应该是标题含 "kanban" / "subtask" / "V1.1" 的 task.md。记录 `task_id`(例如 `task_3a3f9a64`)
+  记下来,后续 3.2-3.5 全部用这个 id
+
+- [ ] 3.1.2 确定文件路径(和 Rust 侧 `task_relative_path` 的命名约定一致):
+  ```bash
+  TASK_TITLE="V1.1 Kanban Subtask + 单击编辑 modal"
+  TASK_FILE=~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/projects/super-tauri/"${TASK_ID} 【TASK】${TASK_TITLE}.md"
+  echo $TASK_FILE
+  ```
+
+- [ ] 3.1.3 写初始 task.md(只含基础 frontmatter + body checklist,**v4 扩展字段在 3.4 回溯填**):
+  ```yaml
+  ---
+  type: project-task
+  id: task_{实际生成的 id}
+  status: done
+  project: super-tauri
+  color: "#bdb2ff"
+  area: backend
+  ---
+
+  # 【TASK】V1.1 Kanban Subtask + 单击编辑 modal
+
+  承接 V1 收口,把 task 语义从"单一 actionable 单位"升级为"area + GFM
+  checklist 子任务"的分层模型。8 个 Phase + 3 个 bug fix,跨 2 轮 codex
+  review + 2 轮 CC 响应。
+
+  - [x] Phase 6.0 AppError struct variants + MultiBlockChecklist variant
+  - [x] Phase 6.1 parse_task_checklist + Subtask struct
+  - [x] Phase 6.2 TaskEntity.subtasks + 三 reader 填充
+  - [x] Phase 6.3 task_update_with_subtasks + render_subtasks_into_body
+  - [x] Phase 6.4 KanbanCard progress 徽章
+  - [x] Phase 6.5 TaskEditModal + ChecklistEditor
+  - [x] Phase 6.6 单击接线 + PointerSensor(含 2 个 bug fix follow-up)
+  - [x] Phase 6.7 收口
+  ```
+
+- [ ] 3.1.4 文件创建后,**下次 super-tauri app 启动时会自动 sync 到 SQLite**(sync_vault 扫描 vault,文件是 source of truth)。无需手动跑 command
+- [ ] 3.1.5 后续 Phase 3.2(建 per-task 子目录)/ 3.3(迁 collab docs)/ 3.4(回溯填 v4 扩展字段 frontmatter)全部基于这里新建的 `TASK_ID`
 
 #### 3.2 建 per-task 子目录
 
@@ -140,9 +180,9 @@ stale_check: ls ~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/proje
   ```
 - [ ] 3.3.3 验证相对路径引用 —— 如果原文件里有 `docs/collaboration/xxx.md` 的链接,改成新路径
 
-#### 3.4 回溯填 task.md frontmatter
+#### 3.4 回溯填 task.md frontmatter(v4 扩展字段)
 
-打开 V1.1 task.md,在现有 frontmatter 基础上追加:
+打开 3.1 刚创建的 task.md,在基础 frontmatter(type / id / status / project / color / area)之上追加 v4 扩展字段:
 
 - [ ] 3.4.1 `design:` 字段(指向 final):
   ```yaml
