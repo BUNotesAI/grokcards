@@ -176,6 +176,24 @@ pub enum TaskStatus {
     Blocked,
 }
 
+/// Task body 中的一项 GFM checklist item(V1.1 Subtask 抽象)。
+///
+/// Parse 规则见 `domain::task::parse_task_checklist`。V1 只识别顶层顶格
+/// 严格格式 `^- \[( |x|X)\] .+$`,禁前置空白 / 禁 `*` / 禁 checkbox 内非法字符 /
+/// 禁空 text。其他情形视作普通文本跳过。
+///
+/// Invariant: `text` 已 trim 两端空白且非空(parser 不返回空 text 的 Subtask)。
+///
+/// V2 决策(2026-04-15 codex 一轮 review 定稿):本类型**不含** `line_index` 字段。
+/// 位置信息是 parser 实现细节,由 Rust 内部的私有 `ParsedItem` 局部类型管理,
+/// 不跨 IPC 泄漏,避免写契约依赖 parser 位置导致的 stale 风险。
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct Subtask {
+    pub text: String,
+    pub done: bool,
+}
+
 /// 问题状态。
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "lowercase")]

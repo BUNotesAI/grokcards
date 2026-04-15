@@ -4,7 +4,7 @@ use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::modules::keysight::errors::KeysightError;
 use crate::modules::keysight::id;
-use crate::modules::keysight::models::{Position, TaskEntity, TaskStatus};
+use crate::modules::keysight::models::{Position, Subtask, TaskEntity, TaskStatus};
 use crate::modules::keysight::vault_fs::VaultFs;
 
 use super::sync;
@@ -191,6 +191,98 @@ fn extract_keysight_err(e: rusqlite::Error) -> KeysightError {
     } else {
         KeysightError::Database(e)
     }
+}
+
+// ============================================================================
+// V1.1 Subtask — GFM checklist parser
+//
+// Task body 里用 `- [ ]` / `- [x]` / `- [X]` 形式列出子任务。Parser 把 body 逐行
+// 扫描,识别顶层顶格的 checklist 行并提取 {text, done}。
+//
+// V1 严格规则: `^- \[( |x|X)\] .+$`,禁前置空白 / 禁 `*+` marker / 禁 checkbox
+// 内非法字符 / 禁 checkbox 后无空格 / 禁空 text / 禁嵌套。其他情形视作普通文本,
+// 不报错也不 log(parser 宽松,不返回 Result)。
+//
+// V2 决策: 公开 API `parse_task_checklist` 只返回 `Vec<Subtask>`(无 line_index),
+// 位置信息由私有 `ParsedItem` 在 Rust 内部管理,不跨 IPC 泄漏。Write path 用
+// `parse_task_checklist_with_positions` 拿位置信息做 checklist 行替换。
+// ============================================================================
+
+/// Rust 内部的 parsed item,含位置信息。**不暴露给 IPC**。
+///
+/// Write path (`render_subtasks_into_body`) 用 `line_index` 定位原 body 中的
+/// checklist 行,做单 block 替换 / 多 block 检测。Read path(`parse_task_checklist`)
+/// 扔掉 line_index 只返回 `Subtask`。
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(in crate::modules::keysight) struct ParsedItem {
+    pub subtask: Subtask,
+    /// 在 `body.split('\n')` 后的 0-based 行索引。
+    pub line_index: usize,
+}
+
+/// 解析 task body,返回 GFM checklist 项的 Subtask 列表(无位置信息)。
+///
+/// 严格规则 `^- \[( |x|X)\] .+$`,详见模块头注释。不识别的行全部跳过。
+pub(in crate::modules::keysight) fn parse_task_checklist(body: &str) -> Vec<Subtask> {
+    parse_task_checklist_with_positions(body)
+        .into_iter()
+        .map(|p| p.subtask)
+        .collect()
+}
+
+/// 带位置信息的版本,供 write path 用。
+///
+/// 返回的 `Vec<ParsedItem>` 按 body 行顺序升序,`line_index` 即在
+/// `body.split('\n')` 后的 0-based 索引。
+pub(in crate::modules::keysight) fn parse_task_checklist_with_positions(
+    body: &str,
+) -> Vec<ParsedItem> {
+    body.split('\n')
+        .enumerate()
+        .filter_map(|(idx, line)| parse_checklist_line(line).map(|s| ParsedItem {
+            subtask: s,
+            line_index: idx,
+        }))
+        .collect()
+}
+
+/// 尝试解析单行为 Subtask。非 checklist 行返回 `None`。
+///
+/// 严格规则(V1): 行必须精确匹配 `^- \[( |x|X)\] .+$`。
+///
+/// - 禁前置空白: 行必须以 `-` 起始
+/// - 禁 `*` / `+` marker: 只认 `-`
+/// - checkbox 标记只认 ` ` / `x` / `X`,其他字符跳过
+/// - checkbox 后必须恰好一个空格
+/// - text 必须非空(trim 后)
+fn parse_checklist_line(line: &str) -> Option<Subtask> {
+    // 必须以 "- [" 起头(避免前置空白被允许)
+    let rest = line.strip_prefix("- [")?;
+    // 接下来是 ` ` / `x` / `X` 之一,然后是 `]`
+    let (marker, after_bracket) = {
+        let mut chars = rest.chars();
+        let first = chars.next()?;
+        let second = chars.next()?;
+        if second != ']' {
+            return None;
+        }
+        (first, &rest[2..])
+    };
+    let done = match marker {
+        ' ' => false,
+        'x' | 'X' => true,
+        _ => return None,
+    };
+    // `]` 后必须恰好一个空格,然后是非空 text
+    let text = after_bracket.strip_prefix(' ')?;
+    let trimmed = text.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    Some(Subtask {
+        text: trimmed.to_string(),
+        done,
+    })
 }
 
 // ============================================================
@@ -918,6 +1010,110 @@ mod tests {
     fn test_task_status_inbox_serializes_lowercase() {
         let json = serde_json::to_string(&TaskStatus::Inbox).unwrap();
         assert_eq!(json, "\"inbox\"");
+    }
+
+    // --- parse_task_checklist (V1.1 Phase 6.1) ---
+
+    fn subtask(text: &str, done: bool) -> Subtask {
+        Subtask {
+            text: text.to_string(),
+            done,
+        }
+    }
+
+    #[test]
+    fn test_parse_checklist_empty_string() {
+        assert_eq!(parse_task_checklist(""), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_pure_text_no_checklist() {
+        let body = "This is a task description.\n\nSome more text.";
+        assert_eq!(parse_task_checklist(body), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_single_undone() {
+        assert_eq!(
+            parse_task_checklist("- [ ] Buy milk"),
+            vec![subtask("Buy milk", false)]
+        );
+    }
+
+    #[test]
+    fn test_parse_checklist_single_done() {
+        assert_eq!(
+            parse_task_checklist("- [x] Write tests"),
+            vec![subtask("Write tests", true)]
+        );
+    }
+
+    #[test]
+    fn test_parse_checklist_capital_x_is_done() {
+        assert_eq!(
+            parse_task_checklist("- [X] Capital X"),
+            vec![subtask("Capital X", true)]
+        );
+    }
+
+    #[test]
+    fn test_parse_checklist_mixed_with_free_text() {
+        let body = "intro paragraph\n\n- [ ] first\n- [x] second\n\n一些说明\n- [X] third\n\nfooter";
+        assert_eq!(
+            parse_task_checklist(body),
+            vec![
+                subtask("first", false),
+                subtask("second", true),
+                subtask("third", true),
+            ]
+        );
+    }
+
+    #[test]
+    fn test_parse_checklist_rejects_leading_whitespace() {
+        // V1 不支持嵌套,前置空白的行一律不识别为 checklist
+        assert_eq!(parse_task_checklist("  - [ ] nested"), vec![]);
+        assert_eq!(parse_task_checklist("\t- [x] tab indent"), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_rejects_no_space_after_bracket() {
+        assert_eq!(parse_task_checklist("- [x]No space"), vec![]);
+        assert_eq!(parse_task_checklist("- [ ]NoSpace"), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_rejects_star_marker() {
+        // V1 只认 `-`,不认 `*` / `+`
+        assert_eq!(parse_task_checklist("* [ ] star marker"), vec![]);
+        assert_eq!(parse_task_checklist("+ [ ] plus marker"), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_rejects_invalid_checkbox_char() {
+        // checkbox 内只认 ` ` / `x` / `X`
+        assert_eq!(parse_task_checklist("- [y] invalid char"), vec![]);
+        assert_eq!(parse_task_checklist("- [-] dash"), vec![]);
+        assert_eq!(parse_task_checklist("- [/] slash"), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_rejects_empty_text() {
+        // `- [ ]` 后必须非空 text
+        assert_eq!(parse_task_checklist("- [ ] "), vec![]);
+        assert_eq!(parse_task_checklist("- [ ]    "), vec![]);
+        assert_eq!(parse_task_checklist("- [x] "), vec![]);
+    }
+
+    #[test]
+    fn test_parse_checklist_with_positions_preserves_line_indices() {
+        let body = "intro\n- [ ] a\nmid text\n- [x] b\nouttro";
+        let parsed = parse_task_checklist_with_positions(body);
+        assert_eq!(parsed.len(), 2);
+        assert_eq!(parsed[0].subtask, subtask("a", false));
+        assert_eq!(parsed[0].line_index, 1);
+        assert_eq!(parsed[1].subtask, subtask("b", true));
+        assert_eq!(parsed[1].line_index, 3);
     }
 
     // --- task_relative_path + render ---
