@@ -36,3 +36,7 @@ keysight-imported.db
 
 # Codex 自动生成的 CLAUDE.md 副本
 Agents.md
+
+# Workflow v4: vault symlink(每台机器本地指向 Obsidian vault 下的 super-tauri 目录)
+# 目标:~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/projects/super-tauri
+/vault
