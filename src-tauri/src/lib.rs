@@ -50,6 +50,7 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::task_update,
         modules::keysight::commands::task_delete,
         modules::keysight::commands::task_set_color,
+        modules::keysight::commands::task_update_with_subtasks,
         // keysight: question
         modules::keysight::commands::question_query_all,
         modules::keysight::commands::question_create,

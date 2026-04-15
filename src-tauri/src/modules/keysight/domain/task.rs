@@ -285,6 +285,103 @@ fn parse_checklist_line(line: &str) -> Option<Subtask> {
     })
 }
 
+/// 把单个 Subtask 渲染成一行 `- [ ] text` 或 `- [x] text`。
+fn render_checklist_line(item: &Subtask) -> String {
+    let marker = if item.done { 'x' } else { ' ' };
+    format!("- [{marker}] {}", item.text)
+}
+
+/// 把新 subtasks 合并回 task body,保留所有非 checklist 文本的相对位置。
+///
+/// # 算法(V2 定稿 - 单 block only)
+///
+/// 步骤 1:解析 old_body 找出所有 checklist 行位置(`parse_task_checklist_with_positions`)。
+///
+/// 步骤 2(原 body 无 checklist 行):空 subtasks → 返回 old_body 原样;非空
+/// subtasks → 追加到 body 末尾(保证末尾换行)。
+///
+/// 步骤 3(原 body 有 checklist 行):检查所有 checklist 行的 line_index 是否
+/// 形成连续整数序列(之间无非 checklist 行夹杂)。非连续(多 block)返回
+/// `Err(KeysightError::MultiBlockChecklist)`。连续则记录 block 起止(min, max),
+/// 删除 `[min..=max]` 范围内所有行,在 min 位置插入 new_subtasks 渲染行,join
+/// 回字符串。
+///
+/// # Why fail-closed on multi-block
+///
+/// V1 "全删后在首位插回"算法会把原本夹在 checklist 之间的自由文本挪位置,
+/// 造成文档结构语义丢失。V2 决策(2026-04-15 codex review):V1.1 只支持
+/// 单连续 block,多 block 通过 typed error fail-closed 让 TS 显示友好提示
+/// 要求用户直接编辑 markdown 文件。V1.2+ 再考虑 per-block 精确 patch。
+///
+/// # 参数
+/// - `task_id`: 用于构造 `MultiBlockChecklist` error 的上下文字段(让 TS
+///   知道是哪个 task 出问题)
+/// - `old_body`: 当前 task body(通常来自 `current.content` merge base)
+/// - `new_subtasks`: TS 侧传来的新 subtasks 列表
+pub(in crate::modules::keysight) fn render_subtasks_into_body(
+    task_id: &str,
+    old_body: &str,
+    new_subtasks: &[Subtask],
+) -> Result<String, KeysightError> {
+    let parsed = parse_task_checklist_with_positions(old_body);
+
+    // Case 1: 原 body 无 checklist 行
+    if parsed.is_empty() {
+        if new_subtasks.is_empty() {
+            return Ok(old_body.to_string());
+        }
+        // 空 body 特判:`"".split('\n')` 会产生单 ["" ] 而不是空 Vec,直接拼
+        // subtasks 避免生成 "\n- [ ] ..." 前导换行
+        if old_body.is_empty() {
+            return Ok(new_subtasks
+                .iter()
+                .map(render_checklist_line)
+                .collect::<Vec<_>>()
+                .join("\n"));
+        }
+        // 非空 body + 追加 subtasks 到末尾
+        let mut lines: Vec<String> = old_body.split('\n').map(|s| s.to_string()).collect();
+        // 若末行非空,加一个空行分隔(保证 body 和 checklist 之间有视觉空白)
+        if lines.last().map(|s| !s.is_empty()).unwrap_or(false) {
+            lines.push(String::new());
+        }
+        for item in new_subtasks {
+            lines.push(render_checklist_line(item));
+        }
+        return Ok(lines.join("\n"));
+    }
+
+    // Case 2: 原 body 有 checklist 行 —— 检查是否单连续 block
+    let positions: Vec<usize> = parsed.iter().map(|p| p.line_index).collect();
+    let min = positions[0];
+    let max = *positions.last().unwrap();
+    // 单 block 的充要条件: items 数量 == (max - min + 1)
+    let is_contig = positions.len() == (max - min + 1);
+    if !is_contig {
+        // 粗略计算 block 数(相邻 index 差 > 1 时开启新 block)
+        let mut block_count = 1usize;
+        for w in positions.windows(2) {
+            if w[1] - w[0] > 1 {
+                block_count += 1;
+            }
+        }
+        return Err(KeysightError::MultiBlockChecklist {
+            task_id: task_id.to_string(),
+            block_count,
+        });
+    }
+
+    // Case 2c: 连续 block —— 把 [min..=max] 替换成 new_subtasks
+    let mut lines: Vec<String> = old_body.split('\n').map(|s| s.to_string()).collect();
+    // 删除原 checklist 范围
+    lines.drain(min..=max);
+    // 在 min 位置插入新 subtasks
+    for (i, item) in new_subtasks.iter().enumerate() {
+        lines.insert(min + i, render_checklist_line(item));
+    }
+    Ok(lines.join("\n"))
+}
+
 // ============================================================
 // Canvas auto-position 支持
 // ============================================================
@@ -1409,6 +1506,271 @@ mod tests {
         let all = query_kanban(&conn, None).unwrap();
         assert_eq!(all.len(), 1);
         assert_eq!(all[0].subtasks.len(), 3);
+    }
+
+    // --- render_subtasks_into_body (V1.1 Phase 6.3) ---
+
+    /// 空 body + 空 subtasks → 返回空字符串原样。
+    #[test]
+    fn test_render_subtasks_empty_body_empty_subtasks() {
+        let out = render_subtasks_into_body("task_id", "", &[]).unwrap();
+        assert_eq!(out, "");
+    }
+
+    /// 空 body + 非空 subtasks → 追加到末尾。
+    #[test]
+    fn test_render_subtasks_empty_body_with_subtasks() {
+        let out = render_subtasks_into_body(
+            "task_id",
+            "",
+            &[subtask("first", false), subtask("second", true)],
+        )
+        .unwrap();
+        assert_eq!(out, "- [ ] first\n- [x] second");
+    }
+
+    /// 有 body 无 checklist + 非空 subtasks → 追加到 body 末尾(含空行分隔)。
+    #[test]
+    fn test_render_subtasks_non_checklist_body_appends() {
+        let out = render_subtasks_into_body(
+            "task_id",
+            "free text\nline two",
+            &[subtask("a", false)],
+        )
+        .unwrap();
+        assert_eq!(out, "free text\nline two\n\n- [ ] a");
+    }
+
+    /// 单连续 block 替换 —— 原 checklist 行被删除,新 subtasks 插入原位置,
+    /// 前后非 checklist 文本保留原位。
+    #[test]
+    fn test_render_subtasks_single_block_replace() {
+        let body = "intro\n- [ ] old one\n- [x] old two\nfooter";
+        let new = [subtask("new a", false), subtask("new b", true)];
+        let out = render_subtasks_into_body("task_id", body, &new).unwrap();
+        assert_eq!(out, "intro\n- [ ] new a\n- [x] new b\nfooter");
+    }
+
+    /// 单 block + 清空 subtasks → 原 checklist 行全删,前后文本保留。
+    #[test]
+    fn test_render_subtasks_single_block_clear() {
+        let body = "intro\n- [ ] a\n- [x] b\nfooter";
+        let out = render_subtasks_into_body("task_id", body, &[]).unwrap();
+        assert_eq!(out, "intro\nfooter");
+    }
+
+    /// 多 block 检测 → Err(MultiBlockChecklist),block_count 正确。
+    #[test]
+    fn test_render_subtasks_multi_block_returns_error() {
+        // line 0: "intro", 1: "- [ ] a", 2: "mid text", 3: "- [x] b", 4: "footer"
+        // positions = [1, 3],len=2 != max-min+1=3 → 多 block
+        let body = "intro\n- [ ] a\nmid text\n- [x] b\nfooter";
+        let result = render_subtasks_into_body("task_abc", body, &[subtask("new", false)]);
+        match result {
+            Err(KeysightError::MultiBlockChecklist {
+                task_id,
+                block_count,
+            }) => {
+                assert_eq!(task_id, "task_abc");
+                assert_eq!(block_count, 2);
+            }
+            other => panic!("expected MultiBlockChecklist, got {other:?}"),
+        }
+    }
+
+    /// 多 block(3 个 block)→ block_count = 3。
+    #[test]
+    fn test_render_subtasks_three_blocks() {
+        // lines 0-8: intro / item1 / text1 / item2 / text2 / item3 / text3 / item4 / end
+        let body = "intro\n- [ ] a\ntext1\n- [ ] b\ntext2\n- [ ] c\ntext3\n- [ ] d\nend";
+        let result = render_subtasks_into_body("t", body, &[]);
+        match result {
+            Err(KeysightError::MultiBlockChecklist { block_count, .. }) => {
+                assert_eq!(block_count, 4);
+            }
+            other => panic!("expected MultiBlockChecklist with 4 blocks, got {other:?}"),
+        }
+    }
+
+    /// 幂等性:render 出的结果再 parse 再 render 应该和一次 render 完全一致。
+    #[test]
+    fn test_render_subtasks_idempotent() {
+        let body = "intro\n- [ ] a\n- [x] b\nfooter";
+        let subs = parse_task_checklist(body);
+        let once = render_subtasks_into_body("t", body, &subs).unwrap();
+        let subs2 = parse_task_checklist(&once);
+        let twice = render_subtasks_into_body("t", &once, &subs2).unwrap();
+        assert_eq!(once, twice);
+    }
+
+    /// 归一化:`- [X]` 大写输入 → render 后变小写 `- [x]`。
+    #[test]
+    fn test_render_subtasks_normalizes_capital_x() {
+        let body = "- [X] capital";
+        let subs = parse_task_checklist(body);
+        assert_eq!(subs, vec![subtask("capital", true)]);
+        let rendered = render_subtasks_into_body("t", body, &subs).unwrap();
+        assert_eq!(rendered, "- [x] capital");
+    }
+
+    // --- task_update_with_subtasks 的端到端模拟(V1.1 Phase 6.3)---
+    //
+    // command 层的测试通过 integration test 验证(需要 Tauri State),
+    // 这里通过 domain 函数直接组合模拟 command 内部流程(get → render → update → get)。
+
+    /// Happy path: 创建含 checklist 的 task,"command"调用改 subtasks,get 返回
+    /// 新 subtasks 且非 checklist 文本保留。
+    #[test]
+    fn test_update_with_subtasks_replaces_checklist_and_preserves_free_text() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("intro para\n\n- [ ] a\n- [x] b\n\nfooter"),
+                ..task_create_defaults("With checklist")
+            },
+        )
+        .unwrap();
+
+        // 模拟 command: get → render → update
+        let current = get(&conn, &task.id).unwrap();
+        let new_subs = vec![
+            subtask("replaced 1", true),
+            subtask("replaced 2", false),
+            subtask("new 3", false),
+        ];
+        let new_body =
+            render_subtasks_into_body(&task.id, &current.content, &new_subs).unwrap();
+        update(
+            &conn,
+            &vfs,
+            &task.id,
+            TaskUpdateInput {
+                content: Some(&new_body),
+                ..task_update_defaults()
+            },
+        )
+        .unwrap();
+
+        let fresh = get(&conn, &task.id).unwrap();
+        assert_eq!(fresh.subtasks, new_subs);
+        // 非 checklist 文本保留 —— "intro para" 和 "footer" 都还在
+        assert!(fresh.content.contains("intro para"));
+        assert!(fresh.content.contains("footer"));
+    }
+
+    /// 清空 subtasks:传空 Vec,body 的 checklist 行全部消失,非 checklist 文本保留。
+    #[test]
+    fn test_update_with_subtasks_clear_all_keeps_free_text() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("说明段\n\n- [ ] a\n- [x] b\n\n结尾段"),
+                ..task_create_defaults("Has items")
+            },
+        )
+        .unwrap();
+
+        let current = get(&conn, &task.id).unwrap();
+        let new_body = render_subtasks_into_body(&task.id, &current.content, &[]).unwrap();
+        update(
+            &conn,
+            &vfs,
+            &task.id,
+            TaskUpdateInput {
+                content: Some(&new_body),
+                ..task_update_defaults()
+            },
+        )
+        .unwrap();
+
+        let fresh = get(&conn, &task.id).unwrap();
+        assert!(fresh.subtasks.is_empty());
+        assert!(fresh.content.contains("说明段"));
+        assert!(fresh.content.contains("结尾段"));
+    }
+
+    /// Multi-block 场景:task body 有多 block,render 返 Err,task 数据未被修改。
+    #[test]
+    fn test_update_with_subtasks_multi_block_fails_closed() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let body = "前言\n- [ ] a\n中间说明\n- [x] b\n结尾";
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some(body),
+                ..task_create_defaults("Multi block")
+            },
+        )
+        .unwrap();
+
+        let current = get(&conn, &task.id).unwrap();
+        let result = render_subtasks_into_body(
+            &task.id,
+            &current.content,
+            &[subtask("new", false)],
+        );
+        assert!(matches!(
+            result,
+            Err(KeysightError::MultiBlockChecklist { .. })
+        ));
+
+        // task 原数据未变
+        let unchanged = get(&conn, &task.id).unwrap();
+        assert_eq!(unchanged.subtasks.len(), 2);
+        assert_eq!(unchanged.subtasks[0].text, "a");
+        assert_eq!(unchanged.subtasks[1].text, "b");
+    }
+
+    /// 同时改 title + subtasks:title rename + body subtasks 替换都生效。
+    #[test]
+    fn test_update_with_subtasks_and_title_simultaneously() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let project = ProjectName::new("super-tauri").unwrap();
+        let task = create(
+            &conn,
+            &vfs,
+            &project,
+            TaskCreateInput {
+                content: Some("- [ ] old item"),
+                ..task_create_defaults("Old Title")
+            },
+        )
+        .unwrap();
+
+        let current = get(&conn, &task.id).unwrap();
+        let new_subs = vec![subtask("new item", true)];
+        let new_body =
+            render_subtasks_into_body(&task.id, &current.content, &new_subs).unwrap();
+        update(
+            &conn,
+            &vfs,
+            &task.id,
+            TaskUpdateInput {
+                title: Some("New Title"),
+                content: Some(&new_body),
+                ..task_update_defaults()
+            },
+        )
+        .unwrap();
+
+        let fresh = get(&conn, &task.id).unwrap();
+        assert_eq!(fresh.title, "New Title");
+        assert_eq!(fresh.subtasks, new_subs);
     }
 
     #[test]

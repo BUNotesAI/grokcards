@@ -746,6 +746,7 @@ src/
 | `task_update` (B2) | `entities`, `task_fields`, `file_mtimes`, `entities_fts` + markdown 文件 | DB 写 + 文件重写 + title 改时 rename;不允许改 project;color `"default"` sentinel 清空 | domain unit test |
 | `task_delete` (B2) | `entities`, `task_fields`, `edges`, `positions`, `file_mtimes`, `entities_fts` + markdown 文件 | 级联删除(domain::task::delete 经 sync::remove_file) | domain unit test |
 | `task_set_color` (B2) | 等价于 `task_update` 只改 color | 同上 | 复用 task_update 测试 |
+| `task_update_with_subtasks` (V1.1) | 等价 `task_update(content)` + 可能 title/status/area/color | Rust 从 `current.content` 作 merge base,用 `render_subtasks_into_body` 把新 subtasks 按 line_index 替换原 checklist 行(保留非 checklist 文本);多 block 时 fail-closed 返 `AppError::MultiBlockChecklist { task_id, block_count }` | domain unit test(render 9 + 端到端 4) |
 | `alias_create` | `entities`, `alias_fields` | DB 写 | domain unit test |
 | `alias_delete` | `entities`, `alias_fields`, `edges` | 级联删除 | domain unit test |
 | `layout_set_position` | `positions` | DB 写 | domain unit test |

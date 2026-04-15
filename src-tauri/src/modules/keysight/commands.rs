@@ -15,8 +15,8 @@ use super::domain::{overview, question, sync, task, whiteboard};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, EdgeRow, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, NoteFileMigrationReport, Position,
-    QuestionEntity, StatsResponse, SyncFileResponse, SyncVaultReport, TaskEntity, TaskStatus,
-    VaultInfoResponse, WhiteboardSummary,
+    QuestionEntity, StatsResponse, Subtask, SyncFileResponse, SyncVaultReport, TaskEntity,
+    TaskStatus, VaultInfoResponse, WhiteboardSummary,
 };
 use super::state::KeysightState;
 use super::vault_fs::RealVaultFs;
@@ -595,6 +595,72 @@ pub fn task_set_color(
         },
     )
     .map_err(Into::into)
+}
+
+/// V1.1 Kanban Subtask 专用写入命令 —— 同时更新 task 元数据和 checklist 子任务。
+///
+/// ## 前置条件
+/// - `id` 对应的 task 必须存在(否则返回 `AppError::Keysight` NotFound)
+/// - `subtasks` 中每项的 text 非空(TS 侧应已过滤;Rust 侧 render 时非空保证)
+/// - 被编辑的 task body 的 checklist 必须是**单连续 block**
+///
+/// ## 执行效果
+/// 1. `task::get` 读当前 task(拿完整 body 作为 merge base)
+/// 2. `task::render_subtasks_into_body(&id, &current.content, &subtasks)` 把新
+///    subtasks 合并进原 body,保留所有非 checklist 行的原位置(只替换 checklist
+///    行)。多 block 时 fail-closed 返回 `KeysightError::MultiBlockChecklist`,
+///    经 `From<KeysightError> for AppError` 转成 `AppError::MultiBlockChecklist`
+///    透传到 TS
+/// 3. 调 `task::update(...)` 把新 body 作为 content 写入(复用现有文件重写 +
+///    sync_file + 可能的 rename + file_mtimes 更新)
+/// 4. `task::get` 返回 fresh TaskEntity(含重新 parse 的 subtasks)
+///
+/// ## 不做的事
+/// - 不允许改 project(`task::update` 的契约)
+/// - 不直接修改 body 的非 checklist 部分(用户要改自由文本,V1.1 得直接编辑
+///   markdown 文件;V1.2 计划加 body 编辑 UI)
+///
+/// ## 幂等性
+/// 幂等 —— 同样的 (title, subtasks, status, area, color) 多次调用结果一致。
+#[tauri::command]
+#[specta::specta]
+pub fn task_update_with_subtasks(
+    state: State<'_, KeysightState>,
+    id: String,
+    title: Option<String>,
+    subtasks: Vec<Subtask>,
+    status: Option<TaskStatus>,
+    area: Option<String>,
+    color: Option<String>,
+) -> Result<TaskEntity, AppError> {
+    let _t = ScopedTimer::new("cmd:task_update_with_subtasks");
+    let conn = lock_db(&state.db, "task_update_with_subtasks");
+    let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().into_owned());
+
+    // 1. 读 current 作为 body merge base
+    let current = task::get(&conn, &id).map_err(Into::<AppError>::into)?;
+
+    // 2. 把新 subtasks 合并进 current.content —— 多 block 时 fail-closed
+    let new_body = task::render_subtasks_into_body(&id, &current.content, &subtasks)
+        .map_err(Into::<AppError>::into)?;
+
+    // 3. 调 domain::task::update 复用文件 rename + sync_file + file_mtimes 路径
+    task::update(
+        &conn,
+        &vault_fs,
+        &id,
+        task::TaskUpdateInput {
+            title: title.as_deref(),
+            content: Some(&new_body),
+            status,
+            area: area.as_deref(),
+            color: color.as_deref(),
+        },
+    )
+    .map_err(Into::<AppError>::into)?;
+
+    // 4. 返回 fresh TaskEntity,含重新 parse 的 subtasks
+    task::get(&conn, &id).map_err(Into::into)
 }
 
 // ============================================================
