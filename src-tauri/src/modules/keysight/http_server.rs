@@ -10,13 +10,17 @@
 //! - auth middleware(`test_write_rejects_with_401_when_token_mismatch` 验)
 //! - handle_rpc **stub**:三路 method 都返回空 `result: null`
 //!
-//! 具体 query / mutate / flush 的 domain dispatch 逻辑在 Phase 6.2 / 6.3(CLI 接入
-//! 时)填充 handle_rpc body。
+//! ## Phase 6.2b scope
+//! - ServerContext 扩 db / vault_path / emitter(供 dispatcher 用)
+//! - handle_rpc `"mutate"` 分支:deserialize `MutateParams` → 调 `dispatch_mutate`
+//!   → 序列化 `MutateResponse` 返;成功后 dispatcher 内部 emit `"entity:changed"`
+//! - handle_rpc `"flush"` 分支:直接 emit `"vault:flush"` event + 返 success
+//! - handle_rpc `"query"` 分支:保留 Phase 4 Null stub(Phase 7 决策)
 
 use std::fmt::Write as _;
 use std::io;
-use std::path::Path;
-use std::sync::Arc;
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
 
 use axum::{
     Json, Router,
@@ -26,12 +30,16 @@ use axum::{
     response::Response,
     routing::post,
 };
+use keysight_core::ipc::{MutateParams, MutateResponse};
+use keysight_core::vault_fs::RealVaultFs;
 use rand::Rng;
+use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
 use subtle::ConstantTimeEq;
 use tokio::sync::oneshot;
 
 use super::config_file;
+use super::dispatcher::{self, EventEmitter};
 use super::endpoint_file::{self, EndpointFileContents, EndpointFileGuard};
 use super::server_state::{ServerError, ServerState};
 
@@ -39,16 +47,17 @@ use super::server_state::{ServerError, ServerState};
 /// CLI 端内置相同期望值,mismatch 时 CLI 在发 HTTP 请求前 fail-fast。
 const RPC_PROTOCOL_VERSION: u32 = 1;
 
-/// axum Router state —— 目前只含 auth token;Phase 6.2/6.3 会扩 db handle、
-/// vault path、app handle(为 emit Tauri event)等。
+/// axum Router state —— 含 auth token + db 连接 + vault_path + emitter。
 #[derive(Clone)]
 pub(super) struct ServerContext {
-    token: Arc<String>,
+    pub(super) token: Arc<String>,
+    pub(super) db: Arc<Mutex<Connection>>,
+    pub(super) vault_path: PathBuf,
+    pub(super) emitter: Arc<dyn EventEmitter>,
 }
 
 /// POST /rpc 请求 body。
 #[derive(Debug, Deserialize)]
-#[allow(dead_code)] // Phase 4 stub:params 在 Phase 6.2/6.3 接 domain dispatch 时读
 struct RpcRequest {
     method: String,
     params: serde_json::Value,
@@ -92,15 +101,55 @@ async fn auth_middleware(
     }
 }
 
-/// POST /rpc handler stub —— Phase 4 只走到 auth;Phase 6.2/6.3 接 domain dispatch。
+/// POST /rpc handler —— Phase 6.2b 实分派(mutate + flush);query 保留 Phase 4 Null。
 async fn handle_rpc(
-    State(_ctx): State<ServerContext>,
+    State(ctx): State<ServerContext>,
     Json(req): Json<RpcRequest>,
 ) -> Result<Json<RpcResponse>, StatusCode> {
     match req.method.as_str() {
-        "query" | "mutate" | "flush" => Ok(Json(RpcResponse {
-            result: serde_json::Value::Null,
-        })),
+        "mutate" => {
+            let params: MutateParams = serde_json::from_value(req.params).map_err(|e| {
+                eprintln!("[keysight] mutate params parse 失败: {e}");
+                StatusCode::BAD_REQUEST
+            })?;
+            // lock DB connection —— 与 Tauri commands 的 KeysightState.db 是不同
+            // handle,WAL 层面写串行,各自 transaction 看到 commit 后的快照。
+            let conn = ctx.db.lock().map_err(|e| {
+                eprintln!("[keysight] mutate db lock poisoned: {e}");
+                StatusCode::INTERNAL_SERVER_ERROR
+            })?;
+            let vault_fs = RealVaultFs::new(ctx.vault_path.to_string_lossy().to_string());
+            let resp = dispatcher::dispatch_mutate(params, &conn, &vault_fs, ctx.emitter.as_ref())
+                .map_err(|e| {
+                    eprintln!("[keysight] dispatch_mutate 失败: {e}");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?;
+            Ok(Json(RpcResponse {
+                result: serde_json::to_value(&resp).map_err(|e| {
+                    eprintln!("[keysight] mutate response serialize 失败: {e}");
+                    StatusCode::INTERNAL_SERVER_ERROR
+                })?,
+            }))
+        }
+        "flush" => {
+            ctx.emitter.emit("vault:flush", &serde_json::Value::Null);
+            // flush 目前只发事件让 Tauri 侧 UI 重新 sync,没有结构化返回值
+            let resp = MutateResponse {
+                success: true,
+                entity_id: None,
+                message: None,
+            };
+            Ok(Json(RpcResponse {
+                result: serde_json::to_value(&resp).unwrap_or(serde_json::Value::Null),
+            }))
+        }
+        "query" => {
+            // Phase 6.2b 保留 Phase 4 stub:CLI 查询走直连 SQLite 路径,不走 /rpc。
+            // Phase 7 如决定 server-side query 再实装。
+            Ok(Json(RpcResponse {
+                result: serde_json::Value::Null,
+            }))
+        }
         _ => Err(StatusCode::BAD_REQUEST),
     }
 }
@@ -126,14 +175,16 @@ fn generate_token() -> String {
 /// ## 顺序(对齐 design-v4 §3.5)
 /// 1. `config_file::ensure(data_dir/cli-config.toml, db_path, vault_path)`
 /// 2. 生成 token
-/// 3. `TcpListener::bind("127.0.0.1:0")` → `local_addr`
-/// 4. `tokio::spawn(axum::serve(listener, router).with_graceful_shutdown(shutdown_rx))` → `join_handle`
-/// 5. `endpoint_file::write_atomic(data_dir/cli-endpoint.toml, EndpointFileContents { ... })`
-/// 6. 构造并返回 `ServerState { shutdown_tx, join_handle, local_addr, endpoint_guard }`
+/// 3. 开一个独立 `Connection` 给 axum dispatcher 用(WAL 支持同进程多 Connection)
+/// 4. `TcpListener::bind("127.0.0.1:0")` → `local_addr`
+/// 5. `tokio::spawn(axum::serve(listener, router).with_graceful_shutdown(shutdown_rx))` → `join_handle`
+/// 6. `endpoint_file::write_atomic(data_dir/cli-endpoint.toml, EndpointFileContents { ... })`
+/// 7. 构造并返回 `ServerState { shutdown_tx, join_handle, local_addr, endpoint_guard }`
 pub(super) async fn start(
     data_dir: &Path,
     db_path: &Path,
     vault_path: &Path,
+    emitter: Arc<dyn EventEmitter>,
 ) -> io::Result<ServerState> {
     // Step 1: 幂等写 cli-config.toml
     let config_path = data_dir.join("cli-config.toml");
@@ -141,15 +192,23 @@ pub(super) async fn start(
 
     // Step 2: 生成 256-bit token
     let token = generate_token();
+
+    // Step 3: 开独立 Connection(与 KeysightState.db 不同 handle,WAL 文件级串行)
+    let ipc_conn = Connection::open(db_path).map_err(|e| io::Error::other(e.to_string()))?;
+    let db = Arc::new(Mutex::new(ipc_conn));
+
     let ctx = ServerContext {
         token: Arc::new(token.clone()),
+        db,
+        vault_path: vault_path.to_path_buf(),
+        emitter,
     };
 
-    // Step 3: bind 127.0.0.1:0(OS 分配随机端口)
+    // Step 4: bind 127.0.0.1:0(OS 分配随机端口)
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await?;
     let local_addr = listener.local_addr()?;
 
-    // Step 4: spawn axum::serve + graceful shutdown
+    // Step 5: spawn axum::serve + graceful shutdown
     let (shutdown_tx, shutdown_rx) = oneshot::channel::<()>();
     let app = router(ctx);
     let join_handle = tokio::spawn(async move {
@@ -161,7 +220,7 @@ pub(super) async fn start(
             .map_err(ServerError::from)
     });
 
-    // Step 5: atomic write cli-endpoint.toml(发布给 keysight-cli)
+    // Step 6: atomic write cli-endpoint.toml(发布给 keysight-cli)
     let endpoint_path = data_dir.join("cli-endpoint.toml");
     let started_at = chrono::Utc::now().to_rfc3339();
     let contents = EndpointFileContents {
@@ -172,7 +231,7 @@ pub(super) async fn start(
     };
     endpoint_file::write_atomic(&endpoint_path, &contents)?;
 
-    // Step 6: 构造 ServerState(Phase 4 setup hook 里 app.manage 到 Tauri state)
+    // Step 7: 构造 ServerState(Phase 4 setup hook 里 app.manage 到 Tauri state)
     Ok(ServerState {
         shutdown_tx,
         join_handle,
@@ -182,14 +241,52 @@ pub(super) async fn start(
 }
 
 // -----------------------------------------------------------------------------
-// Tests —— Phase 4 scenarios(模块内 #[cfg(test)],保 pub(super) 窄接口)
+// Tests —— Phase 4(lifecycle / 401)+ Phase 6.2b(tower oneshot 集成)
 // -----------------------------------------------------------------------------
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::modules::keysight::dispatcher::RecordingEmitter;
+    use keysight_core::db::init_db;
     use std::time::Duration;
     use tower::ServiceExt;
+
+    /// Helper:起一个带 schema + wb_root seed 的 in-memory Connection,包 Arc<Mutex>
+    fn seeded_db() -> Arc<Mutex<Connection>> {
+        let conn = Connection::open_in_memory().unwrap();
+        init_db(&conn).unwrap();
+        conn.execute(
+            "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES ('wb_root', 'whiteboard', 'Root', 'wb_root')",
+            [],
+        )
+        .unwrap();
+        Arc::new(Mutex::new(conn))
+    }
+
+    fn test_emitter() -> Arc<RecordingEmitter> {
+        Arc::new(RecordingEmitter::new())
+    }
+
+    /// Helper:构造 test ServerContext(in-memory DB + tempdir vault + recording emitter)
+    fn test_ctx(
+        db: Arc<Mutex<Connection>>,
+        emitter: Arc<dyn EventEmitter>,
+    ) -> (ServerContext, tempfile::TempDir) {
+        let vault = tempfile::tempdir().unwrap();
+        let ctx = ServerContext {
+            token: Arc::new("test-token".to_string()),
+            db,
+            vault_path: vault.path().to_path_buf(),
+            emitter,
+        };
+        (ctx, vault)
+    }
+
+    /// Helper: start() 用的 no-op emitter(lifecycle tests 不 care emit)
+    fn noop_emitter() -> Arc<dyn EventEmitter> {
+        Arc::new(RecordingEmitter::new())
+    }
 
     /// Scenario: Tauri 启动后 config 与 endpoint 两文件同时就位
     #[tokio::test]
@@ -197,8 +294,13 @@ mod tests {
         let data_dir = tempfile::tempdir().unwrap();
         let vault = tempfile::tempdir().unwrap();
         let db_path = data_dir.path().join("keysight.db");
+        // 预建空 DB 使得 Connection::open 不 fail(init_db 不在此 test 运行路径)
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            init_db(&conn).unwrap();
+        }
 
-        let server_state = start(data_dir.path(), &db_path, vault.path())
+        let server_state = start(data_dir.path(), &db_path, vault.path(), noop_emitter())
             .await
             .unwrap();
 
@@ -227,8 +329,12 @@ mod tests {
         let data_dir = tempfile::tempdir().unwrap();
         let vault = tempfile::tempdir().unwrap();
         let db_path = data_dir.path().join("keysight.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            init_db(&conn).unwrap();
+        }
 
-        let server_state = start(data_dir.path(), &db_path, vault.path())
+        let server_state = start(data_dir.path(), &db_path, vault.path(), noop_emitter())
             .await
             .unwrap();
 
@@ -259,9 +365,7 @@ mod tests {
     /// auth middleware 契约层面的 401 行为。
     #[tokio::test]
     async fn test_write_rejects_with_401_when_token_mismatch() {
-        let ctx = ServerContext {
-            token: Arc::new("good-token-abcdef".to_string()),
-        };
+        let (ctx, _vault) = test_ctx(seeded_db(), noop_emitter());
         let app = router(ctx);
 
         let req = axum::http::Request::builder()
@@ -277,6 +381,78 @@ mod tests {
             response.status(),
             StatusCode::UNAUTHORIZED,
             "错 token 应返 401"
+        );
+    }
+
+    /// Phase 6.2b Red scenario(spec L141 in-process 变体):
+    /// POST /rpc `{method: "mutate", params: SectionCreate}` → server 应返 200,
+    /// body 可反序列化为 `MutateResponse { success: true, entity_id: Some(sec_*) }`,
+    /// DB 应新增 section 行,emitter 应录到 1 条 "entity:changed" event。
+    ///
+    /// Red 阶段:`dispatch_mutate` stub 返 Err → handle_rpc 返 500 → 断言 200 **失败**。
+    /// Green 阶段:dispatch_mutate 实装 → 全部断言通过。
+    #[tokio::test]
+    async fn test_mutate_via_http_emits_entity_changed_and_writes_db() {
+        let db = seeded_db();
+        let emitter = test_emitter();
+        let (ctx, _vault) = test_ctx(Arc::clone(&db), Arc::clone(&emitter) as Arc<dyn EventEmitter>);
+        let app = router(ctx);
+
+        let body = serde_json::json!({
+            "method": "mutate",
+            "params": {
+                "kind": "section-create",
+                "wb": "wb_root",
+                "title": "HttpSec",
+                "color": null,
+            },
+        });
+
+        let req = axum::http::Request::builder()
+            .method("POST")
+            .uri("/rpc")
+            .header("X-Keysight-Token", "test-token")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(body.to_string()))
+            .unwrap();
+
+        let response = app.oneshot(req).await.unwrap();
+        let status = response.status();
+        let body_bytes = axum::body::to_bytes(response.into_body(), 64 * 1024)
+            .await
+            .unwrap();
+        assert_eq!(
+            status,
+            StatusCode::OK,
+            "期望 200,实际 {status};body={}",
+            String::from_utf8_lossy(&body_bytes)
+        );
+
+        // 解析 RpcResponse.result 为 MutateResponse
+        let rpc: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let mutate: MutateResponse = serde_json::from_value(rpc["result"].clone())
+            .expect("result 应可反序列化为 MutateResponse");
+        assert!(mutate.success);
+        let id = mutate.entity_id.expect("SectionCreate 应返 entity_id");
+        assert!(id.starts_with("sec_"));
+
+        // DB 断言
+        let count: i64 = db
+            .lock()
+            .unwrap()
+            .query_row(
+                "SELECT COUNT(*) FROM entities WHERE kind = 'section' AND title = 'HttpSec'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        // emit 断言
+        let events = emitter.events();
+        assert!(
+            events.iter().any(|(name, _)| name == "entity:changed"),
+            "应 emit entity:changed,实际 events={events:?}"
         );
     }
 }

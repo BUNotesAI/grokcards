@@ -7,6 +7,7 @@ pub mod db;
 pub mod domain;
 pub mod errors;
 pub mod id;
+pub mod ipc;
 pub mod models;
 pub mod parser;
 pub mod state;

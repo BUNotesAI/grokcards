@@ -187,10 +187,17 @@ pub fn run() {
             }
 
             // Phase 4: HTTP IPC server + endpoint 发布(design-v4 §3.5 启动序列 step 3-5)
+            // Phase 6.2b:扩 `app_handle` 参数,给 server 内部构造 TauriEmitter 用
             {
                 let _t = ScopedTimer::new("http_server::start");
+                let app_handle = app.handle().clone();
                 let server_state = tauri::async_runtime::block_on(
-                    modules::keysight::start_http_server(&data_dir, &db_path, &vault_path),
+                    modules::keysight::start_http_server(
+                        &data_dir,
+                        &db_path,
+                        &vault_path,
+                        app_handle,
+                    ),
                 )
                 .expect("keysight HTTP IPC server 启动失败");
                 app.manage(Mutex::new(Some(server_state)));

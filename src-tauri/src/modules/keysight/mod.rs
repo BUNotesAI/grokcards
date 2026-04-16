@@ -9,6 +9,8 @@ pub(crate) mod server_state;
 // Phase 5 新增:file watcher 三路分派 + self-write suppression 双队列
 pub(super) mod suppression;
 pub(super) mod watcher;
+// Phase 6.2b 新增:写命令分派器(handle_rpc mutate 分支的 core logic)
+pub(super) mod dispatcher;
 
 // 从 keysight-core re-export,保持 src-tauri 内部 use 路径不变:
 // - `crate::modules::keysight::domain::X` → 解析到 `keysight_core::domain::X`
@@ -34,12 +36,18 @@ pub fn init(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 /// 供 lib.rs setup 阶段调用(`tauri::async_runtime::block_on` 包装)。
 /// 返回的 `ServerState` 要被 `app.manage(Mutex::new(Some(server_state)))` 以
 /// 支持 `shutdown(app_handle)` 的 take-by-value 顺序契约。
+///
+/// `app_handle` 用来构造 `TauriEmitter`,给 `handle_rpc` mutate / flush 分支
+/// emit `"entity:changed"` / `"vault:flush"` 事件到前端。
 pub(crate) async fn start_http_server(
     data_dir: &std::path::Path,
     db_path: &std::path::Path,
     vault_path: &std::path::Path,
+    app_handle: tauri::AppHandle,
 ) -> std::io::Result<server_state::ServerState> {
-    let server_state = http_server::start(data_dir, db_path, vault_path).await?;
+    let emitter: std::sync::Arc<dyn dispatcher::EventEmitter> =
+        std::sync::Arc::new(dispatcher::TauriEmitter { app: app_handle });
+    let server_state = http_server::start(data_dir, db_path, vault_path, emitter).await?;
     eprintln!(
         "[keysight] HTTP IPC server listening on {}",
         server_state.local_addr
