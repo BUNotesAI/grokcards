@@ -19,6 +19,8 @@ pub trait NoteStore {
     fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
     fn get(&self, id: &str) -> Result<GraphNote, KeysightError>;
     fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphNote>, KeysightError>;
+    /// Phase 6.1 新增 — 按 file_path 精确匹配返 0..N 条 notes(对齐 `CardStore::query_by_file` 形状)
+    fn query_by_file(&self, file_path: &str) -> Result<Vec<GraphNote>, KeysightError>;
 }
 
 pub struct SqliteNoteStore<'a> {
@@ -290,6 +292,29 @@ impl NoteStore for SqliteNoteStore<'_> {
             .collect::<rusqlite::Result<Vec<_>>>()?;
         ids.iter().map(|id| self.get(id)).collect()
     }
+
+    fn query_by_file(&self, file_path: &str) -> Result<Vec<GraphNote>, KeysightError> {
+        let mut stmt = self.conn.prepare(
+            "SELECT id FROM entities WHERE kind = 'note' AND file_path = ?1 ORDER BY title"
+        )?;
+        let ids: Vec<String> = stmt.query_map([file_path], |r| r.get(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        ids.iter().map(|id| self.get(id)).collect()
+    }
+}
+
+/// Phase 6.1 新增 — 跨 whiteboard 列出全部 notes。
+///
+/// 对比 `NoteStore::query_all(wb)` 按 whiteboard_id 过滤,此 fn 返整张表所有 note 实体。
+/// 对应 CLI 命令 `keysight-cli notes`(老 CLI 是跨 wb 语义,parity 迁移保持不变)。
+pub fn query_all_cross_whiteboard(conn: &Connection) -> Result<Vec<GraphNote>, KeysightError> {
+    let mut stmt = conn.prepare(
+        "SELECT id FROM entities WHERE kind = 'note' ORDER BY title"
+    )?;
+    let ids: Vec<String> = stmt.query_map([], |r| r.get(0))?
+        .collect::<rusqlite::Result<Vec<_>>>()?;
+    let store = SqliteNoteStore::new(conn);
+    ids.iter().map(|id| store.get(id)).collect()
 }
 
 /// 一次性把 DB-only note 导出为 `whiteboard/` 下的 markdown 文件，并同时备份 DB 与 whiteboard 目录。
@@ -686,6 +711,49 @@ mod tests {
         store.create("other", "C", None, None).unwrap();
         let notes = store.query_all("wb_root").unwrap();
         assert_eq!(notes.len(), 2);
+    }
+
+    /// Phase 6.1 新 domain fn #6 — `notes` CLI 命令需要跨 whiteboard 列出全部 notes。
+    /// 对比既有 `NoteStore::query_all(wb)` 按 wb 过滤,此处 cross_whiteboard 版返全部。
+    #[test]
+    fn test_query_all_cross_whiteboard_returns_notes_from_all_wb() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        store.create("wb_root", "A", None, None).unwrap();
+        store.create("wb_root", "B", None, None).unwrap();
+        store.create("other", "C", None, None).unwrap();
+
+        let notes = query_all_cross_whiteboard(&conn).unwrap();
+        assert_eq!(notes.len(), 3);
+        let titles: Vec<String> = notes.iter().map(|n| n.title.clone()).collect();
+        assert!(titles.contains(&"A".to_string()));
+        assert!(titles.contains(&"B".to_string()));
+        assert!(titles.contains(&"C".to_string()));
+    }
+
+    /// Phase 6.1 新 domain fn #7 — `note {path}` CLI 命令需要按 file_path 精确匹配返 notes。
+    /// 形状对齐 `CardStore::query_by_file`(Vec 语义:0 或 1 条,防御性允许 N)。
+    #[test]
+    fn test_query_by_file_returns_note_matching_exact_path() {
+        let conn = test_conn();
+        let vfs = MockVaultFs::new();
+        let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
+        let target = store.create("wb_root", "Target", Some("body"), None).unwrap();
+        let _other = store.create("wb_root", "Other", Some("other"), None).unwrap();
+
+        let target_path: String = conn
+            .query_row(
+                "SELECT file_path FROM entities WHERE id = ?1",
+                [&target.id],
+                |r| r.get(0),
+            )
+            .unwrap();
+
+        let notes = store.query_by_file(&target_path).unwrap();
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0].id, target.id);
+        assert_eq!(notes[0].title, "Target");
     }
 
     #[test]

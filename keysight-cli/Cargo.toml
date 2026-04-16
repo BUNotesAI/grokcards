@@ -1,0 +1,18 @@
+[package]
+name = "keysight-cli"
+version = "0.1.0"
+edition = "2024"
+description = "keysight 查询 CLI。Phase 6.1 含 11 query 命令(直连 SQLite READ_ONLY)+ 2 deferred 命令(weak-list / graph-get-bounds,返 exit 2)"
+
+[[bin]]
+name = "keysight-cli"
+path = "src/main.rs"
+
+# spec v2 allowlist(严格):禁 tauri / axum / tokio / reqwest
+[dependencies]
+keysight-core = { path = "../keysight-core" }
+clap = { version = "4", features = ["derive"] }
+toml = "0.8"
+rusqlite = { version = "0.33", features = ["bundled"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
