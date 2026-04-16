@@ -1,13 +1,17 @@
-//! 13 query 命令 handler(11 live + 2 deferred)。
+//! CLI 命令 handlers。
 //!
-//! 每个 live handler 接 `&SqliteReadClient` 和命令参数,调 keysight-core domain fn
-//! 完成查询,然后 println! 格式化输出。deferred handler 直接返 `CliError::NotImplemented`。
+//! **Query(Phase 6.1)**:`&SqliteReadClient` + keysight-core domain fn,println! 格式化输出。
+//! **Mutate(Phase 6.2a)**:`&dyn WriteClient` + POST /rpc,构造 JSON params 透传给 server。
+//! **Deferred**:直接返 `CliError::NotImplemented`,不构造任何 client。
+//!
+//! CLI 薄交互层约束(task rule 9):mutate handler **不做业务校验 / id 生成 / enum parse**,
+//! 所有业务规则由 server 侧 `MutateParams` dispatcher 判定(Phase 6.2b)。
 
 use keysight_core::domain::card::{CardStore, SqliteCardStore};
 use keysight_core::domain::note::{self, NoteStore, SqliteNoteStore};
 use keysight_core::domain::overview;
 
-use crate::client::SqliteReadClient;
+use crate::client::{SqliteReadClient, WriteClient};
 use crate::errors::CliError;
 
 // ========== 11 live 查询命令 ==========
@@ -130,7 +134,175 @@ pub fn graph_note(client: &SqliteReadClient, id: &str, _wb: &str) -> Result<(), 
     Ok(())
 }
 
-// ========== 2 deferred 命令 ==========
+// ========== 9 live mutate 命令(Phase 6.2a)==========
+//
+// 所有 signature 用 `&dyn WriteClient`(trait-first)—— commands 层测试可 mock,
+// 和 HttpClient 具体实现解耦。main.rs `dispatch_graph_mutate` 传 `&HttpClient`,
+// Rust auto-coerce 到 `&dyn WriteClient`,调用侧无额外负担。
+
+/// 创建 section — POST `/rpc` `{ method: "mutate", params: { kind: "section-create", wb, title, color? } }`
+pub fn graph_section_create(
+    client: &dyn WriteClient,
+    wb: &str,
+    title: &str,
+    color: Option<&str>,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "section-create",
+        "wb": wb,
+        "title": title,
+        "color": color,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("section-create OK: {}", result);
+    Ok(())
+}
+
+/// 创建 note
+pub fn graph_note_create(
+    client: &dyn WriteClient,
+    wb: &str,
+    title: &str,
+    content: Option<&str>,
+    color: Option<&str>,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "note-create",
+        "wb": wb,
+        "title": title,
+        "content": content,
+        "color": color,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("note-create OK: {}", result);
+    Ok(())
+}
+
+/// 更新 note
+pub fn graph_note_update(
+    client: &dyn WriteClient,
+    id: &str,
+    title: Option<&str>,
+    content: Option<&str>,
+    color: Option<&str>,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "note-update",
+        "id": id,
+        "title": title,
+        "content": content,
+        "color": color,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("note-update OK: {}", result);
+    Ok(())
+}
+
+/// 创建 card alias
+pub fn graph_alias_create(
+    client: &dyn WriteClient,
+    wb: &str,
+    card_id: &str,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "alias-create",
+        "wb": wb,
+        "card_id": card_id,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("alias-create OK: {}", result);
+    Ok(())
+}
+
+/// 设置 entity 位置
+pub fn graph_set_pos(
+    client: &dyn WriteClient,
+    wb: &str,
+    entity_id: &str,
+    x: f64,
+    y: f64,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "set-pos",
+        "wb": wb,
+        "entity_id": entity_id,
+        "x": x,
+        "y": y,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("set-pos OK: {}", result);
+    Ok(())
+}
+
+/// 连接两个 entity(from → to)。edge_type 透传字符串,server 侧 `user_draw_edge` parse
+pub fn graph_connect(
+    client: &dyn WriteClient,
+    from: &str,
+    to: &str,
+    edge_type: &str,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "connect",
+        "from": from,
+        "to": to,
+        "edge_type": edge_type,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("connect OK: {}", result);
+    Ok(())
+}
+
+/// 断开两个 entity。edge_type 透传字符串(domain `EntityGraph::disconnect` 本身就是 stringly-typed)
+pub fn graph_disconnect(
+    client: &dyn WriteClient,
+    from: &str,
+    to: &str,
+    edge_type: &str,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "disconnect",
+        "from": from,
+        "to": to,
+        "edge_type": edge_type,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("disconnect OK: {}", result);
+    Ok(())
+}
+
+/// 添加成员到 section
+pub fn graph_section_add(
+    client: &dyn WriteClient,
+    section_id: &str,
+    entity_id: &str,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "section-add",
+        "section_id": section_id,
+        "entity_id": entity_id,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("section-add OK: {}", result);
+    Ok(())
+}
+
+/// 移动 section 到另一个 whiteboard
+pub fn graph_section_move(
+    client: &dyn WriteClient,
+    section_id: &str,
+    target_wb: &str,
+) -> Result<(), CliError> {
+    let params = serde_json::json!({
+        "kind": "section-move",
+        "section_id": section_id,
+        "target_wb": target_wb,
+    });
+    let result = client.post_rpc("mutate", params)?;
+    println!("section-move OK: {}", result);
+    Ok(())
+}
+
+// ========== 4 deferred 命令(Phase 6.1:weak-list / graph get-bounds;Phase 6.2a:weak-add / weak-remove)==========
 
 pub fn weak_list(_id: Option<&str>) -> Result<(), CliError> {
     Err(CliError::NotImplemented {
@@ -143,6 +315,22 @@ pub fn graph_get_bounds(_section: &str) -> Result<(), CliError> {
     Err(CliError::NotImplemented {
         command: "graph get-bounds",
         reason: "requires layout subsystem port (compute_bounds + estimate_card_height)",
+    })
+}
+
+/// Phase 6.2a deferred —— 同 weak-list structural gap(schema 级缺失)
+pub fn weak_add_deferred() -> Result<(), CliError> {
+    Err(CliError::NotImplemented {
+        command: "weak-add",
+        reason: "requires weak-link metadata schema (target_path/title/anchor/reason columns)",
+    })
+}
+
+/// Phase 6.2a deferred —— 同 weak-list structural gap
+pub fn weak_remove_deferred() -> Result<(), CliError> {
+    Err(CliError::NotImplemented {
+        command: "weak-remove",
+        reason: "requires weak-link metadata schema (target_path/title/anchor/reason columns)",
     })
 }
 
@@ -187,6 +375,34 @@ mod tests {
             }
             other => panic!(
                 "expected Err(CliError::NotImplemented {{ command: \"graph get-bounds\", .. }}), got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Phase 6.2a deferred 契约锁(同 weak-list pattern,schema 级 structural gap)
+    #[test]
+    fn test_weak_add_returns_not_implemented_error() {
+        match weak_add_deferred() {
+            Err(CliError::NotImplemented { command, .. }) => {
+                assert_eq!(command, "weak-add");
+            }
+            other => panic!(
+                "expected Err(CliError::NotImplemented {{ command: \"weak-add\", .. }}), got {:?}",
+                other
+            ),
+        }
+    }
+
+    /// Phase 6.2a deferred 契约锁
+    #[test]
+    fn test_weak_remove_returns_not_implemented_error() {
+        match weak_remove_deferred() {
+            Err(CliError::NotImplemented { command, .. }) => {
+                assert_eq!(command, "weak-remove");
+            }
+            other => panic!(
+                "expected Err(CliError::NotImplemented {{ command: \"weak-remove\", .. }}), got {:?}",
                 other
             ),
         }

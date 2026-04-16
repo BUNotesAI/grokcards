@@ -8,7 +8,7 @@ description = "keysight 查询 CLI。Phase 6.1 含 11 query 命令(直连 SQLite
 name = "keysight-cli"
 path = "src/main.rs"
 
-# spec v2 allowlist(严格):禁 tauri / axum / tokio / reqwest
+# spec v2 allowlist(严格):禁 tauri / axum / tokio。reqwest **仅** rustls-tls + blocking + json(Phase 6.2a 起引入)
 [dependencies]
 keysight-core = { path = "../keysight-core" }
 clap = { version = "4", features = ["derive"] }
@@ -16,3 +16,7 @@ toml = "0.8"
 rusqlite = { version = "0.33", features = ["bundled"] }
 anyhow = "1"
 serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+# reqwest features 严格 allowlist:default-features 关掉,避免 OpenSSL(default-tls);
+# 禁带 cookies / gzip / brotli / multipart(本 CLI 不需要)
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "blocking", "json"] }

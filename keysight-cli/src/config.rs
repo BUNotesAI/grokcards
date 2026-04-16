@@ -46,9 +46,12 @@ pub fn load_config(
 /// Tauri app bundle identifier(来自 `src-tauri/tauri.conf.json` `identifier` 字段)。
 /// **必须与 Tauri 保持一致**—— server 用 `app.path().app_data_dir()` 发布 `cli-config.toml`,
 /// macOS 解析为 `~/Library/Application Support/{identifier}`,CLI 默认路径必须撞上。
-const APP_IDENTIFIER: &str = "co.bunotes.super-tauri";
+///
+/// Phase 6.2a 提升到 `pub(crate)` —— `endpoint.rs` 复用,避免两处硬编码漂移。
+pub(crate) const APP_IDENTIFIER: &str = "co.bunotes.super-tauri";
 
-fn resolve_app_data_dir(override_path: Option<&Path>) -> Result<PathBuf, CliError> {
+/// Phase 6.2a 提升到 `pub(crate)` —— `endpoint.rs::load_endpoint` 复用同一解析逻辑。
+pub(crate) fn resolve_app_data_dir(override_path: Option<&Path>) -> Result<PathBuf, CliError> {
     if let Some(p) = override_path {
         return Ok(p.to_path_buf());
     }
