@@ -35,7 +35,7 @@ CREATE TABLE file_mtimes (filePath TEXT PRIMARY KEY, mtime REAL NOT NULL);
 const VALID_POSITION_PREFIXES: &[&str] = &["card_", "sec_", "note_", "alias_"];
 
 /// 从旧 DB (v1 schema) 读取数据的行为契约。
-pub(in crate::modules::keysight) trait LegacyReader {
+pub trait LegacyReader {
     /// 读取所有 insights 行。
     fn read_insights(&self) -> Result<Vec<LegacyInsight>, KeysightError>;
     /// 读取指定白板的 sections。
@@ -51,7 +51,7 @@ pub(in crate::modules::keysight) trait LegacyReader {
 }
 
 /// 从旧 SQLite DB 读取的 LegacyReader 实现。
-pub(in crate::modules::keysight) struct SqliteLegacyReader<'a> {
+pub struct SqliteLegacyReader<'a> {
     conn: &'a Connection,
 }
 
@@ -235,7 +235,7 @@ impl<'a> LegacyReader for SqliteLegacyReader<'a> {
 }
 
 /// 将旧 DB 数据导入新 DB (v7 schema) 的行为契约。
-pub(in crate::modules::keysight) trait LegacyImporter {
+pub trait LegacyImporter {
     /// 从旧 DB 读取全部数据并写入新 DB。
     ///
     /// ## 执行效果
@@ -253,7 +253,7 @@ pub(in crate::modules::keysight) trait LegacyImporter {
 }
 
 /// 基于 SQLite 连接的 LegacyImporter 实现。
-pub(in crate::modules::keysight) struct SqliteLegacyImporter<'a> {
+pub struct SqliteLegacyImporter<'a> {
     conn: &'a Connection,
 }
 

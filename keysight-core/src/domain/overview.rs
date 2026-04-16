@@ -3,13 +3,13 @@ use std::collections::HashMap;
 
 use rusqlite::Connection;
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::StatsResponse;
-use crate::modules::keysight::models::{CardSummary, GraphOverviewResponse, WhiteboardOverview, WhiteboardSummary};
-use crate::modules::keysight::vault_fs::VaultFs;
+use crate::errors::KeysightError;
+use crate::models::StatsResponse;
+use crate::models::{CardSummary, GraphOverviewResponse, WhiteboardOverview, WhiteboardSummary};
+use crate::vault_fs::VaultFs;
 
 /// 查询各实体类型的数量统计。
-pub(in crate::modules::keysight) fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
+pub fn stats(conn: &Connection) -> Result<StatsResponse, KeysightError> {
     // 按 kind 分组统计
     let mut stmt = conn.prepare("SELECT kind, COUNT(*) FROM entities GROUP BY kind")?;
     let rows = stmt.query_map([], |r| {
@@ -47,7 +47,7 @@ pub(in crate::modules::keysight) fn stats(conn: &Connection) -> Result<StatsResp
 }
 
 /// 图谱总览 — 按白板聚合统计 + 卡片摘要。
-pub(in crate::modules::keysight) fn graph_overview(conn: &Connection) -> Result<GraphOverviewResponse, KeysightError> {
+pub fn graph_overview(conn: &Connection) -> Result<GraphOverviewResponse, KeysightError> {
     // 1. 所有白板
     let mut wb_stmt =
         conn.prepare("SELECT DISTINCT whiteboard_id FROM entities ORDER BY whiteboard_id")?;
@@ -127,7 +127,7 @@ pub(in crate::modules::keysight) fn graph_overview(conn: &Connection) -> Result<
 }
 
 /// 查询所有子白板的轻量统计（排除 wb_root）。
-pub(in crate::modules::keysight) fn list_whiteboards(
+pub fn list_whiteboards(
     conn: &Connection,
     fs: &dyn VaultFs,
 ) -> Result<Vec<WhiteboardSummary>, KeysightError> {
@@ -197,9 +197,9 @@ pub(in crate::modules::keysight) fn list_whiteboards(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::domain::sync;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::domain::sync;
+    use crate::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

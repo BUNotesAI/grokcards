@@ -3,7 +3,9 @@
 //! 实施 `vault/docs/project.spec.md` 定义的两条 MVP 规则:
 //!
 //! - R1: 每个 `#[tauri::command]` 必带 `#[specta::specta]`(IPC 类型安全生命线)
-//! - R2: `src-tauri/src/modules/**` 禁用 `.unwrap()` / `.expect()`,例外需 `// 例外:` 注释
+//! - R2: `src-tauri/src/modules/**` 与 `keysight-core/src/**` 禁用 `.unwrap()` / `.expect()`,
+//!       例外需 `// 例外:` 注释。business 代码在 task_dd9e57db Phase 1 里从 src-tauri
+//!       抽到 keysight-core workspace crate,R2 覆盖面跟随扩展
 //!
 //! 核心 fn `check_r1_specta_annotation` 与 `check_r2_no_unwrap_in_business` 同时被
 //! happy test(扫描真实 codebase)和 error test(内联 fixture 字符串)共享,满足
@@ -126,8 +128,30 @@ fn line_of(item: &ItemFn) -> u32 {
 /// 返回 `src-tauri/src/modules/` 下所有 `.rs` 文件的 (path, content) 对。
 /// 路径相对于 test 执行目录(cargo 设 CWD 为 `src-tauri/`)。
 pub fn walk_modules_dir() -> Vec<(PathBuf, String)> {
+    walk_rs_files(Path::new("src/modules"))
+}
+
+/// 返回 `keysight-core/src/` 下所有 `.rs` 文件的 (path, content) 对。
+/// 路径相对于 src-tauri CWD — 向上走到 workspace root 下的 keysight-core。
+/// task_dd9e57db Phase 1 之后,keysight 业务代码从 `src-tauri/src/modules/keysight/`
+/// 抽到 `keysight-core/src/`,R2 扫描范围同步扩展,保持"业务代码无裸 unwrap"的全局不变量。
+pub fn walk_keysight_core_dir() -> Vec<(PathBuf, String)> {
+    walk_rs_files(Path::new("../keysight-core/src"))
+}
+
+/// R2 所覆盖的全部业务模块文件:src-tauri/src/modules/** + keysight-core/src/**。
+/// R1(`#[tauri::command]` + `#[specta::specta]`)仅适用于 src-tauri/src/modules/,
+/// 因为 tauri::command 宏只会出现在 Tauri app crate 里。
+pub fn walk_business_modules() -> Vec<(PathBuf, String)> {
+    let mut out = walk_modules_dir();
+    out.extend(walk_keysight_core_dir());
+    out
+}
+
+/// 给定 base 目录(相对 CWD),递归返回所有 `.rs` 文件的 (path, content) 对。
+/// base 不存在时返回空,避免测试在新环境下硬崩。
+fn walk_rs_files(base: &Path) -> Vec<(PathBuf, String)> {
     let mut out = Vec::new();
-    let base = Path::new("src/modules");
     if !base.exists() {
         return out;
     }
@@ -281,8 +305,11 @@ pub fn check_r2_no_unwrap_in_business(
 
 #[test]
 fn test_no_unwrap_in_business_modules() {
-    let files = walk_modules_dir();
-    assert!(!files.is_empty(), "未找到任何 .rs 文件 —— 检查 CWD 是否为 src-tauri/");
+    let files = walk_business_modules();
+    assert!(
+        !files.is_empty(),
+        "未找到任何业务 .rs 文件 —— 检查 CWD 是否为 src-tauri/ 且 keysight-core 存在"
+    );
 
     let mut all_violations = Vec::new();
     for (path, source) in files {

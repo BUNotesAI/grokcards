@@ -335,7 +335,7 @@ pub struct QuestionEntity {
 /// `edges` 表一行的投影（DB 原始列 + 透明字符串字段），供 graph reader 返回原始边数据。
 ///
 /// 注意：本类型是 **DB 行 DTO**，不做类型安全校验；语义层面的「合法 Edge 组合」
-/// 由 [`crate::modules::keysight::domain::edge::Edge`] 判别联合表达。Phase A
+/// 由 [`crate::domain::edge::Edge`] 判别联合表达。Phase A
 /// 子阶段 2 会把 `EntityGraph::edges_from` / `edges_to` 的返回值从 `EdgeRow`
 /// 升级为 `Edge`（判别联合），届时本类型可能只保留为 bindings 兼容层或彻底删除。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]

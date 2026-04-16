@@ -1,13 +1,14 @@
 pub mod commands;
-pub mod models;
-pub mod state;
 
-mod db;
-mod domain;
-mod errors;
-mod id;
-mod parser;
-mod vault_fs;
+// 从 keysight-core re-export,保持 src-tauri 内部 use 路径不变:
+// - `crate::modules::keysight::domain::X` → 解析到 `keysight_core::domain::X`
+// - `crate::modules::keysight::{models, state, ...}` 同理
+// 原 src-tauri 里 `models` / `state` 是 `pub mod`,`db / domain / errors / id / parser / vault_fs`
+// 是 private mod;搬到 keysight-core 后全部变成 `pub mod`(跨 crate 可见),
+// 这里的 re-export 只是向后兼容 src-tauri 内部的已有 use 路径,不额外放宽 src-tauri 对外的 surface。
+// 只 re-export src-tauri 内部实际引用的 5 个 mod(mod.rs hook fn + commands.rs 用到)。
+// `errors` / `id` / `parser` 是 keysight-core 内部细节,src-tauri 不需要感知。
+pub use keysight_core::{db, domain, models, state, vault_fs};
 
 use crate::perf::lock_db;
 
@@ -72,7 +73,7 @@ pub fn cleanup_card_title_escapes(
 /// - 不修改未使用 legacy 语法的内容
 ///
 /// ## 幂等性
-/// 幂等：重复执行不会产生额外修改。
+/// 幂等:重复执行不会产生额外修改。
 pub fn migrate_toggle_syntax(
     conn: &rusqlite::Connection,
     vault_path: &std::path::Path,

@@ -2,10 +2,10 @@
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::id;
-use crate::modules::keysight::models::{Position, Subtask, TaskEntity, TaskStatus};
-use crate::modules::keysight::vault_fs::VaultFs;
+use crate::errors::KeysightError;
+use crate::id;
+use crate::models::{Position, Subtask, TaskEntity, TaskStatus};
+use crate::vault_fs::VaultFs;
 
 use super::sync;
 
@@ -18,7 +18,7 @@ use super::sync;
 /// Invariant: 非空、trim 后非空、不含 `/ \\ : * ? " < > |` 这些路径分隔/Windows 禁用字符。
 /// 构造只能通过 [`ProjectName::new`],构造后的 `as_str` 保证合法。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::modules::keysight) struct ProjectName(String);
+pub struct ProjectName(String);
 
 /// ProjectName 的最大长度(单个路径组件)。255 是大多数文件系统的上限,
 /// 但 project name 还要和 task_id + title 拼在同一层目录,留足余量设 100。
@@ -50,7 +50,7 @@ impl ProjectName {
     /// - 长度上限 [`PROJECT_NAME_MAX_LEN`] 字符
     ///
     /// P1-8 修复:之前只检查路径分隔符 + 自动 trim,对其余 filesystem 危险字符无防护。
-    pub(in crate::modules::keysight) fn new(value: &str) -> Result<Self, KeysightError> {
+    pub fn new(value: &str) -> Result<Self, KeysightError> {
         if value.is_empty() {
             return Err(KeysightError::InvalidProjectName("不能为空".to_string()));
         }
@@ -108,13 +108,13 @@ impl ProjectName {
     }
 
     /// 返回底层字符串切片,用于 SQL / 路径拼接。
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 
     /// 返回对应的 whiteboard_id(固定格式 `projects/{name}`,和 sync 的
     /// `derive_whiteboard_id` 反推规则对齐)。
-    pub(in crate::modules::keysight) fn whiteboard_id(&self) -> String {
+    pub fn whiteboard_id(&self) -> String {
         format!("projects/{}", self.0)
     }
 }
@@ -214,7 +214,7 @@ fn extract_keysight_err(e: rusqlite::Error) -> KeysightError {
 /// checklist 行,做单 block 替换 / 多 block 检测。Read path(`parse_task_checklist`)
 /// 扔掉 line_index 只返回 `Subtask`。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::modules::keysight) struct ParsedItem {
+pub struct ParsedItem {
     pub subtask: Subtask,
     /// 在 `body.split('\n')` 后的 0-based 行索引。
     pub line_index: usize,
@@ -223,7 +223,7 @@ pub(in crate::modules::keysight) struct ParsedItem {
 /// 解析 task body,返回 GFM checklist 项的 Subtask 列表(无位置信息)。
 ///
 /// 严格规则 `^- \[( |x|X)\] .+$`,详见模块头注释。不识别的行全部跳过。
-pub(in crate::modules::keysight) fn parse_task_checklist(body: &str) -> Vec<Subtask> {
+pub fn parse_task_checklist(body: &str) -> Vec<Subtask> {
     parse_task_checklist_with_positions(body)
         .into_iter()
         .map(|p| p.subtask)
@@ -234,7 +234,7 @@ pub(in crate::modules::keysight) fn parse_task_checklist(body: &str) -> Vec<Subt
 ///
 /// 返回的 `Vec<ParsedItem>` 按 body 行顺序升序,`line_index` 即在
 /// `body.split('\n')` 后的 0-based 索引。
-pub(in crate::modules::keysight) fn parse_task_checklist_with_positions(
+pub fn parse_task_checklist_with_positions(
     body: &str,
 ) -> Vec<ParsedItem> {
     body.split('\n')
@@ -318,7 +318,7 @@ fn render_checklist_line(item: &Subtask) -> String {
 ///   知道是哪个 task 出问题)
 /// - `old_body`: 当前 task body(通常来自 `current.content` merge base)
 /// - `new_subtasks`: TS 侧传来的新 subtasks 列表
-pub(in crate::modules::keysight) fn render_subtasks_into_body(
+pub fn render_subtasks_into_body(
     task_id: &str,
     old_body: &str,
     new_subtasks: &[Subtask],
@@ -409,7 +409,7 @@ const NODE_SPACING: f64 = 40.0;
 /// TODO(B3 P2): WhiteboardId newtype —— 参数 `whiteboard_id: &str` 仍是 stringly typed,
 /// plan 明确推迟到 Phase B3 P2(WhiteboardId newtype + `for_project` 构造器)。
 /// 仅有一个调用点 `task::create`,通过 `project.whiteboard_id()` 派生,入口类型安全。
-pub(in crate::modules::keysight) fn compute_position_below_bottommost(
+pub fn compute_position_below_bottommost(
     conn: &Connection,
     whiteboard_id: &str,
 ) -> Result<Position, KeysightError> {
@@ -539,7 +539,7 @@ fn render_task_markdown(
 // ============================================================================
 
 /// 按 id 查询单个 Task(跨 entities + task_fields 联合查询)。
-pub(in crate::modules::keysight) fn get(
+pub fn get(
     conn: &Connection,
     id: &str,
 ) -> Result<TaskEntity, KeysightError> {
@@ -572,7 +572,7 @@ pub(in crate::modules::keysight) fn get(
 }
 
 /// 查询指定白板的所有任务。
-pub(in crate::modules::keysight) fn query_all(
+pub fn query_all(
     conn: &Connection,
     whiteboard_id: &str,
 ) -> Result<Vec<TaskEntity>, KeysightError> {
@@ -609,7 +609,7 @@ pub(in crate::modules::keysight) fn query_all(
 /// 不按 status 分组(留给前端按 `task.status` 渲染)。V1 按 `e.title` ASC 排序
 /// (对齐 `query_all` 的现有行为),因为 entities 表当前没有 `created_at` 列。
 /// V2 如需"最新优先"排序再单独加 migration + 字段。
-pub(in crate::modules::keysight) fn query_kanban(
+pub fn query_kanban(
     conn: &Connection,
     project: Option<&ProjectName>,
 ) -> Result<Vec<TaskEntity>, KeysightError> {
@@ -661,7 +661,7 @@ pub(in crate::modules::keysight) fn query_kanban(
 }
 
 /// 按状态查询任务(返回 json,用于 command 层跨项目聚合视图)。
-pub(in crate::modules::keysight) fn by_status(
+pub fn by_status(
     conn: &Connection,
     status: &str,
 ) -> Result<Vec<serde_json::Value>, KeysightError> {
@@ -695,7 +695,7 @@ pub(in crate::modules::keysight) fn by_status(
 // ============================================================================
 
 /// Task 创建输入 —— 把可变 + 可选字段打包成一个结构体,避免 create 参数爆炸。
-pub(in crate::modules::keysight) struct TaskCreateInput<'a> {
+pub struct TaskCreateInput<'a> {
     pub title: &'a str,
     pub content: Option<&'a str>,
     pub status: TaskStatus,
@@ -704,7 +704,7 @@ pub(in crate::modules::keysight) struct TaskCreateInput<'a> {
 }
 
 /// Task 更新输入 —— None 字段保留 current 值,Some 字段覆盖。
-pub(in crate::modules::keysight) struct TaskUpdateInput<'a> {
+pub struct TaskUpdateInput<'a> {
     pub title: Option<&'a str>,
     pub content: Option<&'a str>,
     pub status: Option<TaskStatus>,
@@ -739,7 +739,7 @@ pub(in crate::modules::keysight) struct TaskUpdateInput<'a> {
 ///
 /// # 幂等性
 /// 非幂等 —— 每次调用生成新 task_id,产生新文件。
-pub(in crate::modules::keysight) fn create(
+pub fn create(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     project: &ProjectName,
@@ -794,7 +794,7 @@ pub(in crate::modules::keysight) fn create(
 ///
 /// # 幂等性
 /// 幂等 —— 同样的参数多次调用结果一致(包括 rename 路径)。
-pub(in crate::modules::keysight) fn update(
+pub fn update(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     id: &str,
@@ -881,7 +881,7 @@ pub(in crate::modules::keysight) fn update(
 ///
 /// # 幂等性
 /// 非幂等 —— 重复调用第二次找不到 task 返回 `NotFound`。
-pub(in crate::modules::keysight) fn delete(
+pub fn delete(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     id: &str,
@@ -942,8 +942,8 @@ pub(super) fn transition_status(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

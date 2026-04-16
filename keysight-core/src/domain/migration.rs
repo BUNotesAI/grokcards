@@ -2,10 +2,10 @@
 
 use rusqlite::{params, Connection};
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::ToggleSyntaxMigrationReport;
-use crate::modules::keysight::parser;
-use crate::modules::keysight::vault_fs::VaultFs;
+use crate::errors::KeysightError;
+use crate::models::ToggleSyntaxMigrationReport;
+use crate::parser;
+use crate::vault_fs::VaultFs;
 
 use super::sync;
 
@@ -23,7 +23,7 @@ use super::sync;
 ///
 /// ## 幂等性
 /// 幂等：再次执行不会产生额外修改。
-pub(in crate::modules::keysight) fn migrate_legacy_toggle_syntax(
+pub fn migrate_legacy_toggle_syntax(
     conn: &Connection,
     fs: &dyn VaultFs,
 ) -> Result<ToggleSyntaxMigrationReport, KeysightError> {
@@ -75,8 +75,8 @@ pub(in crate::modules::keysight) fn migrate_legacy_toggle_syntax(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

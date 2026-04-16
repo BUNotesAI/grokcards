@@ -1,11 +1,11 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::modules::keysight::domain::edge::EntityId;
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::id;
-use crate::modules::keysight::models::QuestionEntity;
-use crate::modules::keysight::vault_fs::VaultFs;
+use crate::domain::edge::EntityId;
+use crate::errors::KeysightError;
+use crate::id;
+use crate::models::QuestionEntity;
+use crate::vault_fs::VaultFs;
 
 use super::sync;
 
@@ -67,7 +67,7 @@ fn load_linked_targets(
     })
 }
 
-pub(in crate::modules::keysight) fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError> {
+pub fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError> {
     let mut question = conn.query_row(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, q.status, e.color \
          FROM entities e JOIN question_fields q ON e.id = q.entity_id \
@@ -103,7 +103,7 @@ pub(in crate::modules::keysight) fn get(conn: &Connection, id: &str) -> Result<Q
     Ok(question)
 }
 
-pub(in crate::modules::keysight) fn create(
+pub fn create(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     whiteboard_id: &str,
@@ -134,7 +134,7 @@ pub(in crate::modules::keysight) fn create(
     get(conn, &question_id)
 }
 
-pub(in crate::modules::keysight) fn update(
+pub fn update(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     id: &str,
@@ -185,7 +185,7 @@ pub(in crate::modules::keysight) fn update(
     Ok(())
 }
 
-pub(in crate::modules::keysight) fn sync_links_to_file(
+pub fn sync_links_to_file(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     id: &str,
@@ -213,7 +213,7 @@ pub(in crate::modules::keysight) fn sync_links_to_file(
     Ok(())
 }
 
-pub(in crate::modules::keysight) fn delete(
+pub fn delete(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
     id: &str,
@@ -239,7 +239,7 @@ pub(in crate::modules::keysight) fn delete(
 }
 
 /// 查询指定白板的所有问题。
-pub(in crate::modules::keysight) fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<QuestionEntity>, KeysightError> {
+pub fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<QuestionEntity>, KeysightError> {
     let mut stmt = conn.prepare(
         "SELECT e.id FROM entities e WHERE e.kind = 'question' AND e.whiteboard_id = ?1 ORDER BY e.title"
     )?;
@@ -394,9 +394,9 @@ fn yaml_list(items: &[String]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::domain::sync;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::domain::sync;
+    use crate::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

@@ -1,20 +1,20 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection};
 
-use crate::modules::keysight::domain::edge::EntityId;
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::id;
-use crate::modules::keysight::models::CardAlias;
+use crate::domain::edge::EntityId;
+use crate::errors::KeysightError;
+use crate::id;
+use crate::models::CardAlias;
 
 /// 别名存储契约。
-pub(in crate::modules::keysight) trait AliasStore {
+pub trait AliasStore {
     fn create(&self, whiteboard_id: &str, card_id: &str) -> Result<CardAlias, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn get(&self, id: &str) -> Result<CardAlias, KeysightError>;
     fn query_all(&self, whiteboard_id: &str) -> Result<Vec<CardAlias>, KeysightError>;
 }
 
-pub(in crate::modules::keysight) struct SqliteAliasStore<'a> {
+pub struct SqliteAliasStore<'a> {
     conn: &'a Connection,
 }
 
@@ -124,7 +124,7 @@ impl AliasStore for SqliteAliasStore<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
+    use crate::db::init_db;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -165,8 +165,8 @@ mod tests {
     fn test_get_alias_reads_question_and_task_linked_ids() {
         // Phase A 2b 防火墙验证:reader 穷尽 match EntityId 6 个 variant,
         // Alias→Question / Alias→Task 目标不再 silent drop
-        use crate::modules::keysight::domain::edge::{user_draw_edge, EntityId};
-        use crate::modules::keysight::domain::entity::{EntityGraph, SqliteEntityGraph};
+        use crate::domain::edge::{user_draw_edge, EntityId};
+        use crate::domain::entity::{EntityGraph, SqliteEntityGraph};
 
         let conn = test_conn();
         let store = SqliteAliasStore::new(&conn);

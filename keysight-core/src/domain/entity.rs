@@ -1,17 +1,17 @@
 #![allow(dead_code)]
 use rusqlite::Connection;
 
-use crate::modules::keysight::domain::edge::Edge;
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::{EdgeRow, EdgeType};
+use crate::domain::edge::Edge;
+use crate::errors::KeysightError;
+use crate::models::{EdgeRow, EdgeType};
 
 /// 实体图谱边操作契约。
-pub(in crate::modules::keysight) trait EntityGraph {
+pub trait EntityGraph {
     /// 按强类型 [`Edge`] 插入 edges 表。INSERT OR IGNORE — 重复连接幂等。
     ///
     /// 替代旧 `connect(from: &str, to: &str, edge_type: EdgeType, style, label)`
     /// 五参数逃生舱口。参数已经是合法 [`Edge`]，调用方通过
-    /// [`crate::modules::keysight::domain::edge::user_draw_edge`] 或直接构造
+    /// [`crate::domain::edge::user_draw_edge`] 或直接构造
     /// 变体拿到 Edge。style / label 统一写 NULL —— 旧 API 的这两个参数已整体
     /// 退役(TS 从未使用,生产代码从未设值,只有一条单测在测它们)。
     fn connect(&self, edge: &Edge) -> Result<(), KeysightError>;
@@ -36,7 +36,7 @@ pub(in crate::modules::keysight) trait EntityGraph {
     fn edges_to(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
 }
 
-pub(in crate::modules::keysight) struct SqliteEntityGraph<'a> {
+pub struct SqliteEntityGraph<'a> {
     conn: &'a Connection,
 }
 
@@ -110,8 +110,8 @@ impl EntityGraph for SqliteEntityGraph<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::domain::edge::{user_draw_edge, CardId, EntityId};
+    use crate::db::init_db;
+    use crate::domain::edge::{user_draw_edge, CardId, EntityId};
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use super::errors::KeysightError;
 
 /// 文件系统操作契约 — 测试时用 mock 替代真实文件系统。
-pub(in crate::modules::keysight) trait VaultFs {
+pub trait VaultFs {
     /// 读取 vault 内相对路径的文件内容。
     fn read_file(&self, relative_path: &str) -> Result<String, KeysightError>;
     /// 写入 vault 内相对路径的文件内容。
@@ -27,7 +27,7 @@ pub(in crate::modules::keysight) trait VaultFs {
 }
 
 /// 真实文件系统实现。
-pub(in crate::modules::keysight) struct RealVaultFs {
+pub struct RealVaultFs {
     vault_path: String,
 }
 
@@ -143,7 +143,7 @@ impl VaultFs for RealVaultFs {
 
 /// 测试用 mock 文件系统。
 #[cfg(test)]
-pub(super) struct MockVaultFs {
+pub struct MockVaultFs {
     files: std::cell::RefCell<std::collections::HashMap<String, String>>,
     mtimes: std::cell::RefCell<std::collections::HashMap<String, f64>>,
     dirs: std::cell::RefCell<std::collections::HashSet<String>>,

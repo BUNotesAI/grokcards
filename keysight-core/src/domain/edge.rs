@@ -122,7 +122,7 @@
 //! }
 //! ```
 
-use crate::modules::keysight::errors::KeysightError;
+use crate::errors::KeysightError;
 
 // ====================================================================
 // Newtype id：每类实体一个强类型 wrapper
@@ -130,7 +130,7 @@ use crate::modules::keysight::errors::KeysightError;
 
 /// Card 实体 id（DB prefix: `card_`）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct CardId(String);
+pub struct CardId(String);
 
 impl CardId {
     /// 仅限本文件内部使用的无校验构造入口，外部代码必须通过 [`EntityId::parse`] 进入
@@ -139,77 +139,77 @@ impl CardId {
     }
 
     /// 取出底层字符串表示，供 DB 参数绑定 / 日志使用
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// Note 实体 id（DB prefix: `note_`）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct NoteId(String);
+pub struct NoteId(String);
 
 impl NoteId {
     fn new_unchecked(raw: String) -> Self {
         Self(raw)
     }
 
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// Alias 实体 id（DB prefix: `alias_`）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct AliasId(String);
+pub struct AliasId(String);
 
 impl AliasId {
     fn new_unchecked(raw: String) -> Self {
         Self(raw)
     }
 
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// Section 实体 id（DB prefix: `sec_`）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct SectionId(String);
+pub struct SectionId(String);
 
 impl SectionId {
     fn new_unchecked(raw: String) -> Self {
         Self(raw)
     }
 
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// Question 实体 id（DB prefix: `q_`）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct QuestionId(String);
+pub struct QuestionId(String);
 
 impl QuestionId {
     fn new_unchecked(raw: String) -> Self {
         Self(raw)
     }
 
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
 
 /// Task 实体 id（DB prefix: `task_`）
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct TaskId(String);
+pub struct TaskId(String);
 
 impl TaskId {
     fn new_unchecked(raw: String) -> Self {
         Self(raw)
     }
 
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -232,7 +232,7 @@ impl TaskId {
 /// 子阶段 2 会补上构造入口：目前只在类型层存在，保证 [`Edge::CardSeeAlso`]
 /// 的 shape 是明确的外部引用而非 entity 引用。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) struct ObsidianLink(String);
+pub struct ObsidianLink(String);
 
 impl ObsidianLink {
     /// 仅限本文件内部使用的无校验构造入口。
@@ -244,7 +244,7 @@ impl ObsidianLink {
     }
 
     /// 取出底层字符串表示，供拼 obsidian URI / DB 参数绑定使用
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         &self.0
     }
 }
@@ -264,7 +264,7 @@ impl ObsidianLink {
 /// 这些变体时，**必须穷尽 match 所有 6 个 variant**，禁止用 `_` 通配 —— 这是
 /// 踩坑样例 1 的新防御核心。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub(in crate::modules::keysight) enum EntityId {
+pub enum EntityId {
     Card(CardId),
     Note(NoteId),
     Alias(AliasId),
@@ -280,7 +280,7 @@ impl EntityId {
     /// 已经保证是这一类实体，后缀的完整性由 DB schema 和写入路径保证，读侧不
     /// 重复校验。Prefix 之间互相不是前缀关系（`card_` / `note_` / `alias_` /
     /// `sec_` / `q_` / `task_`），匹配顺序无关。空字符串也归入 `UnknownPrefix("")`。
-    pub(in crate::modules::keysight) fn parse(s: &str) -> Result<Self, IdError> {
+    pub fn parse(s: &str) -> Result<Self, IdError> {
         if s.starts_with("card_") {
             Ok(Self::Card(CardId::new_unchecked(s.to_string())))
         } else if s.starts_with("note_") {
@@ -299,7 +299,7 @@ impl EntityId {
     }
 
     /// 取出底层字符串表示，供 DB 参数绑定 / 日志使用
-    pub(in crate::modules::keysight) fn as_str(&self) -> &str {
+    pub fn as_str(&self) -> &str {
         match self {
             Self::Card(id) => id.as_str(),
             Self::Note(id) => id.as_str(),
@@ -344,7 +344,7 @@ impl EntityId {
 /// - **`QuestionSeeAlso`** — question 不支持 obsidian 外部引用。
 /// - **`NoteRelated`** — Related 是 card 的独占能力（Related picker）。
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(in crate::modules::keysight) enum Edge {
+pub enum Edge {
     /// Card 到任意 entity 的 wiki 链接（DB: `link_to`）。
     ///
     /// 业务上 Card 的箭头可以指向 6 类 entity 中的任意一种。
@@ -397,10 +397,10 @@ impl Edge {
     /// 把 [`Edge`] 变体拆成 DB `edges` 表一行的三个核心字段:
     /// `(from_id_str, to_id_str, edge_type_str)`。
     ///
-    /// 子阶段 2 [`crate::modules::keysight::domain::entity::SqliteEntityGraph::connect`]
+    /// 子阶段 2 [`crate::domain::entity::SqliteEntityGraph::connect`]
     /// 调用本方法落 SQL。style / label 当前统一写 NULL(旧 API 的 style/label
     /// 参数已整体退役 —— TS 从未使用,生产代码从未设值)。
-    pub(in crate::modules::keysight) fn db_insert_values(&self) -> (&str, &str, &'static str) {
+    pub fn db_insert_values(&self) -> (&str, &str, &'static str) {
         match self {
             Self::CardLink { from, to } => (from.as_str(), to.as_str(), "link_to"),
             Self::CardRelated { from, to } => (from.as_str(), to.as_str(), "related"),
@@ -434,7 +434,7 @@ impl Edge {
 /// - `Edge::CardRelated` 由 commands 层直接构造（意图来自 Related picker UI）
 /// - `Edge::CardSeeAlso` / `Edge::NoteSeeAlso` 由 commands 层直接构造
 ///   （意图来自 SeeAlso 面板 UI，to 是 [`ObsidianLink`] 不是 [`EntityId`]）
-pub(in crate::modules::keysight) fn user_draw_edge(
+pub fn user_draw_edge(
     from: EntityId,
     to: EntityId,
 ) -> Result<Edge, KeysightError> {
@@ -458,7 +458,7 @@ pub(in crate::modules::keysight) fn user_draw_edge(
 
 /// id 边界 parse 时可能发生的错误
 #[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub(in crate::modules::keysight) enum IdError {
+pub enum IdError {
     /// 传入字符串不匹配任何已知 id prefix（含空字符串 —— 空字符串也归入此类）
     #[error("未知的 id prefix: {0:?}")]
     UnknownPrefix(String),

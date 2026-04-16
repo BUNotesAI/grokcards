@@ -1,0 +1,15 @@
+[package]
+name = "keysight-core"
+version = "0.1.0"
+edition = "2024"
+description = "keysight 业务逻辑:domain / db / parser / vault_fs / models / errors / id / state。纯 Rust,无 tauri 依赖;被 super-tauri app 与 keysight-cli 共享"
+
+[dependencies]
+rusqlite = { version = "0.33", features = ["bundled"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+chrono = { version = "0.4", features = ["serde"] }
+serde_yaml = "0.9"
+rand = "0.9"
+specta = { version = "=2.0.0-rc.24", features = [] }

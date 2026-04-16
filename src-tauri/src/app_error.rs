@@ -40,6 +40,26 @@ pub enum AppError {
     },
 }
 
+impl From<keysight_core::errors::KeysightError> for AppError {
+    fn from(e: keysight_core::errors::KeysightError) -> Self {
+        // MultiBlockChecklist 走独立的 AppError variant 保留结构化字段;
+        // 其他所有 KeysightError 变体 flatten 为 AppError::Keysight { message } 字符串
+        // (V1.2 若把 KeysightError 全面 typed through IPC,这一段可以整体换成嵌套传递)。
+        match e {
+            keysight_core::errors::KeysightError::MultiBlockChecklist {
+                task_id,
+                block_count,
+            } => AppError::MultiBlockChecklist {
+                task_id,
+                block_count,
+            },
+            other => AppError::Keysight {
+                message: other.to_string(),
+            },
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

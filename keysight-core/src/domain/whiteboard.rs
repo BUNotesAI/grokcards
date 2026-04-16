@@ -2,8 +2,8 @@
 
 use std::path::Path;
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::WhiteboardSummary;
+use crate::errors::KeysightError;
+use crate::models::WhiteboardSummary;
 
 fn validate_name(name: &str) -> Result<String, KeysightError> {
     let trimmed = name.trim();
@@ -19,7 +19,7 @@ fn validate_name(name: &str) -> Result<String, KeysightError> {
 }
 
 /// 在 vault 下创建一个空的 `whiteboard/{name}/` 子目录。
-pub(in crate::modules::keysight) fn create_folder(
+pub fn create_folder(
     vault_path: &Path,
     name: &str,
 ) -> Result<WhiteboardSummary, KeysightError> {

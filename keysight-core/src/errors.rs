@@ -1,10 +1,8 @@
 #![allow(dead_code)] // domain 模块逐步实现后自然消除
 
-use crate::app_error::AppError;
-
 /// KeySight 模块内部错误类型。
 #[derive(Debug, thiserror::Error)]
-pub(in crate::modules::keysight) enum KeysightError {
+pub enum KeysightError {
     #[error("标题不能为空")]
     EmptyTitle,
 
@@ -48,22 +46,7 @@ pub(in crate::modules::keysight) enum KeysightError {
     Database(#[from] rusqlite::Error),
 }
 
-impl From<KeysightError> for AppError {
-    fn from(e: KeysightError) -> Self {
-        // MultiBlockChecklist 走独立的 AppError variant 保留结构化字段;
-        // 其他所有 KeysightError 变体 flatten 为 AppError::Keysight { message } 字符串
-        // (V1.2 若把 KeysightError 全面 typed through IPC,这一段可以整体换成嵌套传递)。
-        match e {
-            KeysightError::MultiBlockChecklist {
-                task_id,
-                block_count,
-            } => AppError::MultiBlockChecklist {
-                task_id,
-                block_count,
-            },
-            other => AppError::Keysight {
-                message: other.to_string(),
-            },
-        }
-    }
-}
+// `impl From<KeysightError> for AppError` 搬到 src-tauri/src/app_error.rs
+// —— keysight-core 不知道 AppError(防止循环依赖:AppError 属于 Tauri app 的顶层错误类型,
+// keysight-core 不应感知上层壳)。按 Rust orphan rule,From impl 必须在 AppError 或
+// KeysightError 其中一个的 defining crate,这里选 src-tauri(AppError 那边)。

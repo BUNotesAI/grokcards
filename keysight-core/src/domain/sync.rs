@@ -3,11 +3,11 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::id;
-use crate::modules::keysight::models::{SyncFileResponse, SyncVaultReport};
-use crate::modules::keysight::parser;
-use crate::modules::keysight::vault_fs::VaultFs;
+use crate::errors::KeysightError;
+use crate::id;
+use crate::models::{SyncFileResponse, SyncVaultReport};
+use crate::parser;
+use crate::vault_fs::VaultFs;
 
 /// 将 markdown 文件内容同步到数据库。
 ///
@@ -20,7 +20,7 @@ use crate::modules::keysight::vault_fs::VaultFs;
 ///
 /// ## 幂等性
 /// 相同内容重复调用 → updated=1, inserted=0
-pub(in crate::modules::keysight) fn sync_file(
+pub fn sync_file(
     conn: &Connection,
     file_path: &str,
     content: &str,
@@ -234,7 +234,7 @@ pub(super) fn derive_whiteboard_id(file_path: &str) -> String {
 }
 
 /// 删除文件对应的实体及 mtime 记录。
-pub(in crate::modules::keysight) fn remove_file(conn: &Connection, file_path: &str) -> Result<(), KeysightError> {
+pub fn remove_file(conn: &Connection, file_path: &str) -> Result<(), KeysightError> {
     // 先查出该文件对应的 entity id，级联清理关联表
     let mut stmt = conn.prepare("SELECT id FROM entities WHERE file_path = ?1")?;
     let ids: Vec<String> = stmt
@@ -258,7 +258,7 @@ pub(in crate::modules::keysight) fn remove_file(conn: &Connection, file_path: &s
 }
 
 /// 查询所有文件的 mtime。
-pub(in crate::modules::keysight) fn all_file_mtimes(
+pub fn all_file_mtimes(
     conn: &Connection,
 ) -> Result<Vec<(String, f64)>, KeysightError> {
     let mut stmt = conn.prepare("SELECT filePath, mtime FROM file_mtimes")?;
@@ -283,7 +283,7 @@ pub(in crate::modules::keysight) fn all_file_mtimes(
 /// ## 不做的事
 /// - 不校验 id 是否已存在（sync_file 已判断）
 /// - 不重新格式化 frontmatter
-pub(in crate::modules::keysight) fn insert_id_into_frontmatter(
+pub fn insert_id_into_frontmatter(
     content: &str,
     id: &str,
 ) -> Result<String, KeysightError> {
@@ -316,7 +316,7 @@ pub(in crate::modules::keysight) fn insert_id_into_frontmatter(
 ///
 /// ## 幂等性
 /// 幂等 — mtime 未变的文件不重复同步
-pub(in crate::modules::keysight) fn sync_vault(
+pub fn sync_vault(
     conn: &Connection,
     fs: &dyn VaultFs,
 ) -> Result<SyncVaultReport, KeysightError> {
@@ -376,8 +376,8 @@ pub(in crate::modules::keysight) fn sync_vault(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

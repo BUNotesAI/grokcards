@@ -3,17 +3,17 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::Position;
+use crate::errors::KeysightError;
+use crate::models::Position;
 
 /// 位置管理契约。
-pub(in crate::modules::keysight) trait LayoutStore {
+pub trait LayoutStore {
     fn set_position(&self, whiteboard_id: &str, entity_id: &str, x: f64, y: f64) -> Result<(), KeysightError>;
     fn query_positions(&self, whiteboard_id: &str) -> Result<HashMap<String, Position>, KeysightError>;
     fn remove_position(&self, whiteboard_id: &str, entity_id: &str) -> Result<(), KeysightError>;
 }
 
-pub(in crate::modules::keysight) struct SqliteLayoutStore<'a> {
+pub struct SqliteLayoutStore<'a> {
     conn: &'a Connection,
 }
 
@@ -60,7 +60,7 @@ impl LayoutStore for SqliteLayoutStore<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
+    use crate::db::init_db;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

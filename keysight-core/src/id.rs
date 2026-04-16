@@ -8,12 +8,12 @@ fn gen_hex8() -> String {
     format!("{:08x}", n)
 }
 
-pub(super) fn gen_card_id() -> String { format!("card_{}", gen_hex8()) }
-pub(super) fn gen_sec_id() -> String { format!("sec_{}", gen_hex8()) }
-pub(super) fn gen_note_id() -> String { format!("note_{}", gen_hex8()) }
-pub(super) fn gen_alias_id() -> String { format!("alias_{}", gen_hex8()) }
-pub(super) fn gen_task_id() -> String { format!("task_{}", gen_hex8()) }
-pub(super) fn gen_question_id() -> String { format!("q_{}", gen_hex8()) }
+pub fn gen_card_id() -> String { format!("card_{}", gen_hex8()) }
+pub fn gen_sec_id() -> String { format!("sec_{}", gen_hex8()) }
+pub fn gen_note_id() -> String { format!("note_{}", gen_hex8()) }
+pub fn gen_alias_id() -> String { format!("alias_{}", gen_hex8()) }
+pub fn gen_task_id() -> String { format!("task_{}", gen_hex8()) }
+pub fn gen_question_id() -> String { format!("q_{}", gen_hex8()) }
 
 #[cfg(test)]
 mod tests {

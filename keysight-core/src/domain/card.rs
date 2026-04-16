@@ -4,14 +4,14 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::models::AtomicCard;
-use crate::modules::keysight::models::CardLinksResponse;
-use crate::modules::keysight::parser;
-use crate::modules::keysight::vault_fs::VaultFs;
+use crate::errors::KeysightError;
+use crate::models::AtomicCard;
+use crate::models::CardLinksResponse;
+use crate::parser;
+use crate::vault_fs::VaultFs;
 
 /// 卡片存储契约。
-pub(in crate::modules::keysight) trait CardStore {
+pub trait CardStore {
     /// 按 ID 查询单张卡片（含 tags、edges、card_fields）。
     fn get(&self, id: &str) -> Result<AtomicCard, KeysightError>;
     /// 查询所有卡片，按 mtime 降序，支持分页。
@@ -39,7 +39,7 @@ pub(in crate::modules::keysight) trait CardStore {
     fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError>;
 }
 
-pub(in crate::modules::keysight) struct SqliteCardStore<'a> {
+pub struct SqliteCardStore<'a> {
     conn: &'a Connection,
     vault_fs: Option<&'a dyn VaultFs>,
 }
@@ -66,7 +66,7 @@ impl<'a> SqliteCardStore<'a> {
             ..Default::default()
         })?;
         vault_fs.write_file(&card.file_path, &updated)?;
-        crate::modules::keysight::domain::sync::sync_file(
+        crate::domain::sync::sync_file(
             self.conn,
             &card.file_path,
             &updated,
@@ -299,7 +299,7 @@ fn rank_search_results(mut cards: Vec<AtomicCard>, text: &str) -> Vec<AtomicCard
 ///
 /// ## 关联操作
 /// - [`CardStore::edit_title`] — 用户主动编辑单张卡片标题
-pub(in crate::modules::keysight) fn cleanup_dirty_card_title_escapes(
+pub fn cleanup_dirty_card_title_escapes(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
 ) -> Result<usize, KeysightError> {
@@ -581,7 +581,7 @@ impl CardStore for SqliteCardStore<'_> {
             .unwrap_or_default()
             .as_secs_f64()
             * 1000.0;
-        crate::modules::keysight::domain::sync::sync_file(
+        crate::domain::sync::sync_file(
             self.conn,
             &file_path,
             &updated,
@@ -693,9 +693,9 @@ impl CardStore for SqliteCardStore<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::domain::sync;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::domain::sync;
+    use crate::vault_fs::MockVaultFs;
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();

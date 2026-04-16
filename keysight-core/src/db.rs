@@ -78,7 +78,7 @@ CREATE VIRTUAL TABLE IF NOT EXISTS entities_fts USING fts5(id UNINDEXED, title, 
 ";
 
 /// 初始化 keysight 模块的数据库表。可重复调用（IF NOT EXISTS）。
-pub(super) fn init_db(conn: &Connection) -> rusqlite::Result<()> {
+pub fn init_db(conn: &Connection) -> rusqlite::Result<()> {
     conn.execute_batch(SCHEMA_V7_SQL)
 }
 

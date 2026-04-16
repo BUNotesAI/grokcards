@@ -3,17 +3,17 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::{Connection, OptionalExtension};
 
-use crate::modules::keysight::domain::edge::EntityId;
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::id;
-use crate::modules::keysight::models::{GraphNote, NoteFileMigrationReport};
-use crate::modules::keysight::parser;
-use crate::modules::keysight::vault_fs::{RealVaultFs, VaultFs};
+use crate::domain::edge::EntityId;
+use crate::errors::KeysightError;
+use crate::id;
+use crate::models::{GraphNote, NoteFileMigrationReport};
+use crate::parser;
+use crate::vault_fs::{RealVaultFs, VaultFs};
 
 use super::sync;
 
 /// 笔记存储契约。
-pub(in crate::modules::keysight) trait NoteStore {
+pub trait NoteStore {
     fn create(&self, whiteboard_id: &str, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
@@ -21,7 +21,7 @@ pub(in crate::modules::keysight) trait NoteStore {
     fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphNote>, KeysightError>;
 }
 
-pub(in crate::modules::keysight) struct SqliteNoteStore<'a> {
+pub struct SqliteNoteStore<'a> {
     conn: &'a Connection,
     vault_fs: Option<&'a dyn VaultFs>,
 }
@@ -293,7 +293,7 @@ impl NoteStore for SqliteNoteStore<'_> {
 }
 
 /// 一次性把 DB-only note 导出为 `whiteboard/` 下的 markdown 文件，并同时备份 DB 与 whiteboard 目录。
-pub(in crate::modules::keysight) fn migrate_db_notes_to_files(
+pub fn migrate_db_notes_to_files(
     conn: &Connection,
     db_path: &Path,
     vault_path: &Path,
@@ -520,8 +520,8 @@ fn copy_dir_recursive(source: &Path, destination: &Path) -> Result<(), KeysightE
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::vault_fs::MockVaultFs;
+    use crate::db::init_db;
+    use crate::vault_fs::MockVaultFs;
     use rusqlite::params;
 
     fn test_conn() -> Connection {
@@ -810,8 +810,8 @@ mod tests {
     fn test_get_note_reads_question_and_task_linked_ids() {
         // Phase A 2b 防火墙验证:reader 穷尽 match EntityId 6 个 variant,
         // Note→Question / Note→Task 目标不再 silent drop(踩坑样例 1 的回归锁)
-        use crate::modules::keysight::domain::edge::{user_draw_edge, EntityId};
-        use crate::modules::keysight::domain::entity::{EntityGraph, SqliteEntityGraph};
+        use crate::domain::edge::{user_draw_edge, EntityId};
+        use crate::domain::entity::{EntityGraph, SqliteEntityGraph};
 
         let conn = test_conn();
         let vfs = MockVaultFs::new();

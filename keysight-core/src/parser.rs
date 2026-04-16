@@ -3,7 +3,7 @@
 use serde::Deserialize;
 use serde::Serialize;
 
-use crate::modules::keysight::errors::KeysightError;
+use crate::errors::KeysightError;
 
 /// 已知的实体类型。
 const KNOWN_TYPES: &[&str] = &["atomic-card", "note", "project-task", "question"];
@@ -46,7 +46,7 @@ struct RawEntityFrontmatter {
 /// parse_entity 的输出。
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
-pub(super) struct ParsedEntity {
+pub struct ParsedEntity {
     pub entity_type: String,
     pub id: Option<String>,
     pub title: String,
@@ -66,7 +66,7 @@ pub(super) struct ParsedEntity {
 
 /// frontmatter 更新请求。
 #[derive(Debug, Default)]
-pub(super) struct FrontmatterUpdate {
+pub struct FrontmatterUpdate {
     pub id: Option<String>,
     pub link_to: Option<Vec<String>>,
     pub related: Option<Vec<String>>,
@@ -75,7 +75,7 @@ pub(super) struct FrontmatterUpdate {
 }
 
 /// 提取 --- 之间的 YAML frontmatter 文本。
-pub(super) fn extract_frontmatter(markdown: &str) -> Option<String> {
+pub fn extract_frontmatter(markdown: &str) -> Option<String> {
     let trimmed = markdown.trim_start();
     if !trimmed.starts_with("---") {
         return None;
@@ -86,7 +86,7 @@ pub(super) fn extract_frontmatter(markdown: &str) -> Option<String> {
 }
 
 /// 返回 frontmatter 之后的文本。
-pub(super) fn skip_frontmatter(markdown: &str) -> &str {
+pub fn skip_frontmatter(markdown: &str) -> &str {
     let trimmed = markdown.trim_start();
     if !trimmed.starts_with("---") {
         return markdown;
@@ -134,7 +134,7 @@ fn extract_title_and_body(text: &str) -> (String, String) {
 /// 规则：
 /// - 仅移除 `\` + 单个 ASCII 标点的转义
 /// - `*` 和 `\` 不处理，避免破坏 `**bold**` 定界符、`\\`、`\\*` 等字面内容
-pub(super) fn normalize_title_markdown_escapes(title: &str) -> String {
+pub fn normalize_title_markdown_escapes(title: &str) -> String {
     let mut normalized = String::with_capacity(title.len());
     let mut chars = title.chars().peekable();
 
@@ -164,7 +164,7 @@ pub(super) fn normalize_title_markdown_escapes(title: &str) -> String {
 }
 
 /// 把历史 `<details><summary>...</summary>...</details>` 规范化成 `?>> / ?<<`。
-pub(super) fn normalize_legacy_toggle_syntax(markdown: &str) -> String {
+pub fn normalize_legacy_toggle_syntax(markdown: &str) -> String {
     let lines: Vec<&str> = markdown.lines().collect();
     let mut result = Vec::with_capacity(lines.len());
     let had_trailing_newline = markdown.ends_with('\n');
@@ -230,7 +230,7 @@ pub(super) fn normalize_legacy_toggle_syntax(markdown: &str) -> String {
 }
 
 /// 解析 markdown 文件为多类型实体。
-pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
+pub fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
     let fm_str = extract_frontmatter(markdown)?;
     let raw: RawEntityFrontmatter = serde_yaml::from_str(&fm_str).ok()?;
 
@@ -278,7 +278,7 @@ pub(super) fn parse_entity(markdown: &str) -> Option<ParsedEntity> {
 }
 
 /// 修改 frontmatter 并返回完整 markdown。
-pub(super) fn write_frontmatter(
+pub fn write_frontmatter(
     markdown: &str,
     updates: FrontmatterUpdate,
 ) -> Result<String, KeysightError> {
@@ -337,7 +337,7 @@ pub(super) fn write_frontmatter(
 /// 返回 `KeysightError::ParseError` 当:
 /// - frontmatter 不是合法 YAML(防止静默吞掉其他字段 → 数据丢失)
 /// - 序列化回 YAML 失败(理论不可能,但保持对称)
-pub(super) fn write_color_frontmatter(
+pub fn write_color_frontmatter(
     markdown: &str,
     color: &str,
 ) -> Result<String, KeysightError> {

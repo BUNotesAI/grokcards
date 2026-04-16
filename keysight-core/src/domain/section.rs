@@ -1,12 +1,12 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection};
 
-use crate::modules::keysight::errors::KeysightError;
-use crate::modules::keysight::id;
-use crate::modules::keysight::models::GraphSection;
+use crate::errors::KeysightError;
+use crate::id;
+use crate::models::GraphSection;
 
 /// 分组存储契约。
-pub(in crate::modules::keysight) trait SectionStore {
+pub trait SectionStore {
     fn create(&self, whiteboard_id: &str, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn update(&self, id: &str, title: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
@@ -17,7 +17,7 @@ pub(in crate::modules::keysight) trait SectionStore {
     fn move_to_whiteboard(&self, section_id: &str, target_whiteboard_id: &str) -> Result<(), KeysightError>;
 }
 
-pub(in crate::modules::keysight) struct SqliteSectionStore<'a> {
+pub struct SqliteSectionStore<'a> {
     conn: &'a Connection,
 }
 
@@ -177,8 +177,8 @@ impl SectionStore for SqliteSectionStore<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::modules::keysight::db::init_db;
-    use crate::modules::keysight::domain::entity::{EntityGraph, SqliteEntityGraph};
+    use crate::db::init_db;
+    use crate::domain::entity::{EntityGraph, SqliteEntityGraph};
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
