@@ -143,6 +143,7 @@ impl VaultFs for RealVaultFs {
 
 /// 测试用 mock 文件系统。
 #[cfg(test)]
+#[derive(Default)]
 pub struct MockVaultFs {
     files: std::cell::RefCell<std::collections::HashMap<String, String>>,
     mtimes: std::cell::RefCell<std::collections::HashMap<String, f64>>,

@@ -4,8 +4,8 @@
 //!
 //! - R1: 每个 `#[tauri::command]` 必带 `#[specta::specta]`(IPC 类型安全生命线)
 //! - R2: `src-tauri/src/modules/**` 与 `keysight-core/src/**` 禁用 `.unwrap()` / `.expect()`,
-//!       例外需 `// 例外:` 注释。business 代码在 task_dd9e57db Phase 1 里从 src-tauri
-//!       抽到 keysight-core workspace crate,R2 覆盖面跟随扩展
+//!   例外需 `// 例外:` 注释。business 代码在 task_dd9e57db Phase 1 里从 src-tauri
+//!   抽到 keysight-core workspace crate,R2 覆盖面跟随扩展
 //!
 //! 核心 fn `check_r1_specta_annotation` 与 `check_r2_no_unwrap_in_business` 同时被
 //! happy test(扫描真实 codebase)和 error test(内联 fixture 字符串)共享,满足
