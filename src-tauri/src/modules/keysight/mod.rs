@@ -1,5 +1,11 @@
 pub mod commands;
 
+// Phase 3 新增基础设施模块(`pub(super)`,限 keysight 模块内;Phase 4 http_server.rs
+// 作为兄弟能访问)
+pub(super) mod config_file;
+pub(super) mod endpoint_file;
+pub(super) mod server_state;
+
 // 从 keysight-core re-export,保持 src-tauri 内部 use 路径不变:
 // - `crate::modules::keysight::domain::X` → 解析到 `keysight_core::domain::X`
 // - `crate::modules::keysight::{models, state, ...}` 同理
