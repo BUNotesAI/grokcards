@@ -161,13 +161,16 @@ pub fn run() {
 
     let todo_conn = init_todo_database();
 
-    tauri::Builder::default()
+    let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .manage(Mutex::new(todo_conn))
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             let _t_setup = ScopedTimer::new("setup hook total");
             let keysight_state = init_keysight_state(app);
+            let db_path = keysight_state.db_path.clone();
+            let vault_path = keysight_state.vault_path.clone();
+            let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
             app.manage(keysight_state);
 
             // 启动时全量同步 vault → DB
@@ -183,11 +186,29 @@ pub fn run() {
                 }
             }
 
+            // Phase 4: HTTP IPC server + endpoint 发布(design-v4 §3.5 启动序列 step 3-5)
+            {
+                let _t = ScopedTimer::new("http_server::start");
+                let server_state = tauri::async_runtime::block_on(
+                    modules::keysight::start_http_server(&data_dir, &db_path, &vault_path),
+                )
+                .expect("keysight HTTP IPC server 启动失败");
+                app.manage(Mutex::new(Some(server_state)));
+            }
+
             builder.mount_events(app);
             Ok(())
         })
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // design-v4 §3.6 关闭序列 —— ExitRequested 是真正的 app 退出信号
+    // (对齐 rp-codex review:CloseRequested 可被 prevent,不适合 once-and-only-once 的 shutdown)
+    tauri_app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            modules::keysight::shutdown(app_handle);
+        }
+    });
 }
 
 #[cfg(test)]

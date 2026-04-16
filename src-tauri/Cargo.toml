@@ -34,8 +34,12 @@ rand = "0.9"
 # task_dd9e57db Phase 3 新增(spec v2 allowlist):
 # - tokio: ServerState 的 oneshot::Sender + JoinHandle;Phase 3 只定义 struct,Phase 4 启 axum 时扩 features
 # - toml: cli-config.toml / cli-endpoint.toml 序列化
-tokio = { version = "1", features = ["sync", "rt"] }
+tokio = { version = "1", features = ["sync", "rt", "rt-multi-thread", "macros", "time", "net"] }
 toml = "0.8"
+# Phase 4:HTTP IPC server
+axum = "0.8"
+tower = "0.5"
+subtle = "2"
 
 [dev-dependencies]
 syn = { version = "2", features = ["full", "extra-traits"] }

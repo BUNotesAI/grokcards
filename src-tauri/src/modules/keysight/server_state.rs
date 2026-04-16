@@ -19,8 +19,9 @@ use super::endpoint_file::EndpointFileGuard;
 /// 3. `timeout(5s, join_handle).await` —— 等现有 in-flight handler 完成
 /// 4. `drop(endpoint_guard)` —— RAII 兜底(step 1 正常完成后为 noop;panic / crash
 ///    path 生效)
-#[allow(dead_code)] // Phase 4 wiring
-pub(super) struct ServerState {
+// `ServerState` 本身 `pub(crate)`,让 lib.rs 的 setup hook 能 `app.manage(Mutex<Option<Self>>)`;
+// 字段保持 `pub(super)`,只在 keysight 模块内 destructure(`modules::keysight::shutdown` 里)。
+pub(crate) struct ServerState {
     pub(super) shutdown_tx: oneshot::Sender<()>,
     pub(super) join_handle: JoinHandle<Result<(), ServerError>>,
     pub(super) local_addr: SocketAddr,
@@ -28,9 +29,9 @@ pub(super) struct ServerState {
 }
 
 /// axum server 运行时错误类型。Phase 4 补齐 variant(bind fail / hyper error 等)。
-#[allow(dead_code)] // Phase 4 wiring
+#[allow(dead_code)] // Phase 4 wiring:当前只有 Io variant,Phase 6+ 扩 bind/hyper error
 #[derive(Debug, thiserror::Error)]
-pub(super) enum ServerError {
+pub(crate) enum ServerError {
     #[error("server IO error: {0}")]
     Io(#[from] std::io::Error),
 }

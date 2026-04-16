@@ -4,7 +4,8 @@ pub mod commands;
 // 作为兄弟能访问)
 pub(super) mod config_file;
 pub(super) mod endpoint_file;
-pub(super) mod server_state;
+pub(super) mod http_server;
+pub(crate) mod server_state;
 
 // 从 keysight-core re-export,保持 src-tauri 内部 use 路径不变:
 // - `crate::modules::keysight::domain::X` → 解析到 `keysight_core::domain::X`
@@ -16,11 +17,77 @@ pub(super) mod server_state;
 // `errors` / `id` / `parser` 是 keysight-core 内部细节,src-tauri 不需要感知。
 pub use keysight_core::{db, domain, models, state, vault_fs};
 
+use std::sync::Mutex;
+
 use crate::perf::lock_db;
 
 /// 初始化 keysight 模块的数据库表。
 pub fn init(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
     db::init_db(conn)
+}
+
+/// 启动 HTTP IPC server + 发布 cli-config.toml / cli-endpoint.toml 两文件。
+///
+/// 供 lib.rs setup 阶段调用(`tauri::async_runtime::block_on` 包装)。
+/// 返回的 `ServerState` 要被 `app.manage(Mutex::new(Some(server_state)))` 以
+/// 支持 `shutdown(app_handle)` 的 take-by-value 顺序契约。
+pub(crate) async fn start_http_server(
+    data_dir: &std::path::Path,
+    db_path: &std::path::Path,
+    vault_path: &std::path::Path,
+) -> std::io::Result<server_state::ServerState> {
+    let server_state = http_server::start(data_dir, db_path, vault_path).await?;
+    eprintln!(
+        "[keysight] HTTP IPC server listening on {}",
+        server_state.local_addr
+    );
+    Ok(server_state)
+}
+
+/// 4 步 shutdown 顺序契约(design-v4 D2-a):
+///
+/// 1. `endpoint_guard.invalidate_atomic()` —— 文件系统级原子删除 cli-endpoint.toml
+/// 2. `shutdown_tx.send(())` —— axum graceful shutdown signal
+/// 3. `timeout(5s, join_handle).await` —— 等 in-flight handler 完成
+/// 4. `drop(endpoint_guard)` —— RAII 兜底(step 1 正常完成后为 noop)
+///
+/// 在 Tauri `RunEvent::ExitRequested` 回调里调用。本 fn 把 `ServerState` 字段的
+/// destructure 封装在 keysight 模块内,保持 `pub(super)` 字段窄接口不外泄到 crate root。
+pub(crate) fn shutdown(app_handle: &tauri::AppHandle) {
+    use tauri::Manager;
+
+    let state = app_handle.state::<Mutex<Option<server_state::ServerState>>>();
+    let mut guard = match state.lock() {
+        Ok(g) => g,
+        // 例外: Mutex poisoning 不可恢复,shutdown 是 best-effort 路径
+        Err(poison) => poison.into_inner(),
+    };
+    let Some(srv) = guard.take() else {
+        return; // 已经 shutdown 过或从未启动
+    };
+
+    let server_state::ServerState {
+        shutdown_tx,
+        join_handle,
+        endpoint_guard,
+        local_addr: _,
+    } = srv;
+
+    // Step 1: 文件系统级原子删除 cli-endpoint.toml
+    if let Err(e) = endpoint_guard.invalidate_atomic() {
+        eprintln!("[keysight] shutdown step 1 invalidate_atomic failed: {e}");
+    }
+
+    // Step 2: 向 axum server task 发 graceful shutdown signal
+    let _ = shutdown_tx.send(());
+
+    // Step 3: 等现有 in-flight handler 完成(5s timeout)
+    let _ = tauri::async_runtime::block_on(async {
+        tokio::time::timeout(std::time::Duration::from_secs(5), join_handle).await
+    });
+
+    // Step 4: 显式 drop —— step 1 正常完成后 Drop 是幂等 noop;crash path 兜底
+    drop(endpoint_guard);
 }
 
 /// 启动时同步 vault 到 DB。
