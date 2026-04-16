@@ -31,6 +31,7 @@ use crate::perf::{lock_db, ScopedTimer};
 #[tauri::command]
 #[specta::specta]
 pub fn card_get(state: State<'_, KeysightState>, id: String) -> Result<AtomicCard, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
     store.get(&id).map_err(Into::into)
@@ -57,6 +58,7 @@ pub fn card_query_by_file(
     state: State<'_, KeysightState>,
     file_path: String,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
     store.query_by_file(&file_path).map_err(Into::into)
@@ -69,6 +71,7 @@ pub fn card_query_by_ids(
     state: State<'_, KeysightState>,
     ids: Vec<String>,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
     store.query_by_ids(&ids).map_err(Into::into)
@@ -78,6 +81,7 @@ pub fn card_query_by_ids(
 #[tauri::command]
 #[specta::specta]
 pub fn card_count(state: State<'_, KeysightState>) -> Result<i64, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
     store.count().map_err(Into::into)
@@ -90,6 +94,7 @@ pub fn card_search(
     state: State<'_, KeysightState>,
     text: String,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
     store.search(&text).map_err(Into::into)
@@ -102,6 +107,7 @@ pub fn card_query_links(
     state: State<'_, KeysightState>,
     id: String,
 ) -> Result<CardLinksResponse, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
     store.query_links(&id).map_err(Into::into)
@@ -254,6 +260,7 @@ pub fn section_get(
     state: State<'_, KeysightState>,
     id: String,
 ) -> Result<GraphSection, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store.get(&id).map_err(Into::into)
@@ -299,6 +306,7 @@ pub fn section_create(
     title: String,
     color: Option<String>,
 ) -> Result<GraphSection, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store
@@ -328,6 +336,7 @@ pub fn section_create(
 #[tauri::command]
 #[specta::specta]
 pub fn section_delete(state: State<'_, KeysightState>, id: String) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store.delete(&id).map_err(Into::into)
@@ -357,6 +366,7 @@ pub fn section_update(
     title: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store
@@ -387,6 +397,7 @@ pub fn section_add_member(
     section_id: String,
     entity_id: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store.add_member(&section_id, &entity_id).map_err(Into::into)
@@ -412,6 +423,7 @@ pub fn section_remove_member(
     section_id: String,
     entity_id: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store
@@ -446,6 +458,7 @@ pub fn section_move_to_whiteboard(
     section_id: String,
     target_whiteboard_id: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
     store
@@ -757,6 +770,7 @@ pub fn question_delete(
 #[tauri::command]
 #[specta::specta]
 pub fn note_get(state: State<'_, KeysightState>, id: String) -> Result<GraphNote, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteNoteStore::new(&conn);
     store.get(&id).map_err(Into::into)
@@ -799,6 +813,7 @@ pub fn note_create(
     content: Option<String>,
     color: Option<String>,
 ) -> Result<GraphNote, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
     let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
@@ -825,6 +840,7 @@ pub fn note_create(
 #[tauri::command]
 #[specta::specta]
 pub fn note_delete(state: State<'_, KeysightState>, id: String) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let vault_fs = RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
     let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
@@ -882,6 +898,7 @@ pub fn note_migrate_to_files(
 #[tauri::command]
 #[specta::specta]
 pub fn alias_get(state: State<'_, KeysightState>, id: String) -> Result<CardAlias, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteAliasStore::new(&conn);
     store.get(&id).map_err(Into::into)
@@ -921,6 +938,7 @@ pub fn alias_create(
     whiteboard_id: String,
     card_id: String,
 ) -> Result<CardAlias, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteAliasStore::new(&conn);
     store.create(&whiteboard_id, &card_id).map_err(Into::into)
@@ -944,6 +962,7 @@ pub fn alias_create(
 #[tauri::command]
 #[specta::specta]
 pub fn alias_delete(state: State<'_, KeysightState>, id: String) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteAliasStore::new(&conn);
     store.delete(&id).map_err(Into::into)
@@ -1017,6 +1036,7 @@ pub fn layout_remove_position(
     whiteboard_id: String,
     entity_id: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let store = SqliteLayoutStore::new(&conn);
     store
@@ -1035,6 +1055,7 @@ pub fn entity_edges_from(
     state: State<'_, KeysightState>,
     entity_id: String,
 ) -> Result<Vec<EdgeRow>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
     graph.edges_from(&entity_id).map_err(Into::into)
@@ -1047,6 +1068,7 @@ pub fn entity_edges_to(
     state: State<'_, KeysightState>,
     entity_id: String,
 ) -> Result<Vec<EdgeRow>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
     graph.edges_to(&entity_id).map_err(Into::into)
@@ -1087,6 +1109,7 @@ pub fn entity_connect(
     from_id: String,
     to_id: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
 
     let from = EntityId::parse(&from_id).map_err(|e| AppError::Keysight {
@@ -1154,6 +1177,7 @@ pub fn entity_relate(
     from_card_id: String,
     to_card_id: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
 
     let from_entity = EntityId::parse(&from_card_id).map_err(|e| AppError::Keysight {
@@ -1208,6 +1232,7 @@ pub fn entity_disconnect(
     to_id: String,
     edge_type: EdgeType,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
     graph
@@ -1258,6 +1283,7 @@ pub fn sync_file(
     content: String,
     mtime: f64,
 ) -> Result<SyncFileResponse, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     sync::sync_file(&conn, &file_path, &content, mtime).map_err(Into::into)
 }
@@ -1283,6 +1309,7 @@ pub fn sync_remove_file(
     state: State<'_, KeysightState>,
     file_path: String,
 ) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     sync::remove_file(&conn, &file_path).map_err(Into::into)
 }
@@ -1293,6 +1320,7 @@ pub fn sync_remove_file(
 pub fn sync_all_file_mtimes(
     state: State<'_, KeysightState>,
 ) -> Result<Vec<(String, f64)>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     sync::all_file_mtimes(&conn).map_err(Into::into)
 }
@@ -1331,6 +1359,7 @@ pub fn sync_vault(state: State<'_, KeysightState>) -> Result<SyncVaultReport, Ap
 #[tauri::command]
 #[specta::specta]
 pub fn overview_stats(state: State<'_, KeysightState>) -> Result<StatsResponse, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     overview::stats(&conn).map_err(Into::into)
 }
@@ -1341,6 +1370,7 @@ pub fn overview_stats(state: State<'_, KeysightState>) -> Result<StatsResponse, 
 pub fn overview_graph(
     state: State<'_, KeysightState>,
 ) -> Result<GraphOverviewResponse, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = state.db.lock().unwrap();
     overview::graph_overview(&conn).map_err(Into::into)
 }
@@ -1448,6 +1478,7 @@ pub fn import_legacy_db(
     })?;
 
     // 3. 导入
+    // 例外: Mutex poisoning 不可恢复
     let new_conn = state.db.lock().unwrap();
     let reader = SqliteLegacyReader::new(&old_conn);
     let importer = SqliteLegacyImporter::new(&new_conn);

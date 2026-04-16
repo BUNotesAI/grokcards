@@ -11,6 +11,7 @@ use crate::app_error::AppError;
 #[tauri::command]
 #[specta::specta]
 pub fn list_todos(db: State<'_, Mutex<Connection>>, filter: TodoFilter) -> Result<Vec<Todo>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::list_todos(&conn, &filter).map_err(Into::into)
 }
@@ -19,6 +20,7 @@ pub fn list_todos(db: State<'_, Mutex<Connection>>, filter: TodoFilter) -> Resul
 #[tauri::command]
 #[specta::specta]
 pub fn create_todo(db: State<'_, Mutex<Connection>>, title: String) -> Result<Todo, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::create_todo(&conn, &title).map_err(Into::into)
 }
@@ -27,6 +29,7 @@ pub fn create_todo(db: State<'_, Mutex<Connection>>, title: String) -> Result<To
 #[tauri::command]
 #[specta::specta]
 pub fn update_todo(db: State<'_, Mutex<Connection>>, id: i64, title: String) -> Result<Todo, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::update_todo(&conn, id, &title).map_err(Into::into)
 }
@@ -35,6 +38,7 @@ pub fn update_todo(db: State<'_, Mutex<Connection>>, id: i64, title: String) -> 
 #[tauri::command]
 #[specta::specta]
 pub fn toggle_todo(db: State<'_, Mutex<Connection>>, id: i64) -> Result<Todo, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::toggle_todo(&conn, id).map_err(Into::into)
 }
@@ -43,6 +47,7 @@ pub fn toggle_todo(db: State<'_, Mutex<Connection>>, id: i64) -> Result<Todo, Ap
 #[tauri::command]
 #[specta::specta]
 pub fn delete_todo(db: State<'_, Mutex<Connection>>, id: i64) -> Result<(), AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::delete_todo(&conn, id).map_err(Into::into)
 }
@@ -51,6 +56,7 @@ pub fn delete_todo(db: State<'_, Mutex<Connection>>, id: i64) -> Result<(), AppE
 #[tauri::command]
 #[specta::specta]
 pub fn toggle_all(db: State<'_, Mutex<Connection>>, completed: bool) -> Result<Vec<Todo>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::toggle_all(&conn, completed).map_err(Into::into)
 }
@@ -59,6 +65,7 @@ pub fn toggle_all(db: State<'_, Mutex<Connection>>, completed: bool) -> Result<V
 #[tauri::command]
 #[specta::specta]
 pub fn clear_completed(db: State<'_, Mutex<Connection>>) -> Result<Vec<Todo>, AppError> {
+    // 例外: Mutex poisoning 不可恢复
     let conn = db.lock().unwrap();
     domain::clear_completed(&conn).map_err(Into::into)
 }

@@ -354,6 +354,7 @@ pub(in crate::modules::keysight) fn render_subtasks_into_body(
     // Case 2: 原 body 有 checklist 行 —— 检查是否单连续 block
     let positions: Vec<usize> = parsed.iter().map(|p| p.line_index).collect();
     let min = positions[0];
+    // 例外: positions 由上方 parsed.iter() 构建,parsed 非空已在 Case 1 排除
     let max = *positions.last().unwrap();
     // 单 block 的充要条件: items 数量 == (max - min + 1)
     let is_contig = positions.len() == (max - min + 1);
