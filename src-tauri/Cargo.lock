@@ -3651,6 +3651,7 @@ name = "super-tauri"
 version = "0.1.0"
 dependencies = [
  "chrono",
+ "proc-macro2",
  "rand 0.9.2",
  "rusqlite",
  "serde",
@@ -3658,11 +3659,13 @@ dependencies = [
  "serde_yaml",
  "specta",
  "specta-typescript",
+ "syn 2.0.117",
  "tauri",
  "tauri-build",
  "tauri-plugin-opener",
  "tauri-specta",
  "thiserror 2.0.18",
+ "walkdir",
 ]
 
 [[package]]
