@@ -6,6 +6,9 @@ pub(super) mod config_file;
 pub(super) mod endpoint_file;
 pub(super) mod http_server;
 pub(crate) mod server_state;
+// Phase 5 新增:file watcher 三路分派 + self-write suppression 双队列
+pub(super) mod suppression;
+pub(super) mod watcher;
 
 // 从 keysight-core re-export,保持 src-tauri 内部 use 路径不变:
 // - `crate::modules::keysight::domain::X` → 解析到 `keysight_core::domain::X`

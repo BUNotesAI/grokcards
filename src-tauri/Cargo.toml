@@ -40,6 +40,8 @@ toml = "0.8"
 axum = "0.8"
 tower = "0.5"
 subtle = "2"
+# Phase 5(spec v2 allowlist 许可):文件系统 watcher
+notify = "8"
 
 [dev-dependencies]
 syn = { version = "2", features = ["full", "extra-traits"] }
