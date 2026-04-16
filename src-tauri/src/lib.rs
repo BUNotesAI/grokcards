@@ -12,6 +12,10 @@ mod perf;
 
 use perf::ScopedTimer;
 
+/// bindings.ts 导出路径 —— `concat!` 锚定到本 crate 的 `CARGO_MANIFEST_DIR`,
+/// 不依赖调用者 cwd(pre-existing D1-a;见 task_dd9e57db plan v2 Phase 2b)。
+const BINDINGS_TS_PATH: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../src/bindings.ts");
+
 fn make_builder() -> Builder<tauri::Wry> {
     Builder::<tauri::Wry>::new().commands(collect_commands![
         // todo commands
@@ -152,7 +156,7 @@ pub fn run() {
 
     #[cfg(debug_assertions)]
     builder
-        .export(Typescript::default(), "../src/bindings.ts")
+        .export(Typescript::default(), BINDINGS_TS_PATH)
         .expect("Failed to export typescript bindings");
 
     let todo_conn = init_todo_database();
@@ -193,7 +197,7 @@ mod tests {
     #[test]
     fn export_bindings() {
         make_builder()
-            .export(Typescript::default(), "../src/bindings.ts")
+            .export(Typescript::default(), BINDINGS_TS_PATH)
             .expect("Failed to export typescript bindings");
     }
 }
