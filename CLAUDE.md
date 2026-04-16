@@ -142,6 +142,7 @@ inbox ──/harness-01-design──▶ next ──/harness-02-spec──▶ nex
 | 辅助 | `/harness-save-next-context` | Session 结束时写 handoff(task 级优先,fallback 区级) |
 | 辅助 | `/harness-check-tests` | spec Completion Criteria 完整性自查 |
 | 辅助 | `/harness-type-safety-check` | L0 防火墙自查(类型安全 / 建模强度) |
+| 辅助 | `/harness-init-or-migrate` | 新项目 init v4 骨架 / 现有项目 migrate 到 v4 |
 
 **用户认知负担 = 7 个核心命令**(01-05 + review + view)。辅助命令大多自动触发或由其他命令调用。
 
