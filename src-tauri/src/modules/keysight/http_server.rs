@@ -31,7 +31,6 @@ use axum::{
     routing::post,
 };
 use keysight_core::ipc::{MutateParams, MutateResponse};
-use keysight_core::vault_fs::RealVaultFs;
 use rand::Rng;
 use rusqlite::Connection;
 use serde::{Deserialize, Serialize};
@@ -41,19 +40,26 @@ use tokio::sync::oneshot;
 use super::config_file;
 use super::dispatcher::{self, EventEmitter};
 use super::endpoint_file::{self, EndpointFileContents, EndpointFileGuard};
+use super::recording_vault_fs::RecordingVaultFs;
 use super::server_state::{ServerError, ServerState};
+use super::suppression::SelfWriteSuppression;
 
 /// 当前 RPC 协议 major 版本(design-v4 D7 / spec D7)。
 /// CLI 端内置相同期望值,mismatch 时 CLI 在发 HTTP 请求前 fail-fast。
 const RPC_PROTOCOL_VERSION: u32 = 1;
 
-/// axum Router state —— 含 auth token + db 连接 + vault_path + emitter。
+/// axum Router state —— 含 auth token + db 连接 + vault_path + emitter + suppression。
+///
+/// `suppression` 与 Tauri commands 侧的 `KeysightRuntimeState.suppression` 共享
+/// 同一 `Arc` —— CLI 通过 IPC 写的文件也会登记进 writes 队列,watcher 收到事件时
+/// 能识别为自写并 skip(Phase 5b wiring)。
 #[derive(Clone)]
 pub(super) struct ServerContext {
     pub(super) token: Arc<String>,
     pub(super) db: Arc<Mutex<Connection>>,
     pub(super) vault_path: PathBuf,
     pub(super) emitter: Arc<dyn EventEmitter>,
+    pub(super) suppression: Arc<SelfWriteSuppression>,
 }
 
 /// POST /rpc 请求 body。
@@ -118,7 +124,11 @@ async fn handle_rpc(
                 eprintln!("[keysight] mutate db lock poisoned: {e}");
                 StatusCode::INTERNAL_SERVER_ERROR
             })?;
-            let vault_fs = RealVaultFs::new(ctx.vault_path.to_string_lossy().to_string());
+            // Phase 5b wiring:IPC mutate 路径走 RecordingVaultFs,让 watcher 识别自写
+            let vault_fs = RecordingVaultFs::wrap_real(
+                ctx.vault_path.to_string_lossy().to_string(),
+                Arc::clone(&ctx.suppression),
+            );
             let resp = dispatcher::dispatch_mutate(params, &conn, &vault_fs, ctx.emitter.as_ref())
                 .map_err(|e| {
                     eprintln!("[keysight] dispatch_mutate 失败: {e}");
@@ -185,6 +195,7 @@ pub(super) async fn start(
     db_path: &Path,
     vault_path: &Path,
     emitter: Arc<dyn EventEmitter>,
+    suppression: Arc<SelfWriteSuppression>,
 ) -> io::Result<ServerState> {
     // Step 1: 幂等写 cli-config.toml
     let config_path = data_dir.join("cli-config.toml");
@@ -202,6 +213,7 @@ pub(super) async fn start(
         db,
         vault_path: vault_path.to_path_buf(),
         emitter,
+        suppression,
     };
 
     // Step 4: bind 127.0.0.1:0(OS 分配随机端口)
@@ -268,7 +280,8 @@ mod tests {
         Arc::new(RecordingEmitter::new())
     }
 
-    /// Helper:构造 test ServerContext(in-memory DB + tempdir vault + recording emitter)
+    /// Helper:构造 test ServerContext(in-memory DB + tempdir vault + recording emitter
+    /// + 全新 SelfWriteSuppression —— test 不校验 suppression 命中,用空队列占位即可)
     fn test_ctx(
         db: Arc<Mutex<Connection>>,
         emitter: Arc<dyn EventEmitter>,
@@ -279,6 +292,7 @@ mod tests {
             db,
             vault_path: vault.path().to_path_buf(),
             emitter,
+            suppression: Arc::new(SelfWriteSuppression::new()),
         };
         (ctx, vault)
     }
@@ -286,6 +300,11 @@ mod tests {
     /// Helper: start() 用的 no-op emitter(lifecycle tests 不 care emit)
     fn noop_emitter() -> Arc<dyn EventEmitter> {
         Arc::new(RecordingEmitter::new())
+    }
+
+    /// Helper:lifecycle tests 不 care suppression 命中,直接给独立实例
+    fn test_suppression() -> Arc<SelfWriteSuppression> {
+        Arc::new(SelfWriteSuppression::new())
     }
 
     /// Scenario: Tauri 启动后 config 与 endpoint 两文件同时就位
@@ -300,9 +319,15 @@ mod tests {
             init_db(&conn).unwrap();
         }
 
-        let server_state = start(data_dir.path(), &db_path, vault.path(), noop_emitter())
-            .await
-            .unwrap();
+        let server_state = start(
+            data_dir.path(),
+            &db_path,
+            vault.path(),
+            noop_emitter(),
+            test_suppression(),
+        )
+        .await
+        .unwrap();
 
         let config_path = data_dir.path().join("cli-config.toml");
         let endpoint_path = data_dir.path().join("cli-endpoint.toml");
@@ -334,9 +359,15 @@ mod tests {
             init_db(&conn).unwrap();
         }
 
-        let server_state = start(data_dir.path(), &db_path, vault.path(), noop_emitter())
-            .await
-            .unwrap();
+        let server_state = start(
+            data_dir.path(),
+            &db_path,
+            vault.path(),
+            noop_emitter(),
+            test_suppression(),
+        )
+        .await
+        .unwrap();
 
         let config_path = data_dir.path().join("cli-config.toml");
         let endpoint_path = data_dir.path().join("cli-endpoint.toml");
@@ -453,6 +484,122 @@ mod tests {
         assert!(
             events.iter().any(|(name, _)| name == "entity:changed"),
             "应 emit entity:changed,实际 events={events:?}"
+        );
+    }
+
+    /// Phase 6.2c spec L141(subprocess 真补):启真 TCP server + spawn keysight-cli
+    /// 子进程走 HTTP → 断言 exit 0 + DB 新增 section + emitter 录 entity:changed。
+    ///
+    /// 与 `test_mutate_via_http_emits_entity_changed_and_writes_db`(tower oneshot
+    /// in-process)互补:本 test 验证"真 CLI → 真 HTTP → 真 dispatcher → 真 DB → 真 emit"
+    /// 的端到端链路,锁 endpoint/config 文件协议 + X-Keysight-Token header 接线。
+    ///
+    /// 前置条件:workspace 里 `keysight-cli` binary 已 build(`cargo test --workspace`
+    /// 会自动满足;单 crate test 需先 `cargo build -p keysight-cli`)。
+    ///
+    /// 用 `multi_thread` flavor —— subprocess `.output()` 会 block 当前线程,
+    /// current_thread runtime 会让 axum accept loop 饿死(deadlock)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_write_command_posts_rpc_when_tauri_online() {
+        // 1. 构 tempdir + db + vault + seed wb_root
+        let data_dir = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let db_path = data_dir.path().join("keysight.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            init_db(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES ('wb_root', 'whiteboard', 'Root', 'wb_root')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 2. 启真 TCP server(走 start → bind 127.0.0.1:0 + 发布 cli-endpoint.toml)
+        let emitter = test_emitter();
+        let suppression = test_suppression();
+        let server_state = start(
+            data_dir.path(),
+            &db_path,
+            vault.path(),
+            Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            Arc::clone(&suppression),
+        )
+        .await
+        .unwrap();
+
+        // 3. 确认 keysight-cli binary 已 build(workspace target/debug/keysight-cli)
+        let cli_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("target")
+            .join("debug")
+            .join("keysight-cli");
+        assert!(
+            cli_bin.exists(),
+            "keysight-cli binary 未 build: {}\n先跑 `cargo build -p keysight-cli`",
+            cli_bin.display()
+        );
+
+        // 4. spawn subprocess —— 用 data_dir 的 cli-config.toml + cli-endpoint.toml
+        let output = std::process::Command::new(&cli_bin)
+            .arg("--config-file")
+            .arg(data_dir.path().join("cli-config.toml"))
+            .arg("--endpoint-file")
+            .arg(data_dir.path().join("cli-endpoint.toml"))
+            .args([
+                "graph",
+                "section-create",
+                "HttpSec",
+                "--wb",
+                "wb_root",
+            ])
+            .output()
+            .expect("spawn keysight-cli failed");
+
+        // 5. 断言前先 shutdown server(避免 flaky test 因 panic 导致 server 泄漏)
+        let ServerState {
+            shutdown_tx,
+            join_handle,
+            endpoint_guard,
+            local_addr: _,
+        } = server_state;
+        let _ = endpoint_guard.invalidate_atomic();
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(Duration::from_secs(5), join_handle).await;
+        drop(endpoint_guard);
+
+        // 6. CLI 应 exit 0
+        assert!(
+            output.status.success(),
+            "CLI 应 exit 0;实际 status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // 7. DB 新增 section
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM entities WHERE kind = 'section' AND title = 'HttpSec'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 1, "CLI section-create 应在 DB 新增一行 HttpSec section");
+        }
+
+        // 8. emitter 应录到 entity:changed
+        let events = emitter.events();
+        assert!(
+            events.iter().any(|(name, _)| name == "entity:changed"),
+            "应收到 entity:changed event;实际 events={:?}",
+            events
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
         );
     }
 }

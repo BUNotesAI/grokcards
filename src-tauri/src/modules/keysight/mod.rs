@@ -7,10 +7,17 @@ pub(super) mod endpoint_file;
 pub(super) mod http_server;
 pub(crate) mod server_state;
 // Phase 5 新增:file watcher 三路分派 + self-write suppression 双队列
-pub(super) mod suppression;
+// Phase 6.2c:suppression 提到 pub(crate) 让 lib.rs setup / maintenance script 能构造 Arc
+pub(crate) mod suppression;
 pub(super) mod watcher;
 // Phase 6.2b 新增:写命令分派器(handle_rpc mutate 分支的 core logic)
 pub(super) mod dispatcher;
+// Phase 5b wiring(6.2c):记录 self-write fingerprint 的 VaultFs 装饰器
+pub(super) mod recording_vault_fs;
+// Phase 5b wiring(6.2c):Tauri 运行时 state wrapper(core + suppression)
+pub(crate) mod runtime_state;
+// Phase 5b wiring(6.2c):production WatcherHandlers impl + notify watcher loop spawn
+pub(crate) mod watcher_prod;
 
 // 从 keysight-core re-export,保持 src-tauri 内部 use 路径不变:
 // - `crate::modules::keysight::domain::X` → 解析到 `keysight_core::domain::X`
@@ -20,7 +27,7 @@ pub(super) mod dispatcher;
 // 这里的 re-export 只是向后兼容 src-tauri 内部的已有 use 路径,不额外放宽 src-tauri 对外的 surface。
 // 只 re-export src-tauri 内部实际引用的 5 个 mod(mod.rs hook fn + commands.rs 用到)。
 // `errors` / `id` / `parser` 是 keysight-core 内部细节,src-tauri 不需要感知。
-pub use keysight_core::{db, domain, models, state, vault_fs};
+pub use keysight_core::{db, domain, models, state};
 
 use std::sync::Mutex;
 
@@ -39,15 +46,21 @@ pub fn init(conn: &rusqlite::Connection) -> rusqlite::Result<()> {
 ///
 /// `app_handle` 用来构造 `TauriEmitter`,给 `handle_rpc` mutate / flush 分支
 /// emit `"entity:changed"` / `"vault:flush"` 事件到前端。
+///
+/// `suppression` 与 Tauri commands 共享同一 `Arc<SelfWriteSuppression>`;IPC server
+/// 的 mutate 分支(`handle_rpc`)构造 `RecordingVaultFs` 时注入,让 CLI 写的文件
+/// 也能被 watcher 识别为自写 skip(Phase 5b wiring)。
 pub(crate) async fn start_http_server(
     data_dir: &std::path::Path,
     db_path: &std::path::Path,
     vault_path: &std::path::Path,
     app_handle: tauri::AppHandle,
+    suppression: std::sync::Arc<suppression::SelfWriteSuppression>,
 ) -> std::io::Result<server_state::ServerState> {
     let emitter: std::sync::Arc<dyn dispatcher::EventEmitter> =
         std::sync::Arc::new(dispatcher::TauriEmitter { app: app_handle });
-    let server_state = http_server::start(data_dir, db_path, vault_path, emitter).await?;
+    let server_state =
+        http_server::start(data_dir, db_path, vault_path, emitter, suppression).await?;
     eprintln!(
         "[keysight] HTTP IPC server listening on {}",
         server_state.local_addr
@@ -104,12 +117,24 @@ pub(crate) fn shutdown(app_handle: &tauri::AppHandle) {
 /// 启动时同步 vault 到 DB。
 ///
 /// 供 lib.rs setup 阶段调用。内部委托 domain::sync::sync_vault。
-pub fn startup_sync(state: &state::KeysightState) -> Result<models::SyncVaultReport, String> {
-    let conn = lock_db(&state.db, "startup_sync");
-    if let Err(err) = domain::note::migrate_db_notes_to_files(&conn, &state.db_path, &state.vault_path) {
+///
+/// 接 `&KeysightRuntimeState`(Phase 6.2c)—— 直接从 runtime state 拿 core + suppression,
+/// 不需调用方多传一个参数。
+pub fn startup_sync(
+    state: &runtime_state::KeysightRuntimeState,
+) -> Result<models::SyncVaultReport, String> {
+    let conn = lock_db(&state.core.db, "startup_sync");
+    if let Err(err) = domain::note::migrate_db_notes_to_files(
+        &conn,
+        &state.core.db_path,
+        &state.core.vault_path,
+    ) {
         return Err(format!("note migration failed: {err}"));
     }
-    let fs = vault_fs::RealVaultFs::new(state.vault_path.to_string_lossy().to_string());
+    let fs = recording_vault_fs::RecordingVaultFs::wrap_real(
+        state.core.vault_path.to_string_lossy().to_string(),
+        std::sync::Arc::clone(&state.suppression),
+    );
     domain::sync::sync_vault(&conn, &fs).map_err(|e| e.to_string())
 }
 
@@ -136,8 +161,12 @@ pub fn startup_sync(state: &state::KeysightState) -> Result<models::SyncVaultRep
 pub fn cleanup_card_title_escapes(
     conn: &rusqlite::Connection,
     vault_path: &std::path::Path,
+    suppression: &std::sync::Arc<suppression::SelfWriteSuppression>,
 ) -> Result<usize, String> {
-    let fs = vault_fs::RealVaultFs::new(vault_path.to_string_lossy().to_string());
+    let fs = recording_vault_fs::RecordingVaultFs::wrap_real(
+        vault_path.to_string_lossy().to_string(),
+        std::sync::Arc::clone(suppression),
+    );
     domain::card::cleanup_dirty_card_title_escapes(conn, &fs).map_err(|e| e.to_string())
 }
 
@@ -161,7 +190,11 @@ pub fn cleanup_card_title_escapes(
 pub fn migrate_toggle_syntax(
     conn: &rusqlite::Connection,
     vault_path: &std::path::Path,
+    suppression: &std::sync::Arc<suppression::SelfWriteSuppression>,
 ) -> Result<models::ToggleSyntaxMigrationReport, String> {
-    let fs = vault_fs::RealVaultFs::new(vault_path.to_string_lossy().to_string());
+    let fs = recording_vault_fs::RecordingVaultFs::wrap_real(
+        vault_path.to_string_lossy().to_string(),
+        std::sync::Arc::clone(suppression),
+    );
     domain::migration::migrate_legacy_toggle_syntax(conn, &fs).map_err(|e| e.to_string())
 }

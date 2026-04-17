@@ -1,13 +1,9 @@
 //! Self-write suppression(design-v4 D6-b)—— 双队列记录 Tauri 自身写 / 删,
 //! watcher 收到 fs event 时通过 fingerprint 比对 decide 是否 skip。
 //!
-//! ## Phase 5 scope
-//! 本模块公 API 仅被 `watcher.rs` + 测试引用;production wiring(`http_server.rs`
-//! 写路径 + `commands.rs` 写命令完成后调 `record_write` / `record_delete`)在 Phase
-//! 6+ 接入,所以 Phase 5 用 file-level `#![allow(dead_code)]` 对齐 Phase 4 的
-//! "wiring TODO" 先例(参考 `endpoint_file.rs`)。
-
-#![allow(dead_code)]
+//! ## Wiring(Phase 5b / 6.2c 合流后)
+//! - `RecordingVaultFs` 装饰器在 write/delete 后调 `record_write_from_stat` / `record_delete`
+//! - `watcher_prod::spawn_watcher_loop` 里的 `handle_event` 调 `check_and_consume_*`
 //!
 //! ## 队列语义
 //!
@@ -54,13 +50,17 @@ struct DeleteFingerprint {
 /// 双队列 self-write suppression(design-v4 D6-b)。
 ///
 /// 所有方法 `&self`(内部 Mutex),允许多 handler 并发调用。
-pub(super) struct SelfWriteSuppression {
+///
+/// 可见性:struct 与 `new` 提 `pub(crate)` 让 `lib.rs` setup 能
+/// `Arc::new(SelfWriteSuppression::new())`;其他 method 仍 `pub(super)`,
+/// 只有 `modules::keysight` 内部能 record / check。
+pub(crate) struct SelfWriteSuppression {
     writes: Mutex<VecDeque<WriteFingerprint>>,
     deletes: Mutex<VecDeque<DeleteFingerprint>>,
 }
 
 impl SelfWriteSuppression {
-    pub(super) fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self {
             writes: Mutex::new(VecDeque::new()),
             deletes: Mutex::new(VecDeque::new()),
@@ -91,6 +91,15 @@ impl SelfWriteSuppression {
             path: path.to_path_buf(),
             recorded_at: Instant::now(),
         });
+    }
+
+    /// Stat `path` 并 record_write;stat 失败(文件瞬被别处删等极端场景)时 no-op。
+    ///
+    /// 让调用方(如 `RecordingVaultFs`)不需感知 fingerprint 内部形态,只给绝对 path 即可。
+    pub(super) fn record_write_from_stat(&self, path: &Path) {
+        if let Some((size, mtime_ns)) = stat_fingerprint(path) {
+            self.record_write(path, size, mtime_ns);
+        }
     }
 
     /// 检查并(若命中)consume `writes` 队列中与 `event` 匹配的指纹。

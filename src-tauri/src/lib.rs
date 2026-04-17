@@ -106,9 +106,15 @@ fn init_todo_database() -> Connection {
     conn
 }
 
-/// 初始化 KeySight 的独立 SQLite 连接 + vault 路径。
+/// 初始化 KeySight 的独立 SQLite 连接 + vault 路径 + self-write suppression。
 /// 使用 app_data_dir 存放 keysight.db，确保跨平台路径正确。
-fn init_keysight_state(app: &tauri::App) -> modules::keysight::state::KeysightState {
+///
+/// Phase 5b wiring(6.2c):返回 `KeysightRuntimeState` 而非裸 `KeysightState`,
+/// 把 `Arc<SelfWriteSuppression>` 和 core 捆在一起供 Tauri commands 和 IPC server
+/// 共享同一个 suppression 实例。
+fn init_keysight_state(
+    app: &tauri::App,
+) -> modules::keysight::runtime_state::KeysightRuntimeState {
     let _t = ScopedTimer::new("init_keysight_state");
     let vault_path = std::env::var("KEYSIGHT_VAULT_PATH")
         .expect("环境变量 KEYSIGHT_VAULT_PATH 未设置，请设置为 Obsidian vault 根目录路径");
@@ -123,21 +129,31 @@ fn init_keysight_state(app: &tauri::App) -> modules::keysight::state::KeysightSt
         modules::keysight::init(&conn).expect("keysight 建表失败");
         conn
     };
-    modules::keysight::state::KeysightState {
+    let core = modules::keysight::state::KeysightState {
         db: Mutex::new(conn),
         vault_path: PathBuf::from(vault_path),
         db_path,
-    }
+    };
+    let suppression = std::sync::Arc::new(
+        modules::keysight::suppression::SelfWriteSuppression::new(),
+    );
+    modules::keysight::runtime_state::KeysightRuntimeState { core, suppression }
 }
 
 /// 供一次性维护脚本调用：清理历史遗留的 card title 转义。
+///
+/// 独立 process 调用,现场构造临时 `SelfWriteSuppression`(无 watcher 消费,仅占位);
+/// 语义正确性不依赖 suppression 命中(script 跑完 Arc drop)。
 pub fn cleanup_card_title_escapes(
     db_path: &std::path::Path,
     vault_path: &std::path::Path,
 ) -> Result<usize, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     modules::keysight::init(&conn).map_err(|e| e.to_string())?;
-    modules::keysight::cleanup_card_title_escapes(&conn, vault_path)
+    let suppression = std::sync::Arc::new(
+        modules::keysight::suppression::SelfWriteSuppression::new(),
+    );
+    modules::keysight::cleanup_card_title_escapes(&conn, vault_path, &suppression)
 }
 
 /// 供一次性维护脚本调用：把 legacy details/summary 迁移到 ?>> / ?<<。
@@ -147,7 +163,10 @@ pub fn migrate_toggle_syntax(
 ) -> Result<modules::keysight::models::ToggleSyntaxMigrationReport, String> {
     let conn = Connection::open(db_path).map_err(|e| e.to_string())?;
     modules::keysight::init(&conn).map_err(|e| e.to_string())?;
-    modules::keysight::migrate_toggle_syntax(&conn, vault_path)
+    let suppression = std::sync::Arc::new(
+        modules::keysight::suppression::SelfWriteSuppression::new(),
+    );
+    modules::keysight::migrate_toggle_syntax(&conn, vault_path, &suppression)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -167,14 +186,16 @@ pub fn run() {
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             let _t_setup = ScopedTimer::new("setup hook total");
-            let keysight_state = init_keysight_state(app);
-            let db_path = keysight_state.db_path.clone();
-            let vault_path = keysight_state.vault_path.clone();
+            let keysight_runtime = init_keysight_state(app);
+            let db_path = keysight_runtime.core.db_path.clone();
+            let vault_path = keysight_runtime.core.vault_path.clone();
+            let suppression = std::sync::Arc::clone(&keysight_runtime.suppression);
             let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
-            app.manage(keysight_state);
+            app.manage(keysight_runtime);
 
             // 启动时全量同步 vault → DB
-            let ks = app.state::<modules::keysight::state::KeysightState>();
+            let ks = app
+                .state::<modules::keysight::runtime_state::KeysightRuntimeState>();
             {
                 let _t = ScopedTimer::new("startup_sync");
                 match modules::keysight::startup_sync(&ks) {
@@ -188,6 +209,7 @@ pub fn run() {
 
             // Phase 4: HTTP IPC server + endpoint 发布(design-v4 §3.5 启动序列 step 3-5)
             // Phase 6.2b:扩 `app_handle` 参数,给 server 内部构造 TauriEmitter 用
+            // Phase 6.2c:扩 `suppression` 参数,让 IPC server 写路径共享同一 `Arc<SelfWriteSuppression>`
             {
                 let _t = ScopedTimer::new("http_server::start");
                 let app_handle = app.handle().clone();
@@ -197,10 +219,24 @@ pub fn run() {
                         &db_path,
                         &vault_path,
                         app_handle,
+                        std::sync::Arc::clone(&suppression),
                     ),
                 )
                 .expect("keysight HTTP IPC server 启动失败");
                 app.manage(Mutex::new(Some(server_state)));
+            }
+
+            // Phase 5b wiring(6.2c):spawn notify watcher loop —— 监 vault 递归,
+            // 走 suppression 双队列跳过 Tauri 自写,三路分派 sync_file / remove_file / sync_vault。
+            {
+                let _t = ScopedTimer::new("watcher_prod::spawn_watcher_loop");
+                let app_handle = app.handle().clone();
+                modules::keysight::watcher_prod::spawn_watcher_loop(
+                    app_handle,
+                    vault_path.clone(),
+                    db_path.clone(),
+                    suppression,
+                );
             }
 
             builder.mount_events(app);

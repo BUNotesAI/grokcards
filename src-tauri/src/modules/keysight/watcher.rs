@@ -12,10 +12,8 @@
 //! ## Phase 5 scope
 //!
 //! 实现 `handle_event` 纯分派函数 + `WatcherHandlers` trait 契约。实际 notify watcher
-//! 进程 spawn / tokio channel wiring 在 Phase 6+ 接入(lib.rs setup hook),因此 Phase
-//! 5 用 file-level `#![allow(dead_code)]` 对齐 Phase 4 的 "wiring TODO" 先例。
-
-#![allow(dead_code)]
+//! 进程 spawn / tokio channel wiring 在 Phase 5b wiring(6.2c)合流 —— 见
+//! [`watcher_prod::spawn_watcher_loop`](super::watcher_prod::spawn_watcher_loop)。
 
 use std::path::Path;
 use std::time::Duration;
