@@ -602,4 +602,95 @@ mod tests {
                 .collect::<Vec<_>>()
         );
     }
+
+    /// Phase 6.3 spec L256(subprocess e2e):启真 TCP server + spawn `keysight-cli flush`
+    /// 子进程走 HTTP → 断言 exit 0 + emitter 录到 `vault:flush` event。
+    ///
+    /// server 侧 flush 分支在 Phase 6.2b 已就位(commit 1e3b413,http_server.rs:144-155
+    /// `"flush" => emitter.emit("vault:flush", Null)`);本 test 锁 CLI → /rpc → emit
+    /// 的端到端链路,和 Phase 6.2c section-create subprocess test 并列互补。
+    ///
+    /// 与 mutate 路径区别:flush 不写 DB(无 dispatch_mutate),故无 DB 断言。
+    ///
+    /// 用 `multi_thread` flavor —— subprocess `.output()` 会 block 当前线程,
+    /// current_thread runtime 会让 axum accept loop 饿死(deadlock)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_flush_command_posts_rpc_and_emits_vault_flush_event() {
+        // 1. 构 tempdir + db + vault(flush 不写 DB,但 start 需要有效 db_path)
+        let data_dir = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let db_path = data_dir.path().join("keysight.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            init_db(&conn).unwrap();
+        }
+
+        // 2. 启真 TCP server(发布 cli-endpoint.toml)
+        let emitter = test_emitter();
+        let suppression = test_suppression();
+        let server_state = start(
+            data_dir.path(),
+            &db_path,
+            vault.path(),
+            Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            Arc::clone(&suppression),
+        )
+        .await
+        .unwrap();
+
+        // 3. 确认 keysight-cli binary 已 build
+        let cli_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .unwrap()
+            .join("target")
+            .join("debug")
+            .join("keysight-cli");
+        assert!(
+            cli_bin.exists(),
+            "keysight-cli binary 未 build: {}\n先跑 `cargo build -p keysight-cli`",
+            cli_bin.display()
+        );
+
+        // 4. spawn subprocess `keysight-cli flush`
+        let output = std::process::Command::new(&cli_bin)
+            .arg("--config-file")
+            .arg(data_dir.path().join("cli-config.toml"))
+            .arg("--endpoint-file")
+            .arg(data_dir.path().join("cli-endpoint.toml"))
+            .arg("flush")
+            .output()
+            .expect("spawn keysight-cli failed");
+
+        // 5. 断言前先 shutdown server(避免 panic 导致 server 泄漏)
+        let ServerState {
+            shutdown_tx,
+            join_handle,
+            endpoint_guard,
+            local_addr: _,
+        } = server_state;
+        let _ = endpoint_guard.invalidate_atomic();
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(Duration::from_secs(5), join_handle).await;
+        drop(endpoint_guard);
+
+        // 6. CLI 应 exit 0
+        assert!(
+            output.status.success(),
+            "CLI 应 exit 0;实际 status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        // 7. emitter 应录到 vault:flush
+        let events = emitter.events();
+        assert!(
+            events.iter().any(|(name, _)| name == "vault:flush"),
+            "应收到 vault:flush event;实际 events={:?}",
+            events
+                .iter()
+                .map(|(n, _)| n.as_str())
+                .collect::<Vec<_>>()
+        );
+    }
 }

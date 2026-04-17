@@ -90,6 +90,9 @@ pub enum RootCommand {
     #[command(name = "weak-remove")]
     WeakRemove { id: String, path: String },
 
+    /// 触发 Tauri 侧 `vault:flush` event,让 UI 重新 sync(Phase 6.3)
+    Flush,
+
     /// Graph sub-commands namespace(Phase 6.1 `get-bounds` deferred;Phase 6.2a 9 live mutate)
     Graph {
         #[command(subcommand)]
@@ -219,6 +222,11 @@ fn run(cli: Cli) -> Result<(), CliError> {
         RootCommand::Graph { sub: GraphCommand::GetBounds { section } } => commands::graph_get_bounds(&section),
 
         // —— Mutate 路径:load endpoint → HttpClient(构造即 version gate)→ post ——
+        RootCommand::Flush => {
+            let endpoint_contents = endpoint::load_endpoint(cli.endpoint_file.as_deref(), None)?;
+            let http = HttpClient::new(&endpoint_contents, CLI_EXPECTED_RPC_MAJOR)?;
+            commands::flush(&http)
+        }
         RootCommand::Graph { sub: mutate } => {
             let endpoint_contents = endpoint::load_endpoint(cli.endpoint_file.as_deref(), None)?;
             let http = HttpClient::new(&endpoint_contents, CLI_EXPECTED_RPC_MAJOR)?;

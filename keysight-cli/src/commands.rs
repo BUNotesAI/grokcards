@@ -302,6 +302,18 @@ pub fn graph_section_move(
     Ok(())
 }
 
+// ========== Phase 6.3 flush ==========
+
+/// 请求 Tauri 侧发 `vault:flush` event,让 UI 重新 sync。
+///
+/// spec L256:POST /rpc `{method: "flush", params: {}}`;server 侧在 Phase 6.2b
+/// (commit 1e3b413)已实装为 `emitter.emit("vault:flush", Null)`,无结构化返回值。
+pub fn flush(client: &dyn WriteClient) -> Result<(), CliError> {
+    client.post_rpc("flush", serde_json::json!({}))?;
+    println!("flush OK");
+    Ok(())
+}
+
 // ========== 4 deferred 命令(Phase 6.1:weak-list / graph get-bounds;Phase 6.2a:weak-add / weak-remove)==========
 
 pub fn weak_list(_id: Option<&str>) -> Result<(), CliError> {
