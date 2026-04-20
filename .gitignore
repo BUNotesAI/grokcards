@@ -43,3 +43,7 @@ Agents.md
 # Workflow v4: vault symlink(每台机器本地指向 Obsidian vault 下的 super-tauri 目录)
 # 目标:~/Documents/obsidian_workspace/agent-slipbox-v3/whiteboard/projects/super-tauri
 /vault
+
+# Public repo: 本地 Claude Code 配置和项目级指令不入库
+.claude/
+CLAUDE.md
