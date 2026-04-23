@@ -32,6 +32,16 @@ impl SectionStore for SqliteSectionStore<'_> {
             "INSERT INTO entities (id, kind, title, whiteboard_id, color) VALUES (?1, 'section', ?2, ?3, ?4)",
             params![sec_id, title, whiteboard_id, color],
         )?;
+        // auto-position: 在 canvas 最底元素下方一个 node 高度 + spacing 处,
+        // 避免新建 section 因无 positions 行而在画布不可见(对标 task::create 的 auto-position)。
+        let position = crate::domain::task::compute_position_below_bottommost(
+            self.conn,
+            whiteboard_id,
+        )?;
+        self.conn.execute(
+            "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
+            params![sec_id, whiteboard_id, position.x, position.y],
+        )?;
         Ok(GraphSection {
             id: sec_id,
             title: title.to_string(),
@@ -262,9 +272,9 @@ mod tests {
         let sec = store.create("wb_root", "Movable", None).unwrap();
         store.add_member(&sec.id, "card_aaa").unwrap();
 
-        // 设置位置
+        // 设置位置(create 已经写入 auto-position row,这里用 OR REPLACE 覆盖成固定坐标供断言)
         conn.execute(
-            "INSERT INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, 'wb_root', 10.0, 20.0)",
+            "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, 'wb_root', 10.0, 20.0)",
             [&sec.id],
         ).unwrap();
 
@@ -309,6 +319,36 @@ mod tests {
         // 跨白板 link 被清
         let edges = graph.edges_from(&sec1.id).unwrap();
         assert!(edges.is_empty(), "跨白板 section_link 应被清除");
+    }
+
+    /// 新建 section 应当自动写 positions 行 —— 空白板 (0, 0),
+    /// 后续节点 y = max_y + DEFAULT_NODE_HEIGHT(140) + NODE_SPACING(40) = 180。
+    /// 没有 auto-position 的话前端画布拿不到坐标,section 不渲染。
+    #[test]
+    fn test_create_writes_auto_position() {
+        let conn = test_conn();
+        let store = SqliteSectionStore::new(&conn);
+
+        let first = store.create("wb_root", "First", None).unwrap();
+        let (x0, y0): (f64, f64) = conn
+            .query_row(
+                "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = 'wb_root'",
+                [&first.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!((x0, y0), (0.0, 0.0), "空白板第一个 section 应在 (0, 0)");
+
+        let second = store.create("wb_root", "Second", None).unwrap();
+        let (x1, y1): (f64, f64) = conn
+            .query_row(
+                "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = 'wb_root'",
+                [&second.id],
+                |r| Ok((r.get(0)?, r.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(x1, 0.0);
+        assert_eq!(y1, 180.0, "第二个 section 落在 DEFAULT_NODE_HEIGHT + NODE_SPACING 下方");
     }
 
     #[test]
