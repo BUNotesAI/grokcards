@@ -116,26 +116,140 @@ pub(crate) fn shutdown(app_handle: &tauri::AppHandle) {
 
 /// 启动时同步 vault 到 DB。
 ///
-/// 供 lib.rs setup 阶段调用。内部委托 domain::sync::sync_vault。
-///
-/// 接 `&KeysightRuntimeState`(Phase 6.2c)—— 直接从 runtime state 拿 core + suppression,
-/// 不需调用方多传一个参数。
-pub fn startup_sync(
-    state: &runtime_state::KeysightRuntimeState,
+/// 接 `&KeysightRuntimeInner`(resolved 后的 inner)—— 调用方负责先 `state.resolved()?`
+/// 解开 Option,本 fn 保证 inner 已初始化。
+pub(crate) fn startup_sync(
+    inner: &runtime_state::KeysightRuntimeInner,
 ) -> Result<models::SyncVaultReport, String> {
-    let conn = lock_db(&state.core.db, "startup_sync");
+    let conn = lock_db(&inner.core.db, "startup_sync");
     if let Err(err) = domain::note::migrate_db_notes_to_files(
         &conn,
-        &state.core.db_path,
-        &state.core.vault_path,
+        &inner.core.db_path,
+        &inner.core.vault_path,
     ) {
         return Err(format!("note migration failed: {err}"));
     }
     let fs = recording_vault_fs::RecordingVaultFs::wrap_real(
-        state.core.vault_path.to_string_lossy().to_string(),
-        std::sync::Arc::clone(&state.suppression),
+        inner.core.vault_path.to_string_lossy().to_string(),
+        std::sync::Arc::clone(&inner.suppression),
     );
     domain::sync::sync_vault(&conn, &fs).map_err(|e| e.to_string())
+}
+
+/// 完整 bootstrap keysight runtime —— 冷启动路径和 `set_vault_path` command
+/// 共用同一实现。
+///
+/// ## 前置条件
+/// - Tauri managed state 里已 `app.manage(KeysightRuntimeState::empty())`;
+/// - Tauri managed state 里已 `app.manage(Mutex::new(None::<ServerState>))`
+///   作为 HTTP server 的容器(shutdown 路径要 take-by-value);
+/// - `state` **尚未** install(否则幂等性违例,见下)。
+///
+/// `vault_path` 的合法性由本函数内部校验(见执行效果 step 1),调用方不必预先
+/// 保证 —— 这样 cold-start 从 stale `config.json` 进入也会在 install 之前
+/// fail-fast 回退到 first-run。
+///
+/// ## 执行效果(transactional:所有 fallible 步骤成功后才 commit)
+///
+/// 前半段(fallible,任何错误都 early-return,runtime 零副作用):
+/// 1. **Vault 路径校验** —— 路径存在 + 是目录 + 含 `.obsidian/` 子目录
+///    (防止 stale config 进入 ready 状态);
+/// 2. 打开 `{app_data_dir}/keysight.db`,运行 schema migration;
+/// 3. 构造 `KeysightRuntimeInner`(含新的 `Arc<SelfWriteSuppression>`,但尚未 install);
+/// 4. 启动 HTTP IPC server(fail 场景:端口冲突 / endpoint 文件不可写)。
+///
+/// 后半段(commit,全部 infallible):
+/// 4. 写入 managed `Mutex<Option<ServerState>>`;
+/// 5. `state.install(inner)` —— runtime state 正式可用,所有 keysight command 解锁;
+/// 6. `spawn_watcher_loop` —— notify 文件监听 + 三路分派(后台 task,内部错误自消化);
+/// 7. `startup_sync` —— 全量 vault → DB 同步,仅 log,失败不回滚 runtime。
+///
+/// ## 不做的事
+/// - 不写 `config.json`(由 commands 层负责);
+/// - 不校验 vault 路径(由调用方或 config 模块负责);
+/// - 不卸载已存在的 HTTP server / watcher(不支持运行中切换 vault)。
+///
+/// ## 幂等性
+/// 非幂等 —— 重复调用会试图再开 HTTP server(端口冲突,早 fail)和 spawn 第二个 watcher。
+/// 调用方(setup hook + `set_vault_path`)保证只在未 install 时调用。
+///
+/// ## 失败语义
+/// step 1-3 任一失败 → runtime 未 install、HTTP server 未启动、config.json 未写(由
+/// `set_vault_path` 的顺序保证)。前端 `get_vault_config` 仍会返 `ready: false`,弹回
+/// VaultSetup(附带 error message)。
+pub(crate) fn bootstrap_runtime(
+    app_handle: &tauri::AppHandle,
+    state: &runtime_state::KeysightRuntimeState,
+    vault_path: &std::path::Path,
+) -> Result<(), String> {
+    use tauri::Manager;
+
+    // --- 前半段:fallible steps(失败则零副作用)---
+
+    // Step 1: vault 路径校验(cold-start 从持久化 config 进入也保底)
+    crate::modules::config::ensure_vault_path_valid(vault_path)?;
+
+    let data_dir = app_handle
+        .path()
+        .app_data_dir()
+        .map_err(|e| format!("无法获取 app_data_dir: {e}"))?;
+    std::fs::create_dir_all(&data_dir)
+        .map_err(|e| format!("无法创建 app_data_dir: {e}"))?;
+    let db_path = data_dir.join("keysight.db");
+
+    let conn = rusqlite::Connection::open(&db_path)
+        .map_err(|e| format!("无法打开 keysight 数据库: {e}"))?;
+    init(&conn).map_err(|e| format!("keysight 建表失败: {e}"))?;
+
+    let core = state::KeysightState {
+        db: Mutex::new(conn),
+        vault_path: vault_path.to_path_buf(),
+        db_path: db_path.clone(),
+    };
+    let suppression = std::sync::Arc::new(suppression::SelfWriteSuppression::new());
+    let pending_inner = runtime_state::KeysightRuntimeInner {
+        core,
+        suppression: std::sync::Arc::clone(&suppression),
+    };
+
+    let server_state = tauri::async_runtime::block_on(start_http_server(
+        &data_dir,
+        &db_path,
+        vault_path,
+        app_handle.clone(),
+        std::sync::Arc::clone(&suppression),
+    ))
+    .map_err(|e| format!("keysight HTTP IPC server 启动失败: {e}"))?;
+
+    // --- 后半段:commit(infallible)---
+
+    let server_holder =
+        app_handle.state::<Mutex<Option<server_state::ServerState>>>();
+    // 例外: Mutex poisoning 不可恢复
+    *server_holder.lock().unwrap() = Some(server_state);
+
+    state.install(pending_inner);
+
+    watcher_prod::spawn_watcher_loop(
+        app_handle.clone(),
+        vault_path.to_path_buf(),
+        db_path,
+        suppression,
+    );
+
+    // startup_sync 在 install 之后用 resolved() 拿 inner —— 同步失败只 log,
+    // runtime 仍视为 ready(前端能进主 UI,vault 数据由 watcher 后续增量同步)。
+    // 例外: install 之后 resolved() 必定成功
+    let installed = state.resolved().expect("resolved() after install must be Some");
+    match startup_sync(&installed) {
+        Ok(report) => eprintln!(
+            "[keysight] startup sync: scanned={}, synced={}, removed={}, skipped={}, backfilled={}",
+            report.scanned, report.synced, report.removed, report.skipped, report.backfilled
+        ),
+        Err(e) => eprintln!("[keysight] startup sync failed: {e}"),
+    }
+
+    Ok(())
 }
 
 /// # 清理卡片标题历史转义

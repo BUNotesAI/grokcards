@@ -38,6 +38,18 @@ pub enum AppError {
         task_id: String,
         block_count: usize,
     },
+
+    /// App 级配置错误(读 / 写 / 解析 / 校验失败)—— 见 `modules::config::errors::ConfigError`
+    /// 的 `Into<AppError>` 实现。
+    #[error("{message}")]
+    Config { message: String },
+
+    /// Vault 未配置 —— keysight commands 在 runtime state 尚未 install 时抛出。
+    ///
+    /// TS 侧 `err.kind === "VaultNotConfigured"` 可穷尽 match,首次启动时
+    /// 正常触发(此时前端应展示 VaultSetup 对话框)。
+    #[error("vault 未配置,请先选择 Obsidian vault 根目录")]
+    VaultNotConfigured,
 }
 
 impl From<keysight_core::errors::KeysightError> for AppError {

@@ -1,4 +1,3 @@
-use std::path::PathBuf;
 use std::sync::Mutex;
 
 use rusqlite::Connection;
@@ -96,14 +95,17 @@ fn make_builder() -> Builder<tauri::Wry> {
         modules::keysight::commands::get_vault_info,
         // keysight: legacy import
         modules::keysight::commands::import_legacy_db,
+        // app config: first-run vault setup
+        modules::config::commands::get_vault_config,
+        modules::config::commands::set_vault_path,
+        modules::config::commands::exit_app,
     ])
 }
 
 /// 初始化 todo 的 SQLite 连接并建表。
 ///
 /// 使用 `app_data_dir/super_tauri.db` 而非 CWD 下的相对路径 —— 避免 Finder
-/// 双击 `.app` 启动时 CWD=`/` 导致无法写入 panic,从而让 release build
-/// 双击启动不再闪退。
+/// 双击 `.app` 启动时 CWD=`/` 导致无法写入 panic。
 fn init_todo_database(data_dir: &std::path::Path) -> Connection {
     std::fs::create_dir_all(data_dir).expect("无法创建 app_data_dir");
     let db_path = data_dir.join("super_tauri.db");
@@ -112,38 +114,28 @@ fn init_todo_database(data_dir: &std::path::Path) -> Connection {
     conn
 }
 
-/// 初始化 KeySight 的独立 SQLite 连接 + vault 路径 + self-write suppression。
-/// 使用 app_data_dir 存放 keysight.db，确保跨平台路径正确。
+/// 解析启动时的 vault 路径:
+/// 1. **仅 debug build**:环境变量 `KEYSIGHT_VAULT_PATH` 作为 override(dev 友好);
+/// 2. 读 `{app_data_dir}/config.json` 的 `vault_path` 字段;
+/// 3. 都没有 → 返回 `None`(进入 first-run flow,前端弹 VaultSetup)。
 ///
-/// Phase 5b wiring(6.2c):返回 `KeysightRuntimeState` 而非裸 `KeysightState`,
-/// 把 `Arc<SelfWriteSuppression>` 和 core 捆在一起供 Tauri commands 和 IPC server
-/// 共享同一个 suppression 实例。
-fn init_keysight_state(
-    app: &tauri::App,
-) -> modules::keysight::runtime_state::KeysightRuntimeState {
-    let _t = ScopedTimer::new("init_keysight_state");
-    let vault_path = std::env::var("KEYSIGHT_VAULT_PATH")
-        .expect("环境变量 KEYSIGHT_VAULT_PATH 未设置，请设置为 Obsidian vault 根目录路径");
+/// debug/release 行为分叉的原因:发给别人用的 release build 不该被他人 shell
+/// 的 env 污染你的配置(见 task 设计决定 #3)。
+fn resolve_startup_vault_path(app: &tauri::App) -> Option<std::path::PathBuf> {
+    #[cfg(debug_assertions)]
+    if let Ok(p) = std::env::var("KEYSIGHT_VAULT_PATH") {
+        eprintln!("[keysight] debug build: using KEYSIGHT_VAULT_PATH env override: {p}");
+        return Some(std::path::PathBuf::from(p));
+    }
 
-    let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
-    std::fs::create_dir_all(&data_dir).expect("无法创建 app_data_dir");
-    let db_path = data_dir.join("keysight.db");
-
-    let conn = {
-        let _t = ScopedTimer::new("init_keysight_state: open + init_db");
-        let conn = Connection::open(&db_path).expect("无法打开 keysight 数据库");
-        modules::keysight::init(&conn).expect("keysight 建表失败");
-        conn
-    };
-    let core = modules::keysight::state::KeysightState {
-        db: Mutex::new(conn),
-        vault_path: PathBuf::from(vault_path),
-        db_path,
-    };
-    let suppression = std::sync::Arc::new(
-        modules::keysight::suppression::SelfWriteSuppression::new(),
-    );
-    modules::keysight::runtime_state::KeysightRuntimeState { core, suppression }
+    let data_dir = app.path().app_data_dir().ok()?;
+    match modules::config::load_startup_config(&data_dir) {
+        Ok(cfg) => cfg.vault_path.map(std::path::PathBuf::from),
+        Err(e) => {
+            eprintln!("[keysight] 读取 config.json 失败(启动走 first-run flow): {e}");
+            None
+        }
+    }
 }
 
 /// 供一次性维护脚本调用：清理历史遗留的 card title 转义。
@@ -186,66 +178,42 @@ pub fn run() {
 
     let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
+        .plugin(tauri_plugin_dialog::init())
+        // KeysightRuntimeState 以 empty 态先 manage —— bootstrap_runtime 后续写入 inner。
+        // 未配置 vault 时 keysight command 返 VaultNotConfigured,前端据此弹 VaultSetup。
+        .manage(modules::keysight::runtime_state::KeysightRuntimeState::empty())
+        // HTTP IPC server 容器 —— bootstrap_runtime 负责塞 Some;shutdown 路径 take。
+        .manage(Mutex::new(
+            None::<modules::keysight::server_state::ServerState>,
+        ))
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             let _t_setup = ScopedTimer::new("setup hook total");
 
-            // todo DB 从相对路径挪到 app_data_dir(Finder 启动 CWD=/ 时原相对
-            // 路径无写入权限导致 panic,release .app 闪退)。
+            // 1. todo DB 放 app_data_dir(避免 Finder 启动 CWD=/ 导致写入 panic)
             let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
             let todo_conn = init_todo_database(&data_dir);
             app.manage(Mutex::new(todo_conn));
 
-            let keysight_runtime = init_keysight_state(app);
-            let db_path = keysight_runtime.core.db_path.clone();
-            let vault_path = keysight_runtime.core.vault_path.clone();
-            let suppression = std::sync::Arc::clone(&keysight_runtime.suppression);
-            let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
-            app.manage(keysight_runtime);
+            // 2. 解析启动 vault 路径(debug env override > config.json > None)
+            let vault_path = resolve_startup_vault_path(app);
 
-            // 启动时全量同步 vault → DB
-            let ks = app
-                .state::<modules::keysight::runtime_state::KeysightRuntimeState>();
-            {
-                let _t = ScopedTimer::new("startup_sync");
-                match modules::keysight::startup_sync(&ks) {
-                    Ok(report) => eprintln!(
-                        "[keysight] startup sync: scanned={}, synced={}, removed={}, skipped={}, backfilled={}",
-                        report.scanned, report.synced, report.removed, report.skipped, report.backfilled
-                    ),
-                    Err(e) => eprintln!("[keysight] startup sync failed: {e}"),
+            // 3. 若有路径则 bootstrap keysight;否则进入 first-run flow(前端弹 VaultSetup)
+            if let Some(path) = vault_path {
+                let state = app
+                    .state::<modules::keysight::runtime_state::KeysightRuntimeState>();
+                let app_handle = app.handle().clone();
+                if let Err(e) =
+                    modules::keysight::bootstrap_runtime(&app_handle, &state, &path)
+                {
+                    eprintln!(
+                        "[keysight] bootstrap 失败({}): {e} —— 退化到 first-run flow",
+                        path.display()
+                    );
                 }
-            }
-
-            // Phase 4: HTTP IPC server + endpoint 发布(design-v4 §3.5 启动序列 step 3-5)
-            // Phase 6.2b:扩 `app_handle` 参数,给 server 内部构造 TauriEmitter 用
-            // Phase 6.2c:扩 `suppression` 参数,让 IPC server 写路径共享同一 `Arc<SelfWriteSuppression>`
-            {
-                let _t = ScopedTimer::new("http_server::start");
-                let app_handle = app.handle().clone();
-                let server_state = tauri::async_runtime::block_on(
-                    modules::keysight::start_http_server(
-                        &data_dir,
-                        &db_path,
-                        &vault_path,
-                        app_handle,
-                        std::sync::Arc::clone(&suppression),
-                    ),
-                )
-                .expect("keysight HTTP IPC server 启动失败");
-                app.manage(Mutex::new(Some(server_state)));
-            }
-
-            // Phase 5b wiring(6.2c):spawn notify watcher loop —— 监 vault 递归,
-            // 走 suppression 双队列跳过 Tauri 自写,三路分派 sync_file / remove_file / sync_vault。
-            {
-                let _t = ScopedTimer::new("watcher_prod::spawn_watcher_loop");
-                let app_handle = app.handle().clone();
-                modules::keysight::watcher_prod::spawn_watcher_loop(
-                    app_handle,
-                    vault_path.clone(),
-                    db_path.clone(),
-                    suppression,
+            } else {
+                eprintln!(
+                    "[keysight] 未配置 vault_path,进入 first-run flow(前端将展示 VaultSetup)"
                 );
             }
 

@@ -1,12 +1,55 @@
+import { useEffect, useState } from "react";
 import { BrowserRouter, Routes, Route, Navigate } from "react-router-dom";
 import AppShell from "@/components/AppShell";
 import { KeysightView } from "@/components/keysight/KeysightView";
 import { KanbanView } from "@/components/kanban/KanbanView";
+import { VaultSetup } from "@/components/VaultSetup";
 import TodoPage from "@/pages/TodoPage";
 import PlaceholderPage from "@/pages/PlaceholderPage";
+import { commands } from "@/bindings";
 import { FileText, Bookmark, Code2, Settings } from "lucide-react";
 
+// 启动时的 vault 配置探测状态:
+// - loading: 正在读 get_vault_config;
+// - needs_setup: runtime 未 ready(未配置 / bootstrap 失败)→ 展示 VaultSetup;
+// - ready: runtime 已 install 可用 → 正常渲染 AppShell + 路由。
+//
+// 以 runtime `ready` 而不是 `vaultPath` 作为 gate:debug env override 场景
+// (config.json 不存在但 runtime 已 bootstrap)、startup bootstrap 失败场景
+// (config.json 存在但 runtime 未 install)都能正确路由。
+type BootState = "loading" | "needs_setup" | "ready";
+
 function App() {
+  const [bootState, setBootState] = useState<BootState>("loading");
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const result = await commands.getVaultConfig();
+      if (cancelled) return;
+      if (result.status === "ok" && result.data.ready) {
+        setBootState("ready");
+      } else {
+        setBootState("needs_setup");
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (bootState === "loading") {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-background text-sm text-muted-foreground">
+        Loading...
+      </div>
+    );
+  }
+
+  if (bootState === "needs_setup") {
+    return <VaultSetup onConfigured={() => setBootState("ready")} />;
+  }
+
   return (
     <BrowserRouter>
       <Routes>

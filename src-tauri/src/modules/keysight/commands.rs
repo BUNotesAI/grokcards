@@ -31,6 +31,7 @@ use crate::perf::{lock_db, ScopedTimer};
 #[tauri::command]
 #[specta::specta]
 pub fn card_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<AtomicCard, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
@@ -45,6 +46,7 @@ pub fn card_query_all(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:card_query_all");
     let conn = lock_db(&state.core.db, "card_query_all");
     let store = SqliteCardStore::new(&conn);
@@ -58,6 +60,7 @@ pub fn card_query_by_file(
     state: State<'_, KeysightRuntimeState>,
     file_path: String,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
@@ -71,6 +74,7 @@ pub fn card_query_by_ids(
     state: State<'_, KeysightRuntimeState>,
     ids: Vec<String>,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
@@ -81,6 +85,7 @@ pub fn card_query_by_ids(
 #[tauri::command]
 #[specta::specta]
 pub fn card_count(state: State<'_, KeysightRuntimeState>) -> Result<i64, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
@@ -94,6 +99,7 @@ pub fn card_search(
     state: State<'_, KeysightRuntimeState>,
     text: String,
 ) -> Result<Vec<AtomicCard>, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
@@ -107,6 +113,7 @@ pub fn card_query_links(
     state: State<'_, KeysightRuntimeState>,
     id: String,
 ) -> Result<CardLinksResponse, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteCardStore::new(&conn);
@@ -145,6 +152,7 @@ pub fn card_edit_title(
     id: String,
     new_title: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:card_edit_title");
     let conn = lock_db(&state.core.db, "card_edit_title");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -180,6 +188,7 @@ pub fn card_edit_body(
     id: String,
     new_body: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:card_edit_body");
     let conn = lock_db(&state.core.db, "card_edit_body");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -214,6 +223,7 @@ pub fn card_update_understanding(
     id: String,
     text: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:card_update_understanding");
     let conn = lock_db(&state.core.db, "card_update_understanding");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -242,6 +252,7 @@ pub fn card_set_color(
     id: String,
     color: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:card_set_color");
     let conn = lock_db(&state.core.db, "card_set_color");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -260,6 +271,7 @@ pub fn section_get(
     state: State<'_, KeysightRuntimeState>,
     id: String,
 ) -> Result<GraphSection, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -273,6 +285,7 @@ pub fn section_query_all(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: String,
 ) -> Result<Vec<GraphSection>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:section_query_all");
     let conn = lock_db(&state.core.db, "section_query_all");
     let store = SqliteSectionStore::new(&conn);
@@ -306,6 +319,7 @@ pub fn section_create(
     title: String,
     color: Option<String>,
 ) -> Result<GraphSection, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -336,6 +350,7 @@ pub fn section_create(
 #[tauri::command]
 #[specta::specta]
 pub fn section_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -366,6 +381,7 @@ pub fn section_update(
     title: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -397,6 +413,7 @@ pub fn section_add_member(
     section_id: String,
     entity_id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -423,6 +440,7 @@ pub fn section_remove_member(
     section_id: String,
     entity_id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -458,6 +476,7 @@ pub fn section_move_to_whiteboard(
     section_id: String,
     target_whiteboard_id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteSectionStore::new(&conn);
@@ -477,6 +496,7 @@ pub fn task_query_all(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: String,
 ) -> Result<Vec<TaskEntity>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_query_all");
     let conn = lock_db(&state.core.db, "task_query_all");
     task::query_all(&conn, &whiteboard_id).map_err(Into::into)
@@ -489,6 +509,7 @@ pub fn task_query_kanban(
     state: State<'_, KeysightRuntimeState>,
     project: Option<String>,
 ) -> Result<Vec<TaskEntity>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_query_kanban");
     let conn = lock_db(&state.core.db, "task_query_kanban");
     let project_name = match project {
@@ -520,6 +541,7 @@ pub fn task_create(
     area: Option<String>,
     color: Option<String>,
 ) -> Result<TaskEntity, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_create");
     let conn = lock_db(&state.core.db, "task_create");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -553,6 +575,7 @@ pub fn task_update(
     area: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_update");
     let conn = lock_db(&state.core.db, "task_update");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -575,6 +598,7 @@ pub fn task_update(
 #[tauri::command]
 #[specta::specta]
 pub fn task_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_delete");
     let conn = lock_db(&state.core.db, "task_delete");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -592,6 +616,7 @@ pub fn task_set_color(
     id: String,
     color: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_set_color");
     let conn = lock_db(&state.core.db, "task_set_color");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -646,6 +671,7 @@ pub fn task_update_with_subtasks(
     area: Option<String>,
     color: Option<String>,
 ) -> Result<TaskEntity, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_update_with_subtasks");
     let conn = lock_db(&state.core.db, "task_update_with_subtasks");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
@@ -687,6 +713,7 @@ pub fn question_query_all(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: String,
 ) -> Result<Vec<QuestionEntity>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:question_query_all");
     let conn = lock_db(&state.core.db, "question_query_all");
     question::query_all(&conn, &whiteboard_id).map_err(Into::into)
@@ -703,6 +730,7 @@ pub fn question_create(
     status: Option<String>,
     color: Option<String>,
 ) -> Result<QuestionEntity, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:question_create");
     let conn = lock_db(&state.core.db, "question_create");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -734,6 +762,7 @@ pub fn question_update(
     status: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:question_update");
     let conn = lock_db(&state.core.db, "question_update");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -756,6 +785,7 @@ pub fn question_delete(
     state: State<'_, KeysightRuntimeState>,
     id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:question_delete");
     let conn = lock_db(&state.core.db, "question_delete");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -770,6 +800,7 @@ pub fn question_delete(
 #[tauri::command]
 #[specta::specta]
 pub fn note_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<GraphNote, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteNoteStore::new(&conn);
@@ -783,6 +814,7 @@ pub fn note_query_all(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: String,
 ) -> Result<Vec<GraphNote>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:note_query_all");
     let conn = lock_db(&state.core.db, "note_query_all");
     let store = SqliteNoteStore::new(&conn);
@@ -813,6 +845,7 @@ pub fn note_create(
     content: Option<String>,
     color: Option<String>,
 ) -> Result<GraphNote, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -840,6 +873,7 @@ pub fn note_create(
 #[tauri::command]
 #[specta::specta]
 pub fn note_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -869,6 +903,7 @@ pub fn note_update(
     content: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:note_update");
     let conn = lock_db(&state.core.db, "note_update");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -884,6 +919,7 @@ pub fn note_update(
 pub fn note_migrate_to_files(
     state: State<'_, KeysightRuntimeState>,
 ) -> Result<NoteFileMigrationReport, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:note_migrate_to_files");
     let conn = lock_db(&state.core.db, "note_migrate_to_files");
     super::domain::note::migrate_db_notes_to_files(&conn, &state.core.db_path, &state.core.vault_path)
@@ -898,6 +934,7 @@ pub fn note_migrate_to_files(
 #[tauri::command]
 #[specta::specta]
 pub fn alias_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<CardAlias, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteAliasStore::new(&conn);
@@ -911,6 +948,7 @@ pub fn alias_query_all(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: String,
 ) -> Result<Vec<CardAlias>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:alias_query_all");
     let conn = lock_db(&state.core.db, "alias_query_all");
     let store = SqliteAliasStore::new(&conn);
@@ -938,6 +976,7 @@ pub fn alias_create(
     whiteboard_id: String,
     card_id: String,
 ) -> Result<CardAlias, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteAliasStore::new(&conn);
@@ -962,6 +1001,7 @@ pub fn alias_create(
 #[tauri::command]
 #[specta::specta]
 pub fn alias_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteAliasStore::new(&conn);
@@ -979,6 +1019,7 @@ pub fn layout_query_positions(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: String,
 ) -> Result<HashMap<String, Position>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:layout_query_positions");
     let conn = lock_db(&state.core.db, "layout_query_positions");
     let store = SqliteLayoutStore::new(&conn);
@@ -1008,6 +1049,7 @@ pub fn layout_set_position(
     x: f64,
     y: f64,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:layout_set_position");
     let conn = lock_db(&state.core.db, "layout_set_position");
     let store = SqliteLayoutStore::new(&conn);
@@ -1036,6 +1078,7 @@ pub fn layout_remove_position(
     whiteboard_id: String,
     entity_id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let store = SqliteLayoutStore::new(&conn);
@@ -1055,6 +1098,7 @@ pub fn entity_edges_from(
     state: State<'_, KeysightRuntimeState>,
     entity_id: String,
 ) -> Result<Vec<EdgeRow>, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
@@ -1068,6 +1112,7 @@ pub fn entity_edges_to(
     state: State<'_, KeysightRuntimeState>,
     entity_id: String,
 ) -> Result<Vec<EdgeRow>, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
@@ -1109,6 +1154,7 @@ pub fn entity_connect(
     from_id: String,
     to_id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
 
@@ -1177,6 +1223,7 @@ pub fn entity_relate(
     from_card_id: String,
     to_card_id: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
 
@@ -1232,6 +1279,7 @@ pub fn entity_disconnect(
     to_id: String,
     edge_type: EdgeType,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     let graph = SqliteEntityGraph::new(&conn);
@@ -1283,6 +1331,7 @@ pub fn sync_file(
     content: String,
     mtime: f64,
 ) -> Result<SyncFileResponse, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     sync::sync_file(&conn, &file_path, &content, mtime).map_err(Into::into)
@@ -1309,6 +1358,7 @@ pub fn sync_remove_file(
     state: State<'_, KeysightRuntimeState>,
     file_path: String,
 ) -> Result<(), AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     sync::remove_file(&conn, &file_path).map_err(Into::into)
@@ -1320,6 +1370,7 @@ pub fn sync_remove_file(
 pub fn sync_all_file_mtimes(
     state: State<'_, KeysightRuntimeState>,
 ) -> Result<Vec<(String, f64)>, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     sync::all_file_mtimes(&conn).map_err(Into::into)
@@ -1345,6 +1396,7 @@ pub fn sync_all_file_mtimes(
 #[tauri::command]
 #[specta::specta]
 pub fn sync_vault(state: State<'_, KeysightRuntimeState>) -> Result<SyncVaultReport, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:sync_vault");
     let conn = lock_db(&state.core.db, "sync_vault");
     let fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -1359,6 +1411,7 @@ pub fn sync_vault(state: State<'_, KeysightRuntimeState>) -> Result<SyncVaultRep
 #[tauri::command]
 #[specta::specta]
 pub fn overview_stats(state: State<'_, KeysightRuntimeState>) -> Result<StatsResponse, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     overview::stats(&conn).map_err(Into::into)
@@ -1370,6 +1423,7 @@ pub fn overview_stats(state: State<'_, KeysightRuntimeState>) -> Result<StatsRes
 pub fn overview_graph(
     state: State<'_, KeysightRuntimeState>,
 ) -> Result<GraphOverviewResponse, AppError> {
+    let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
     overview::graph_overview(&conn).map_err(Into::into)
@@ -1381,6 +1435,7 @@ pub fn overview_graph(
 pub fn whiteboard_list(
     state: State<'_, KeysightRuntimeState>,
 ) -> Result<Vec<WhiteboardSummary>, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:whiteboard_list");
     let conn = lock_db(&state.core.db, "whiteboard_list");
     let fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
@@ -1410,6 +1465,7 @@ pub fn whiteboard_create(
     state: State<'_, KeysightRuntimeState>,
     name: String,
 ) -> Result<WhiteboardSummary, AppError> {
+    let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:whiteboard_create");
     whiteboard::create_folder(&state.core.vault_path, &name).map_err(Into::into)
 }
@@ -1422,6 +1478,7 @@ pub fn whiteboard_create(
 #[tauri::command]
 #[specta::specta]
 pub fn get_vault_info(state: State<'_, KeysightRuntimeState>) -> Result<VaultInfoResponse, AppError> {
+    let state = state.resolved()?;
     Ok(VaultInfoResponse {
         vault_path: state.core.vault_path.to_string_lossy().into_owned(),
     })
@@ -1454,6 +1511,7 @@ pub fn import_legacy_db(
     state: State<'_, KeysightRuntimeState>,
     old_db_path: String,
 ) -> Result<ImportSummary, AppError> {
+    let state = state.resolved()?;
     let path = std::path::Path::new(&old_db_path);
     if !path.exists() {
         return Err(AppError::Keysight {
