@@ -100,9 +100,15 @@ fn make_builder() -> Builder<tauri::Wry> {
 }
 
 /// 初始化 todo 的 SQLite 连接并建表。
-fn init_todo_database() -> Connection {
-    let conn = Connection::open("super_tauri.db").expect("无法打开数据库");
-    modules::init_all(&conn).expect("建表失败");
+///
+/// 使用 `app_data_dir/super_tauri.db` 而非 CWD 下的相对路径 —— 避免 Finder
+/// 双击 `.app` 启动时 CWD=`/` 导致无法写入 panic,从而让 release build
+/// 双击启动不再闪退。
+fn init_todo_database(data_dir: &std::path::Path) -> Connection {
+    std::fs::create_dir_all(data_dir).expect("无法创建 app_data_dir");
+    let db_path = data_dir.join("super_tauri.db");
+    let conn = Connection::open(&db_path).expect("无法打开 todo 数据库");
+    modules::init_all(&conn).expect("todo 建表失败");
     conn
 }
 
@@ -178,14 +184,18 @@ pub fn run() {
         .export(Typescript::default(), BINDINGS_TS_PATH)
         .expect("Failed to export typescript bindings");
 
-    let todo_conn = init_todo_database();
-
     let tauri_app = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
-        .manage(Mutex::new(todo_conn))
         .invoke_handler(builder.invoke_handler())
         .setup(move |app| {
             let _t_setup = ScopedTimer::new("setup hook total");
+
+            // todo DB 从相对路径挪到 app_data_dir(Finder 启动 CWD=/ 时原相对
+            // 路径无写入权限导致 panic,release .app 闪退)。
+            let data_dir = app.path().app_data_dir().expect("无法获取 app_data_dir");
+            let todo_conn = init_todo_database(&data_dir);
+            app.manage(Mutex::new(todo_conn));
+
             let keysight_runtime = init_keysight_state(app);
             let db_path = keysight_runtime.core.db_path.clone();
             let vault_path = keysight_runtime.core.vault_path.clone();
