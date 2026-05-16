@@ -19,7 +19,7 @@ import type {
   EntityWithPosition,
   GraphSelection,
 } from "@/components/keysight/types";
-import type { Position } from "@/bindings";
+import type { Position, TaskStatus } from "@/bindings";
 import type { NodeContextMenuHandlers } from "@/components/keysight/nodes/EntityNode";
 import type { SectionListItem } from "@/components/keysight/nodes/NodeContextMenu";
 import { unwrapCommand } from "@/lib/commandResult";
@@ -39,7 +39,17 @@ const TASK_TOP_INSERT_OFFSET_Y = 180;
 const TASK_PACK_COLUMN_GAP = 360;
 const TASK_PACK_ROW_GAP = 170;
 const TASK_PACK_TOP_OFFSET_Y = 200;
-const TASK_STATUS_COLUMNS = ["inbox", "next", "active", "blocked", "done"] as const;
+// Record<TaskStatus, ...> 守护:Rust 端 TaskStatus 加 variant 时 TS 编译
+// 因缺 key 而失败,强制补 column。防 stringly typed 漏 case,符合 L0 防火墙
+// "想出错都难"——比 array + indexOf 更直接表达"每个 status 必有一列"。
+const TASK_STATUS_COLUMN: Record<TaskStatus, number> = {
+  inbox: 0,
+  next: 1,
+  active: 2,
+  blocked: 3,
+  done: 4,
+};
+const TASK_STATUS_COLUMN_COUNT = Object.keys(TASK_STATUS_COLUMN).length;
 
 /** 把屏幕中心转成世界坐标 — 给"在视口中央创建新实体"用 */
 function viewportCenterWorld(
@@ -55,6 +65,18 @@ function viewportCenterWorld(
   };
 }
 
+/**
+ * 计算 wrapper div 在当前 window 里真正可见的尺寸。
+ *
+ * 为什么需要:body overflow 失控 / 嵌套 flex 异常时,wrapper 可以长出视口
+ * 高度(如 contentRect.height = 12500),centerOn math 用这个错的高度
+ * 会把 entity 推到屏幕外。此函数用 window.innerWidth/innerHeight 减去
+ * rect.left/top 算可见区,作为 raw rect 的上限兜底。
+ *
+ * 1.5× buffer:允许 rect 比 visible 略大(scrollbar、sub-pixel rounding),
+ * 超过则视为 layout 异常,用 visible 替换。阈值选 1.5 而不是 1.0 是为了
+ * 避免临界尺寸下在 raw 和 visible 之间反复 flap 触发 re-render。
+ */
 function visibleViewportSize(
   element: HTMLElement | null,
   fallback: { width: number; height: number },
@@ -137,23 +159,18 @@ function taskPositionAboveTopmost(
   };
 }
 
-function taskStatusColumn(status: string | null | undefined): number {
-  const index = TASK_STATUS_COLUMNS.findIndex((item) => item === status);
-  return index >= 0 ? index : TASK_STATUS_COLUMNS.indexOf("next");
-}
-
 function packTaskPositions(
-  tasks: Array<{ id: string; status?: string | null }>,
+  tasks: Array<{ id: string; status: TaskStatus }>,
   viewportCenter: Position,
 ): Record<string, Position> {
   const originX =
-    viewportCenter.x - ((TASK_STATUS_COLUMNS.length - 1) * TASK_PACK_COLUMN_GAP) / 2;
+    viewportCenter.x - ((TASK_STATUS_COLUMN_COUNT - 1) * TASK_PACK_COLUMN_GAP) / 2;
   const originY = viewportCenter.y - TASK_PACK_TOP_OFFSET_Y;
   const rowsByColumn = new Map<number, number>();
   const packed: Record<string, Position> = {};
 
   for (const task of tasks) {
-    const column = taskStatusColumn(task.status);
+    const column = TASK_STATUS_COLUMN[task.status];
     const row = rowsByColumn.get(column) ?? 0;
     rowsByColumn.set(column, row + 1);
     packed[task.id] = {
@@ -1159,6 +1176,9 @@ export function GraphView({
     setLocalPositions((prev) => ({ ...prev, ...packed }));
 
     try {
+      // Promise.all 并发写,部分失败不 rollback 已成功的写入。catch 块
+      // invalidate 让 query refetch 拿回 server 真实状态,UI 显示 partial。
+      // 如未来需要原子语义,加 layout_set_positions_bulk command 走单事务。
       await Promise.all(
         Object.entries(packed).map(([taskId, position]) =>
           unwrapCommand(
