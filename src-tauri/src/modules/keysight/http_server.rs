@@ -307,6 +307,26 @@ mod tests {
         Arc::new(SelfWriteSuppression::new())
     }
 
+    /// Helper:查找 keysight-cli binary 路径。
+    ///
+    /// Workspace target 目录可由 `~/.cargo/config.toml [build] target-dir` 重定向
+    /// (例:用户设了 target-shared 跨项目共享),不能假设是项目本地 `target/`。
+    /// 用 `cargo metadata` 取真实 target dir,target-dir-agnostic。
+    fn cli_bin_path() -> std::path::PathBuf {
+        let output = std::process::Command::new(env!("CARGO"))
+            .args(["metadata", "--format-version", "1", "--no-deps"])
+            .output()
+            .expect("cargo metadata failed");
+        let meta: serde_json::Value = serde_json::from_slice(&output.stdout)
+            .expect("cargo metadata JSON parse failed");
+        let target_dir = meta["target_directory"]
+            .as_str()
+            .expect("metadata 缺 target_directory");
+        std::path::PathBuf::from(target_dir)
+            .join("debug")
+            .join("keysight-cli")
+    }
+
     /// Scenario: Tauri 启动后 config 与 endpoint 两文件同时就位
     #[tokio::test]
     async fn test_startup_writes_both_config_and_endpoint_files() {
@@ -528,13 +548,8 @@ mod tests {
         .await
         .unwrap();
 
-        // 3. 确认 keysight-cli binary 已 build(workspace target/debug/keysight-cli)
-        let cli_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("target")
-            .join("debug")
-            .join("keysight-cli");
+        // 3. 确认 keysight-cli binary 已 build
+        let cli_bin = cli_bin_path();
         assert!(
             cli_bin.exists(),
             "keysight-cli binary 未 build: {}\n先跑 `cargo build -p keysight-cli`",
@@ -639,12 +654,7 @@ mod tests {
         .unwrap();
 
         // 3. 确认 keysight-cli binary 已 build
-        let cli_bin = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-            .parent()
-            .unwrap()
-            .join("target")
-            .join("debug")
-            .join("keysight-cli");
+        let cli_bin = cli_bin_path();
         assert!(
             cli_bin.exists(),
             "keysight-cli binary 未 build: {}\n先跑 `cargo build -p keysight-cli`",
@@ -692,5 +702,130 @@ mod tests {
                 .map(|(n, _)| n.as_str())
                 .collect::<Vec<_>>()
         );
+    }
+
+    /// Phase 7 spec scenario(spec.md L81):Shutdown step 1 执行后新 CLI 写命令立即 fail-fast。
+    ///
+    /// 验证 design-v4 D2-a shutdown 顺序契约的跨进程语义:
+    /// `endpoint_guard.invalidate_atomic()`(step 1)瞬间删除 `cli-endpoint.toml`,
+    /// step 2-4 还没跑完时,新启的 CLI 写命令应通过 endpoint 文件缺失被立即拦截,
+    /// 不必等 server 完全关闭、无 race window。
+    ///
+    /// 与 in-process `test_shutdown_removes_endpoint_keeps_config`(L353)互补:
+    /// 那个 verify 4 步全跑完后的文件状态;本 test 锁住 step 1 完成的瞬间,新
+    /// CLI 子进程读 `cli-endpoint.toml` 必须 fail-fast。也与 Phase 6.2a offline
+    /// test `test_write_fails_fast_when_endpoint_file_missing`(keysight-cli/
+    /// tests/cli_write_integration.rs)互补:那个验证 endpoint 文件从未存在的
+    /// 场景;本 test 锁住"server 正在 shutdown 中"的并发场景。
+    ///
+    /// 用 `multi_thread` flavor —— subprocess `.output()` block 当前线程,
+    /// current_thread runtime 会让 axum accept loop 饿死(Phase 6.2c 教训)。
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn test_shutdown_step1_atomic_remove_blocks_new_write_cli() {
+        // 1. 构 tempdir + db + vault + seed wb_root
+        let data_dir = tempfile::tempdir().unwrap();
+        let vault = tempfile::tempdir().unwrap();
+        let db_path = data_dir.path().join("keysight.db");
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            init_db(&conn).unwrap();
+            conn.execute(
+                "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES ('wb_root', 'whiteboard', 'Root', 'wb_root')",
+                [],
+            )
+            .unwrap();
+        }
+
+        // 2. 启真 TCP server(发布 cli-endpoint.toml + cli-config.toml)
+        let emitter = test_emitter();
+        let suppression = test_suppression();
+        let server_state = start(
+            data_dir.path(),
+            &db_path,
+            vault.path(),
+            Arc::clone(&emitter) as Arc<dyn EventEmitter>,
+            Arc::clone(&suppression),
+        )
+        .await
+        .unwrap();
+
+        let endpoint_path = data_dir.path().join("cli-endpoint.toml");
+        let config_path = data_dir.path().join("cli-config.toml");
+        assert!(endpoint_path.exists(), "前置:endpoint 文件应已就位");
+        assert!(config_path.exists(), "前置:config 文件应已就位");
+
+        // 3. 拆 ServerState(只取 endpoint_guard,server 仍在跑)
+        let ServerState {
+            shutdown_tx,
+            join_handle,
+            endpoint_guard,
+            local_addr: _,
+        } = server_state;
+
+        // 4. Step 1 only —— 删 endpoint 文件,server 仍在跑(模拟 shutdown 进行中)
+        endpoint_guard.invalidate_atomic().unwrap();
+        assert!(
+            !endpoint_path.exists(),
+            "step 1 后 cli-endpoint.toml 应已被删"
+        );
+
+        // 5. 确认 keysight-cli binary 已 build
+        let cli_bin = cli_bin_path();
+        assert!(
+            cli_bin.exists(),
+            "keysight-cli binary 未 build: {}\n先跑 `cargo build -p keysight-cli`",
+            cli_bin.display()
+        );
+
+        // 6. spawn 新 CLI 写命令 —— 应 fail-fast(endpoint 文件不存在)
+        let output = std::process::Command::new(&cli_bin)
+            .arg("--config-file")
+            .arg(&config_path)
+            .arg("--endpoint-file")
+            .arg(&endpoint_path)
+            .args([
+                "graph",
+                "section-create",
+                "ShutdownRace",
+                "--wb",
+                "wb_root",
+            ])
+            .output()
+            .expect("spawn keysight-cli failed");
+
+        // 7. 完成 shutdown step 2-4(避免 server 泄漏到下一个 test)
+        let _ = shutdown_tx.send(());
+        let _ = tokio::time::timeout(Duration::from_secs(5), join_handle).await;
+        drop(endpoint_guard);
+
+        // 8. 断言 CLI exit 1 + stderr 包含 "Tauri is not running"
+        assert_eq!(
+            output.status.code(),
+            Some(1),
+            "CLI 应 exit 1;实际 status={:?}\nstdout={}\nstderr={}",
+            output.status.code(),
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr),
+        );
+
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        assert!(
+            stderr.contains("Tauri is not running"),
+            "stderr 应包含 \"Tauri is not running\";实际: {}",
+            stderr
+        );
+
+        // 9. DB 未新增 entity(CLI 在 endpoint load 阶段 fail-fast,未发起 HTTP)
+        {
+            let conn = Connection::open(&db_path).unwrap();
+            let count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM entities WHERE kind = 'section' AND title = 'ShutdownRace'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(count, 0, "CLI fail-fast 后不应写入任何 DB 行");
+        }
     }
 }
