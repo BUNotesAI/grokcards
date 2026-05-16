@@ -1,4 +1,4 @@
-import { render, screen, fireEvent, renderHook } from "@testing-library/react";
+import { render, screen, fireEvent, renderHook, act } from "@testing-library/react";
 import { MemoryRouter, Routes, Route, useLocation } from "react-router-dom";
 
 // useNavigate in GraphToolbar requires a Router context,
@@ -152,6 +152,23 @@ describe("GraphToolbar", () => {
     expect(screen.getByRole("button", { name: /zoom out/i })).toHaveAttribute("title");
     expect(screen.getByRole("button", { name: /zoom in/i })).toHaveAttribute("title");
     expect(screen.getByRole("button", { name: /reset zoom/i })).toHaveAttribute("title");
+  });
+
+  it("Fit board 按钮调用 onFitContent", () => {
+    const viewport = createTestViewport();
+    const onFitContent = vi.fn();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        onFitContent={onFitContent}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /fit board/i }));
+    expect(onFitContent).toHaveBeenCalledTimes(1);
   });
 
   it("+ Section 按钮调用 onCreateSection", () => {
@@ -405,6 +422,36 @@ describe("GraphToolbar", () => {
       />,
     );
     expect(screen.queryByRole("button", { name: /show kanban/i })).not.toBeInTheDocument();
+  });
+
+  it("Boards 下拉显示总实体数，避免只有非 card 内容的白板显示为 0", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 0, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        whiteboards={[
+          {
+            whiteboardId: "chentian",
+            cards: 0,
+            notes: 72,
+            sections: 11,
+            aliases: 119,
+            tasks: 0,
+            questions: 0,
+          },
+        ]}
+      />,
+    );
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /jump to whiteboard/i }));
+    });
+
+    expect(screen.getByText("chentian")).toBeInTheDocument();
+    expect(screen.getByText("202")).toBeInTheDocument();
   });
 
   it("点击 Show Kanban 导航到 /kanban?project={name}", () => {

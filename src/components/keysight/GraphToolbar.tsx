@@ -16,6 +16,7 @@ import {
   CircleHelp,
   FolderKanban,
   FolderPlus,
+  Focus,
   LayoutGrid,
   Lightbulb,
   Minus,
@@ -70,6 +71,7 @@ interface GraphToolbarProps {
   onSubmitWhiteboard?: () => void;
   onCancelWhiteboard?: () => void;
   onShowOrphans?: () => void;
+  onFitContent?: () => void;
   /** 当前白板 id，wb_root 表示根白板 */
   currentWhiteboardId?: string;
   /** 返回根白板的回调，仅子白板时使用 */
@@ -122,6 +124,7 @@ export function GraphToolbar({
   onSubmitWhiteboard,
   onCancelWhiteboard,
   onShowOrphans,
+  onFitContent,
   currentWhiteboardId = "wb_root",
   onNavigateBack,
   sections = [],
@@ -141,6 +144,9 @@ export function GraphToolbar({
       navigate(`/kanban?project=${encodeURIComponent(project)}`);
     }
   };
+
+  const totalWhiteboardEntities = (wb: WhiteboardSummary) =>
+    wb.cards + wb.notes + wb.sections + wb.aliases + wb.tasks + wb.questions;
 
   return (
     <div className="flex flex-wrap items-center gap-3 border-b border-[#dbd6cc] bg-[#f6f4ef] px-4 py-2 text-[13px] text-[#5c5548]">
@@ -384,7 +390,7 @@ export function GraphToolbar({
                     {wb.whiteboardId}
                   </span>
                   <span className="shrink-0 text-xs text-muted-foreground">
-                    {wb.cards}
+                    {totalWhiteboardEntities(wb)}
                   </span>
                 </DropdownMenuItem>
               );
@@ -397,6 +403,15 @@ export function GraphToolbar({
       <div className="ml-auto flex items-center gap-1 border-l border-[#d8d2c6] pl-3">
         <Button variant="ghost" size="icon" onClick={onSync} aria-label="Sync" title="Sync">
           <RefreshCw className="h-4 w-4" />
+        </Button>
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onFitContent}
+          aria-label="Fit board"
+          title="Fit board"
+        >
+          <Focus className="h-4 w-4" />
         </Button>
         <Button
           variant="ghost"

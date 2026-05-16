@@ -107,6 +107,7 @@ const mockState = vi.hoisted(() => ({
     },
   },
   whiteboardData: makeWhiteboardData(),
+  visibleEntitiesOverride: null as unknown[] | null,
 }));
 
 vi.mock("@/bindings", () => ({
@@ -137,7 +138,7 @@ vi.mock("@/components/keysight/hooks/useWhiteboardData", () => ({
 }));
 
 vi.mock("@/components/keysight/hooks/useVisibleEntities", () => ({
-  useVisibleEntities: (entities: unknown[]) => entities,
+  useVisibleEntities: (entities: unknown[]) => mockState.visibleEntitiesOverride ?? entities,
 }));
 
 function renderGraphView(props: Partial<ComponentProps<typeof GraphView>> = {}) {
@@ -203,7 +204,9 @@ describe("GraphView", () => {
     mockSectionDelete.mockResolvedValue({ status: "ok", data: null });
     mockState.viewport.actions.centerOn.mockReset();
     mockState.viewport.actions.fitToContent.mockReset();
+    mockState.viewport.needsFit = false;
     mockState.whiteboardData = makeWhiteboardData();
+    mockState.visibleEntitiesOverride = null;
   });
 
   it("点击 Related 打开 picker，排除自己和已关联卡片", () => {
@@ -417,6 +420,90 @@ describe("GraphView", () => {
 
     await waitFor(() => {
       expect(mockSectionDelete).toHaveBeenCalledWith("sec_existing");
+    });
+  });
+
+  it("Sections 下拉点击有成员位置但无自身位置的 section 时应居中到 section bounds", () => {
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      notes: [
+        {
+          id: "note_in_section",
+          title: "Inside Section",
+          content: "body",
+          color: null,
+          linkedCardIds: [],
+          linkedNoteIds: [],
+          linkedSectionIds: [],
+          linkedQuestionIds: [],
+          linkedTaskIds: [],
+        },
+      ],
+      sections: [{ id: "sec_jump", title: "Jump Section", cardIds: ["note_in_section"] }],
+      aliases: [],
+      tasks: [],
+      questions: [],
+      positions: {
+        note_in_section: { x: 500, y: 300 },
+      },
+    };
+
+    renderGraphView();
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /jump to section/i }));
+    });
+    act(() => {
+      fireEvent.click(screen.getAllByText("Jump Section")[1]!);
+    });
+
+    expect(mockState.viewport.actions.centerOn).toHaveBeenCalledWith(
+      460,
+      260,
+      1280,
+      720,
+      600,
+      260,
+    );
+  });
+
+  it("数据非空但当前视口无可见实体时自动 fit 一次，恢复 stale saved viewport", async () => {
+    mockState.viewport.needsFit = false;
+    mockState.visibleEntitiesOverride = [];
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      notes: [
+        {
+          id: "note_far",
+          title: "Far note",
+          content: "body",
+          color: null,
+          linkedCardIds: [],
+          linkedNoteIds: [],
+          linkedSectionIds: [],
+          linkedQuestionIds: [],
+          linkedTaskIds: [],
+        },
+      ],
+      sections: [],
+      aliases: [],
+      tasks: [],
+      questions: [],
+      positions: {
+        note_far: { x: -4200, y: 3200 },
+      },
+    };
+
+    renderGraphView({ currentWhiteboardId: "chentian" });
+
+    await waitFor(() => {
+      expect(mockState.viewport.actions.fitToContent).toHaveBeenCalledWith(
+        [{ x: -4200, y: 3200 }],
+        1280,
+        720,
+      );
     });
   });
 

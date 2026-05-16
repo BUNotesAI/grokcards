@@ -31,6 +31,7 @@ const DRAG_THRESHOLD = 4;
 
 /** 根白板 ID — rust/chentian 等是子白板，根白板显示子白板预览卡 */
 export const ROOT_WHITEBOARD = "wb_root";
+const SECTION_PADDING = 40;
 
 /** 把屏幕中心转成世界坐标 — 给"在视口中央创建新实体"用 */
 function viewportCenterWorld(
@@ -119,7 +120,6 @@ function mergeEntitiesWithPositions(
   // Sections — 位置从成员动态计算（和旧 Obsidian 插件行为一致）
   // Section 盒子的 top-left 是 min(member.x, member.y) - PADDING
   // 如果没有任何成员有位置，section 不渲染
-  const SECTION_PADDING = 40; // 和 SectionNode.PADDING 一致
   for (const section of data.sections) {
     const memberPosList = section.cardIds
       .map((id) => positions[id])
@@ -495,6 +495,29 @@ export function GraphView({
     forceVisibleIds,
   );
 
+  const hasEntityInViewport = useMemo(() => {
+    if (containerSize.width === 0 || containerSize.height === 0) return true;
+    const { zoom, panX, panY } = viewport.state;
+    const viewLeft = -panX / zoom;
+    const viewTop = -panY / zoom;
+    const viewRight = (-panX + containerSize.width) / zoom;
+    const viewBottom = (-panY + containerSize.height) / zoom;
+
+    return allEntities.some((entity) => {
+      const dim = allDimensions[entity.id] ?? { width: 320, height: 160 };
+      const entityLeft = entity.position.x;
+      const entityTop = entity.position.y;
+      const entityRight = entity.position.x + dim.width;
+      const entityBottom = entity.position.y + dim.height;
+      return (
+        entityLeft < viewRight &&
+        entityRight > viewLeft &&
+        entityTop < viewBottom &&
+        entityBottom > viewTop
+      );
+    });
+  }, [allDimensions, allEntities, containerSize.height, containerSize.width, viewport.state]);
+
   // 启动性能：第一次有 visible entities
   const firstVisiblePaintRef = useRef(false);
   useEffect(() => {
@@ -670,6 +693,15 @@ export function GraphView({
     }
   }, [data.positions, localPositions]);
 
+  const handleFitContent = useCallback(() => {
+    if (allEntities.length === 0 || containerSize.width === 0 || containerSize.height === 0) return;
+    viewport.actions.fitToContent(
+      allEntities.map((e) => e.position),
+      containerSize.width,
+      containerSize.height,
+    );
+  }, [allEntities, containerSize.height, containerSize.width, viewport.actions]);
+
   // 首次进入白板时自动居中到实体的中位数位置
   // 每个白板在 session 内只尝试一次，已保存的视口由 useViewport 恢复
   const fitAttemptedRef = useRef<Set<string>>(new Set());
@@ -682,18 +714,35 @@ export function GraphView({
       return;
     }
     fitAttemptedRef.current.add(currentWhiteboardId);
-    viewport.actions.fitToContent(
-      allEntities.map((e) => e.position),
-      containerSize.width,
-      containerSize.height,
-    );
+    handleFitContent();
   }, [
     data.isLoading,
     allEntities,
     viewport.needsFit,
-    viewport.actions,
+    handleFitContent,
     containerSize,
     currentWhiteboardId,
+  ]);
+
+  // 已保存 viewport 可能指向空白区域。每个白板首次发现"有实体但当前视口无可见实体"
+  // 时自动 fit 一次，避免用户看到空画布后还需要手工清 localStorage。
+  const blankViewportRecoveryRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (data.isLoading || viewport.needsFit) return;
+    if (containerSize.width === 0 || containerSize.height === 0) return;
+    if (allEntities.length === 0 || hasEntityInViewport) return;
+    if (blankViewportRecoveryRef.current.has(currentWhiteboardId)) return;
+    blankViewportRecoveryRef.current.add(currentWhiteboardId);
+    handleFitContent();
+  }, [
+    allEntities.length,
+    containerSize.height,
+    containerSize.width,
+    currentWhiteboardId,
+    data.isLoading,
+    handleFitContent,
+    hasEntityInViewport,
+    viewport.needsFit,
   ]);
 
   // cardId → AtomicCard 全局映射（CardNode/AliasNode 渲染 related/linkTo 用）
@@ -1233,22 +1282,54 @@ export function GraphView({
   // 跳转到指定 section — 用 allDimensions 算出真实尺寸后调 viewport.centerOn
   const handleJumpToSection = useCallback(
     (sectionId: string) => {
+      const dim = allDimensions[sectionId] ?? { width: 400, height: 300 };
       const sectionEntity = allEntities.find(
         (e) => e.kind === "section" && e.id === sectionId,
       );
-      if (!sectionEntity) return;
-      const dim = allDimensions[sectionId];
-      if (!dim) return;
+      if (sectionEntity) {
+        viewport.actions.centerOn(
+          sectionEntity.position.x,
+          sectionEntity.position.y,
+          containerSize.width,
+          containerSize.height,
+          dim.width,
+          dim.height,
+        );
+        return;
+      }
+
+      const section = data.sections.find((item) => item.id === sectionId);
+      if (!section) return;
+
+      const memberPosList = section.cardIds
+        .map((id) => effectivePositions[id])
+        .filter((p): p is { x: number; y: number } => p != null);
+      if (memberPosList.length > 0) {
+        const minX = Math.min(...memberPosList.map((p) => p.x));
+        const minY = Math.min(...memberPosList.map((p) => p.y));
+        viewport.actions.centerOn(
+          minX - SECTION_PADDING,
+          minY - SECTION_PADDING,
+          containerSize.width,
+          containerSize.height,
+          dim.width,
+          dim.height,
+        );
+        return;
+      }
+
+      const ownPos = effectivePositions[sectionId];
+      if (!ownPos) return;
       viewport.actions.centerOn(
-        sectionEntity.position.x,
-        sectionEntity.position.y,
+        ownPos.x,
+        ownPos.y,
         containerSize.width,
         containerSize.height,
         dim.width,
         dim.height,
       );
     },
-    [allEntities, allDimensions, containerSize, viewport.actions],
+    [allDimensions, allEntities, containerSize, data.sections, effectivePositions, viewport.actions],
   );
 
   // 跳转到指定白板 — 直接切 currentWhiteboardId
@@ -1374,6 +1455,7 @@ export function GraphView({
         onSubmitWhiteboard={handleSubmitCreateWhiteboard}
         onCancelWhiteboard={handleCancelCreateWhiteboard}
         onShowOrphans={onShowOrphans}
+        onFitContent={handleFitContent}
         currentWhiteboardId={currentWhiteboardId}
         onNavigateBack={() => {
           setDrawingState(null);
