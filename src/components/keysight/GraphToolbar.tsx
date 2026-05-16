@@ -1,6 +1,6 @@
 import { useNavigate } from "react-router-dom";
 import type { UseViewportReturn } from "@/components/keysight/useViewport";
-import type { GraphSection, WhiteboardSummary } from "@/bindings";
+import type { GraphSection, TaskEntity, WhiteboardSummary } from "@/bindings";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
@@ -72,16 +72,24 @@ interface GraphToolbarProps {
   onCancelWhiteboard?: () => void;
   onShowOrphans?: () => void;
   onFitContent?: () => void;
+  /** 重新整理 project task positions 到当前可见区域 */
+  onPackTasks?: () => void;
+  /** 清理当前白板 saved viewport 并重新 fit */
+  onResetSavedViewport?: () => void;
   /** 当前白板 id，wb_root 表示根白板 */
   currentWhiteboardId?: string;
   /** 返回根白板的回调，仅子白板时使用 */
   onNavigateBack?: () => void;
   /** 当前白板的 sections，给 Sections 下拉菜单用 */
   sections?: GraphSection[];
+  /** 当前白板的 tasks，给 Tasks 下拉菜单用 */
+  tasks?: TaskEntity[];
   /** 所有子白板列表，给 Boards 下拉菜单用 */
   whiteboards?: WhiteboardSummary[];
   /** 跳转到某 section 的回调（在 graph 中居中显示） */
   onJumpToSection?: (sectionId: string) => void;
+  /** 跳转到某 task 的回调（在 graph 中居中显示） */
+  onJumpToTask?: (taskId: string) => void;
   /** 跳转到某白板的回调（切换 currentWhiteboardId） */
   onJumpToBoard?: (whiteboardId: string) => void;
 }
@@ -125,11 +133,15 @@ export function GraphToolbar({
   onCancelWhiteboard,
   onShowOrphans,
   onFitContent,
+  onPackTasks,
+  onResetSavedViewport,
   currentWhiteboardId = "wb_root",
   onNavigateBack,
   sections = [],
+  tasks = [],
   whiteboards = [],
   onJumpToSection,
+  onJumpToTask,
   onJumpToBoard,
 }: GraphToolbarProps) {
   const navigate = useNavigate();
@@ -137,9 +149,10 @@ export function GraphToolbar({
   const zoomPercent = Math.round(state.zoom * 100);
   const coordX = Math.round(-state.panX / Math.max(state.zoom, 0.001));
   const coordY = Math.round(-state.panY / Math.max(state.zoom, 0.001));
+  const isProjectWhiteboard = currentWhiteboardId.startsWith("projects/");
 
   const handleShowKanban = () => {
-    if (currentWhiteboardId.startsWith("projects/")) {
+    if (isProjectWhiteboard) {
       const project = currentWhiteboardId.slice("projects/".length);
       navigate(`/kanban?project=${encodeURIComponent(project)}`);
     }
@@ -247,7 +260,7 @@ export function GraphToolbar({
           Question
         </Button>
       )}
-      {currentWhiteboardId.startsWith("projects/") && (
+      {isProjectWhiteboard && (
         creatingTask ? (
           <Input
             autoFocus
@@ -272,7 +285,7 @@ export function GraphToolbar({
           </Button>
         )
       )}
-      {currentWhiteboardId.startsWith("projects/") && (
+      {isProjectWhiteboard && (
         <Button
           variant="outline"
           size="sm"
@@ -322,6 +335,39 @@ export function GraphToolbar({
       >
         <Lightbulb className="h-4 w-4" />
       </Button>
+
+      {isProjectWhiteboard && tasks.length > 0 && (
+        <DropdownMenu>
+          <DropdownMenuTrigger
+            render={(props) => (
+              <Button
+                variant="outline"
+                size="sm"
+                aria-label="Jump to task"
+                title="Jump to task"
+                {...(props as React.ComponentProps<typeof Button>)}
+              >
+                <CheckSquare className="mr-1 h-4 w-4" />
+                Tasks
+              </Button>
+            )}
+          />
+          <DropdownMenuContent align="start" className="max-h-96 w-72 overflow-y-auto">
+            {tasks.map((task) => (
+              <DropdownMenuItem
+                key={task.id}
+                onClick={() => onJumpToTask?.(task.id)}
+                className="flex items-center justify-between gap-3"
+              >
+                <span className="truncate text-sm">{task.title || "(untitled)"}</span>
+                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+                  {task.status}
+                </span>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      )}
 
       {sections.length > 0 && (
         <DropdownMenu>
@@ -401,6 +447,28 @@ export function GraphToolbar({
 
       {/* 操作区 */}
       <div className="ml-auto flex items-center gap-1 border-l border-[#d8d2c6] pl-3">
+        {isProjectWhiteboard && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onPackTasks}
+            aria-label="Pack tasks"
+            title="Pack tasks"
+          >
+            <Rows3 className="h-4 w-4" />
+          </Button>
+        )}
+        {isProjectWhiteboard && (
+          <Button
+            variant="ghost"
+            size="icon"
+            onClick={onResetSavedViewport}
+            aria-label="Reset saved viewport"
+            title="Reset saved viewport"
+          >
+            <MapPinned className="h-4 w-4" />
+          </Button>
+        )}
         <Button variant="ghost" size="icon" onClick={onSync} aria-label="Sync" title="Sync">
           <RefreshCw className="h-4 w-4" />
         </Button>

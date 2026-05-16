@@ -19,7 +19,7 @@ function LocationReadout() {
 }
 import { GraphToolbar } from "@/components/keysight/GraphToolbar";
 import { useViewport } from "@/components/keysight/useViewport";
-import type { WhiteboardSummary } from "@/bindings";
+import type { TaskEntity, WhiteboardSummary } from "@/bindings";
 import { vi } from "vitest";
 
 /** 创建真实 viewport */
@@ -37,6 +37,31 @@ const mockWhiteboard: WhiteboardSummary = {
   tasks: 0,
   questions: 0,
 };
+
+const mockTasks: TaskEntity[] = [
+  {
+    id: "task_aha2",
+    title: "Aha 2 moment",
+    content: "",
+    whiteboardId: "projects/super-tauri",
+    status: "next",
+    area: null,
+    project: "super-tauri",
+    color: null,
+    subtasks: [],
+  },
+  {
+    id: "task_done",
+    title: "Already shipped",
+    content: "",
+    whiteboardId: "projects/super-tauri",
+    status: "done",
+    area: null,
+    project: "super-tauri",
+    color: null,
+    subtasks: [],
+  },
+];
 
 describe("GraphToolbar", () => {
   it("显示实体计数", () => {
@@ -365,6 +390,42 @@ describe("GraphToolbar", () => {
     expect(screen.queryByRole("button", { name: /create task/i })).not.toBeInTheDocument();
   });
 
+  it("非 project graph 即使有 task 数据也不显示 Tasks 下拉", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 2, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="rust"
+        tasks={mockTasks}
+        onJumpToTask={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /jump to task/i })).not.toBeInTheDocument();
+  });
+
+  it("非 project graph 不显示 Pack tasks 和 Reset saved viewport", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 2, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="rust"
+        tasks={mockTasks}
+        onPackTasks={vi.fn()}
+        onResetSavedViewport={vi.fn()}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: /pack tasks/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /reset saved viewport/i })).not.toBeInTheDocument();
+  });
+
   it("创建 task 时显示内联输入框", () => {
     const viewport = createTestViewport();
     renderT(      <GraphToolbar
@@ -452,6 +513,90 @@ describe("GraphToolbar", () => {
 
     expect(screen.getByText("chentian")).toBeInTheDocument();
     expect(screen.getByText("202")).toBeInTheDocument();
+  });
+
+  it("Tasks 下拉列出当前白板所有 task 并触发跳转", () => {
+    const viewport = createTestViewport();
+    const onJumpToTask = vi.fn();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 2, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="projects/super-tauri"
+        tasks={mockTasks}
+        onJumpToTask={onJumpToTask}
+      />,
+    );
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /jump to task/i }));
+    });
+
+    expect(screen.getByText("Aha 2 moment")).toBeInTheDocument();
+    expect(screen.getByText("Already shipped")).toBeInTheDocument();
+    expect(screen.getByText("done")).toBeInTheDocument();
+
+    act(() => {
+      fireEvent.click(screen.getByText("Aha 2 moment"));
+    });
+
+    expect(onJumpToTask).toHaveBeenCalledWith("task_aha2");
+  });
+
+  it("project graph 显示 Pack tasks 和 Reset saved viewport 操作", () => {
+    const viewport = createTestViewport();
+    const onPackTasks = vi.fn();
+    const onResetSavedViewport = vi.fn();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 0, tasks: 2, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="projects/super-tauri"
+        tasks={mockTasks}
+        onPackTasks={onPackTasks}
+        onResetSavedViewport={onResetSavedViewport}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: /pack tasks/i }));
+    fireEvent.click(screen.getByRole("button", { name: /reset saved viewport/i }));
+
+    expect(onPackTasks).toHaveBeenCalledTimes(1);
+    expect(onResetSavedViewport).toHaveBeenCalledTimes(1);
+  });
+
+  it("project graph 的 Tasks 下拉位于孤儿按钮之后、Sections 之前", () => {
+    const viewport = createTestViewport();
+    renderT(      <GraphToolbar
+        viewport={viewport}
+        entityCounts={{ cards: 0, notes: 0, sections: 1, tasks: 2, questions: 0, aliases: 0 }}
+        onSync={vi.fn()}
+        onCreateSection={vi.fn()}
+        onCreateNote={vi.fn()}
+        currentWhiteboardId="projects/super-tauri"
+        sections={[{ id: "sec_inbox", title: "Inbox", cardIds: [] }]}
+        tasks={mockTasks}
+        whiteboards={[mockWhiteboard]}
+      />,
+    );
+
+    const buttons = screen
+      .getAllByRole("button")
+      .map((button) => ({
+        text: button.textContent?.replace(/\s+/g, " ").trim() ?? "",
+        label: button.getAttribute("aria-label") ?? "",
+      }));
+
+    const orphanIndex = buttons.findIndex((button) => button.label === "Show orphans");
+    const tasksIndex = buttons.findIndex((button) => button.text === "Tasks");
+    const sectionsIndex = buttons.findIndex((button) => button.text === "Sections");
+
+    expect(tasksIndex).toBeGreaterThan(orphanIndex);
+    expect(sectionsIndex).toBeGreaterThan(tasksIndex);
   });
 
   it("点击 Show Kanban 导航到 /kanban?project={name}", () => {

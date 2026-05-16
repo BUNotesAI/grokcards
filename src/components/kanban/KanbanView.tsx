@@ -80,14 +80,15 @@ export function KanbanView() {
     status: TaskStatus;
   }) => {
     await unwrapCommand(
-      commands.taskCreate(
-        data.project,
-        data.title,
-        null,
-        data.status,
-        null,
-        null,
-      ),
+      commands.taskCreate({
+        project: data.project,
+        title: data.title,
+        content: null,
+        status: data.status,
+        area: null,
+        color: null,
+        position: null,
+      }),
     );
     invalidateAllTaskCaches(queryClient, `projects/${data.project}`);
     closeModal();

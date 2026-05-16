@@ -15,8 +15,8 @@ use super::domain::{overview, question, sync, task, whiteboard};
 use super::models::{
     AtomicCard, CardAlias, CardLinksResponse, EdgeRow, EdgeType, GraphNote,
     GraphOverviewResponse, GraphSection, ImportSummary, NoteFileMigrationReport, Position,
-    QuestionEntity, StatsResponse, Subtask, SyncFileResponse, SyncVaultReport, TaskEntity,
-    TaskStatus, VaultInfoResponse, WhiteboardSummary,
+    QuestionEntity, StatsResponse, Subtask, SyncFileResponse, SyncVaultReport,
+    TaskCreateRequest, TaskEntity, TaskStatus, VaultInfoResponse, WhiteboardSummary,
 };
 use super::recording_vault_fs::RecordingVaultFs;
 use super::runtime_state::KeysightRuntimeState;
@@ -529,34 +529,32 @@ pub fn task_query_kanban(
 /// 1. ProjectName::new 校验 project
 /// 2. 调 domain::task::create —— 生成 task_id、渲染 markdown、写
 ///    `whiteboard/projects/{project}/{id} 【TASK】{title}.md`、sync 回 DB
-/// 3. 返回新 TaskEntity
+/// 3. 如果 `position` 存在,用它作为初始 canvas 坐标;否则由 domain 自动放到
+///    当前 project 白板最底部
+/// 4. 返回新 TaskEntity
 #[tauri::command]
 #[specta::specta]
 pub fn task_create(
     state: State<'_, KeysightRuntimeState>,
-    project: String,
-    title: String,
-    content: Option<String>,
-    status: TaskStatus,
-    area: Option<String>,
-    color: Option<String>,
+    input: TaskCreateRequest,
 ) -> Result<TaskEntity, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_create");
     let conn = lock_db(&state.core.db, "task_create");
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().into_owned(), state.suppression.clone());
     let project_name =
-        task::ProjectName::new(&project).map_err(Into::<AppError>::into)?;
+        task::ProjectName::new(&input.project).map_err(Into::<AppError>::into)?;
     task::create(
         &conn,
         &vault_fs,
         &project_name,
         task::TaskCreateInput {
-            title: &title,
-            content: content.as_deref(),
-            status,
-            area: area.as_deref(),
-            color: color.as_deref(),
+            title: &input.title,
+            content: input.content.as_deref(),
+            status: input.status,
+            area: input.area.as_deref(),
+            color: input.color.as_deref(),
+            position: input.position,
         },
     )
     .map_err(Into::into)

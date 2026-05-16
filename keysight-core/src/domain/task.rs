@@ -701,6 +701,7 @@ pub struct TaskCreateInput<'a> {
     pub status: TaskStatus,
     pub area: Option<&'a str>,
     pub color: Option<&'a str>,
+    pub position: Option<Position>,
 }
 
 /// Task 更新输入 —— None 字段保留 current 值,Some 字段覆盖。
@@ -728,8 +729,9 @@ pub struct TaskUpdateInput<'a> {
 /// 4. 通过 VaultFs 写文件(不存在的目录由 vault_fs 负责 mkdir -p)
 /// 5. 调 `sync::sync_file` 把 markdown parse 回 DB,`whiteboard_id` 由路径推导为
 ///    `projects/{project}`,task_fields 表 UPSERT status/area/project
-/// 6. 自动定位: 写 positions 行(x=0.0, y=最底元素下方一个 node 高度 + spacing),
-///    空白板第一个节点落在 (0, 0)
+/// 6. 写 positions 行:如果 `input.position` 存在则使用调用方提供的初始坐标,
+///    否则自动定位到最底元素下方一个 node 高度 + spacing;空白板第一个节点
+///    落在 (0, 0)
 /// 7. 返回 `TaskEntity`(通过 `get` 从 DB 重新读取)
 ///
 /// # 不做的事
@@ -760,10 +762,13 @@ pub fn create(
     );
     vault_fs.write_file(&file_path, &markdown)?;
     sync::sync_file(conn, &file_path, &markdown, current_mtime_ms())?;
-    // 自动定位: 在 canvas 最底元素下方一个 node 高度 + spacing 处
-    // (为 Kanban view 创建的 task 提供 canvas 坐标,无需 TS 侧调 layout_set_position)
     let whiteboard_id = project.whiteboard_id();
-    let position = compute_position_below_bottommost(conn, &whiteboard_id)?;
+    // Graph view 创建时传入当前视口中心,保证新 task 立刻可见;Kanban 创建时
+    // 不传 position,继续使用默认"最底部"落点。
+    let position = match input.position {
+        Some(position) => position,
+        None => compute_position_below_bottommost(conn, &whiteboard_id)?,
+    };
     conn.execute(
         "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
         params![&task_id, &whiteboard_id, position.x, position.y],
@@ -1292,6 +1297,7 @@ mod tests {
             status: TaskStatus::Next,
             area: None,
             color: None,
+            position: None,
         }
     }
 
@@ -1322,6 +1328,7 @@ mod tests {
                 status: TaskStatus::Active,
                 area: Some("backend"),
                 color: None,
+                position: None,
             },
         )
         .unwrap();
@@ -2132,6 +2139,7 @@ mod tests {
                 status: TaskStatus::Inbox,
                 area: None,
                 color: None,
+                position: None,
             },
         )
         .unwrap();
@@ -2145,6 +2153,42 @@ mod tests {
             .unwrap();
         // 首个 task,白板空 → 落在原点
         assert_eq!(pos, (0.0, 0.0));
+    }
+
+    #[test]
+    fn test_create_task_respects_explicit_initial_position() {
+        let conn = test_conn();
+        let fs = MockVaultFs::new();
+        let project = ProjectName::new("test").unwrap();
+        conn.execute(
+            "INSERT INTO positions (entity_id, whiteboard_id, x, y) VALUES ('existing', 'projects/test', 0.0, 5000.0)",
+            [],
+        )
+        .unwrap();
+
+        let task = create(
+            &conn,
+            &fs,
+            &project,
+            TaskCreateInput {
+                title: "visible task",
+                content: None,
+                status: TaskStatus::Next,
+                area: None,
+                color: None,
+                position: Some(Position { x: 480.0, y: 290.0 }),
+            },
+        )
+        .unwrap();
+
+        let pos: (f64, f64) = conn
+            .query_row(
+                "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
+                params![&task.id, "projects/test"],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .unwrap();
+        assert_eq!(pos, (480.0, 290.0));
     }
 
     #[test]
@@ -2162,6 +2206,7 @@ mod tests {
                 status: TaskStatus::Inbox,
                 area: None,
                 color: None,
+                position: None,
             },
         )
         .unwrap();
@@ -2175,6 +2220,7 @@ mod tests {
                 status: TaskStatus::Inbox,
                 area: None,
                 color: None,
+                position: None,
             },
         )
         .unwrap();

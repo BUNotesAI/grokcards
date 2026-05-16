@@ -120,12 +120,15 @@ describe("KanbanView", () => {
 
     await waitFor(() => {
       expect(commands.taskCreate).toHaveBeenCalledWith(
-        "alpha",
-        "Build kanban",
-        null,
-        "inbox",
-        null,
-        null,
+        {
+          project: "alpha",
+          title: "Build kanban",
+          content: null,
+          status: "inbox",
+          area: null,
+          color: null,
+          position: null,
+        },
       );
     });
   });

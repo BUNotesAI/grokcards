@@ -2,7 +2,7 @@ import { useMemo, useRef, useState, useCallback, useEffect, type MouseEvent as R
 import { GraphCanvas } from "@/components/keysight/GraphCanvas";
 import { GraphEdges } from "@/components/keysight/GraphEdges";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
-import { useViewport } from "@/components/keysight/useViewport";
+import { clearSavedViewport, useViewport } from "@/components/keysight/useViewport";
 import { useContainerSize } from "@/components/keysight/hooks/useContainerSize";
 import { useWhiteboardData, useWhiteboardList, type WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
 import { useVisibleEntities } from "@/components/keysight/hooks/useVisibleEntities";
@@ -32,6 +32,14 @@ const DRAG_THRESHOLD = 4;
 /** 根白板 ID — rust/chentian 等是子白板，根白板显示子白板预览卡 */
 export const ROOT_WHITEBOARD = "wb_root";
 const SECTION_PADDING = 40;
+const TASK_NODE_WIDTH = 320;
+const TASK_NODE_HEIGHT = 140;
+const TASK_JUMP_MIN_ZOOM = 0.75;
+const TASK_TOP_INSERT_OFFSET_Y = 180;
+const TASK_PACK_COLUMN_GAP = 360;
+const TASK_PACK_ROW_GAP = 170;
+const TASK_PACK_TOP_OFFSET_Y = 200;
+const TASK_STATUS_COLUMNS = ["inbox", "next", "active", "blocked", "done"] as const;
 
 /** 把屏幕中心转成世界坐标 — 给"在视口中央创建新实体"用 */
 function viewportCenterWorld(
@@ -44,6 +52,28 @@ function viewportCenterWorld(
   return {
     x: (-panX + containerWidth / 2) / zoom,
     y: (-panY + containerHeight / 2) / zoom,
+  };
+}
+
+function visibleViewportSize(
+  element: HTMLElement | null,
+  fallback: { width: number; height: number },
+): { width: number; height: number } {
+  const rect = element?.getBoundingClientRect();
+  const rawWidth = rect && rect.width > 0 ? rect.width : fallback.width;
+  const rawHeight = rect && rect.height > 0 ? rect.height : fallback.height;
+  if (rawWidth <= 0 || rawHeight <= 0) return { width: 0, height: 0 };
+
+  const windowWidth = typeof window === "undefined" ? rawWidth : window.innerWidth;
+  const windowHeight = typeof window === "undefined" ? rawHeight : window.innerHeight;
+  const visibleWidth =
+    rect && rect.width > 0 ? Math.max(0, windowWidth - Math.max(rect.left, 0)) : windowWidth;
+  const visibleHeight =
+    rect && rect.height > 0 ? Math.max(0, windowHeight - Math.max(rect.top, 0)) : windowHeight;
+
+  return {
+    width: rawWidth > visibleWidth * 1.5 ? visibleWidth : rawWidth,
+    height: rawHeight > visibleHeight * 1.5 ? visibleHeight : rawHeight,
   };
 }
 
@@ -82,6 +112,57 @@ function avoidSectionOverlap(
   }
 
   return next;
+}
+
+function taskPositionAboveTopmost(
+  tasks: Array<{ id: string }>,
+  positions: Record<string, Position>,
+  fallback: Position,
+): Position {
+  const taskPositions = tasks
+    .map((task) => positions[task.id])
+    .filter((position): position is Position => position != null);
+
+  if (taskPositions.length === 0) return fallback;
+
+  const topmost = taskPositions.reduce((best, position) => {
+    if (position.y < best.y) return position;
+    if (position.y === best.y && position.x < best.x) return position;
+    return best;
+  });
+
+  return {
+    x: topmost.x,
+    y: topmost.y - TASK_TOP_INSERT_OFFSET_Y,
+  };
+}
+
+function taskStatusColumn(status: string | null | undefined): number {
+  const index = TASK_STATUS_COLUMNS.findIndex((item) => item === status);
+  return index >= 0 ? index : TASK_STATUS_COLUMNS.indexOf("next");
+}
+
+function packTaskPositions(
+  tasks: Array<{ id: string; status?: string | null }>,
+  viewportCenter: Position,
+): Record<string, Position> {
+  const originX =
+    viewportCenter.x - ((TASK_STATUS_COLUMNS.length - 1) * TASK_PACK_COLUMN_GAP) / 2;
+  const originY = viewportCenter.y - TASK_PACK_TOP_OFFSET_Y;
+  const rowsByColumn = new Map<number, number>();
+  const packed: Record<string, Position> = {};
+
+  for (const task of tasks) {
+    const column = taskStatusColumn(task.status);
+    const row = rowsByColumn.get(column) ?? 0;
+    rowsByColumn.set(column, row + 1);
+    packed[task.id] = {
+      x: originX + column * TASK_PACK_COLUMN_GAP,
+      y: originY + row * TASK_PACK_ROW_GAP,
+    };
+  }
+
+  return packed;
 }
 
 export interface GraphFocusTarget {
@@ -202,8 +283,12 @@ export function GraphView({
   onOpenAlias,
 }: GraphViewProps) {
   const viewport = useViewport(currentWhiteboardId);
-  const containerRef = useRef<HTMLDivElement>(null);
-  const containerSize = useContainerSize(containerRef);
+  const graphViewportRef = useRef<HTMLDivElement>(null);
+  const containerSize = useContainerSize(graphViewportRef);
+  const getVisibleViewportSize = useCallback(
+    () => visibleViewportSize(graphViewportRef.current, containerSize),
+    [containerSize],
+  );
   const data = useWhiteboardData(currentWhiteboardId);
   const queryClient = useQueryClient();
   const handledFocusNonceRef = useRef<number | null>(null);
@@ -487,21 +572,27 @@ export function GraphView({
     return ids;
   }, [editing, expandedId, selectedEntityId, relatedPickerCardId]);
 
+  const renderViewportSize = useMemo(
+    () => visibleViewportSize(graphViewportRef.current, containerSize),
+    [containerSize],
+  );
+
   const visibleEntities = useVisibleEntities(
     allEntities,
     viewport.state,
-    containerSize,
+    renderViewportSize,
     allDimensions,
     forceVisibleIds,
   );
 
   const hasEntityInViewport = useMemo(() => {
-    if (containerSize.width === 0 || containerSize.height === 0) return true;
+    const size = visibleViewportSize(graphViewportRef.current, containerSize);
+    if (size.width === 0 || size.height === 0) return true;
     const { zoom, panX, panY } = viewport.state;
     const viewLeft = -panX / zoom;
     const viewTop = -panY / zoom;
-    const viewRight = (-panX + containerSize.width) / zoom;
-    const viewBottom = (-panY + containerSize.height) / zoom;
+    const viewRight = (-panX + size.width) / zoom;
+    const viewBottom = (-panY + size.height) / zoom;
 
     return allEntities.some((entity) => {
       const dim = allDimensions[entity.id] ?? { width: 320, height: 160 };
@@ -516,7 +607,7 @@ export function GraphView({
         entityBottom > viewTop
       );
     });
-  }, [allDimensions, allEntities, containerSize.height, containerSize.width, viewport.state]);
+  }, [allDimensions, allEntities, containerSize, viewport.state]);
 
   // 启动性能：第一次有 visible entities
   const firstVisiblePaintRef = useRef(false);
@@ -694,19 +785,21 @@ export function GraphView({
   }, [data.positions, localPositions]);
 
   const handleFitContent = useCallback(() => {
-    if (allEntities.length === 0 || containerSize.width === 0 || containerSize.height === 0) return;
+    const size = getVisibleViewportSize();
+    if (allEntities.length === 0 || size.width === 0 || size.height === 0) return;
     viewport.actions.fitToContent(
       allEntities.map((e) => e.position),
-      containerSize.width,
-      containerSize.height,
+      size.width,
+      size.height,
     );
-  }, [allEntities, containerSize.height, containerSize.width, viewport.actions]);
+  }, [allEntities, getVisibleViewportSize, viewport.actions]);
 
   // 首次进入白板时自动居中到实体的中位数位置
   // 每个白板在 session 内只尝试一次，已保存的视口由 useViewport 恢复
   const fitAttemptedRef = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (data.isLoading || allEntities.length === 0 || containerSize.width === 0) return;
+    const size = getVisibleViewportSize();
+    if (data.isLoading || allEntities.length === 0 || size.width === 0) return;
     if (fitAttemptedRef.current.has(currentWhiteboardId)) return;
     if (!viewport.needsFit) {
       // 有保存的视口 — 不强制 fit，但仍然标记已尝试避免后续触发
@@ -720,7 +813,7 @@ export function GraphView({
     allEntities,
     viewport.needsFit,
     handleFitContent,
-    containerSize,
+    getVisibleViewportSize,
     currentWhiteboardId,
   ]);
 
@@ -729,20 +822,43 @@ export function GraphView({
   const blankViewportRecoveryRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     if (data.isLoading || viewport.needsFit) return;
-    if (containerSize.width === 0 || containerSize.height === 0) return;
+    const size = getVisibleViewportSize();
+    if (size.width === 0 || size.height === 0) return;
     if (allEntities.length === 0 || hasEntityInViewport) return;
     if (blankViewportRecoveryRef.current.has(currentWhiteboardId)) return;
     blankViewportRecoveryRef.current.add(currentWhiteboardId);
     handleFitContent();
   }, [
     allEntities.length,
-    containerSize.height,
-    containerSize.width,
     currentWhiteboardId,
     data.isLoading,
+    getVisibleViewportSize,
     handleFitContent,
     hasEntityInViewport,
     viewport.needsFit,
+  ]);
+
+  const handleResetSavedViewport = useCallback(() => {
+    clearSavedViewport(currentWhiteboardId);
+    fitAttemptedRef.current.delete(currentWhiteboardId);
+    blankViewportRecoveryRef.current.delete(currentWhiteboardId);
+    const size = getVisibleViewportSize();
+
+    if (allEntities.length > 0 && size.width > 0 && size.height > 0) {
+      viewport.actions.fitToContent(
+        allEntities.map((entity) => entity.position),
+        size.width,
+        size.height,
+      );
+      return;
+    }
+
+    viewport.actions.resetView();
+  }, [
+    allEntities,
+    currentWhiteboardId,
+    getVisibleViewportSize,
+    viewport.actions,
   ]);
 
   // cardId → AtomicCard 全局映射（CardNode/AliasNode 渲染 related/linkTo 用）
@@ -832,12 +948,13 @@ export function GraphView({
   // 加 ±60 / ±40 抖动避免连续创建堆叠
   const newEntityPositionAtCenter = useCallback(
     (width: number, height: number) => {
+      const size = getVisibleViewportSize();
       const center = viewportCenterWorld(
         viewport.state.zoom,
         viewport.state.panX,
         viewport.state.panY,
-        containerSize.width,
-        containerSize.height,
+        size.width,
+        size.height,
       );
       const jitterX = (Math.random() - 0.5) * 120;
       const jitterY = (Math.random() - 0.5) * 80;
@@ -850,8 +967,7 @@ export function GraphView({
       viewport.state.zoom,
       viewport.state.panX,
       viewport.state.panY,
-      containerSize.width,
-      containerSize.height,
+      getVisibleViewportSize,
     ],
   );
 
@@ -999,19 +1115,82 @@ export function GraphView({
     }
 
     try {
+      const fallbackPos = newEntityPositionAtCenter(320, 140);
+      const pos = taskPositionAboveTopmost(data.tasks, effectivePositions, fallbackPos);
       const result = await unwrapCommand(
-        commands.taskCreate(project, title, null, "next", null, null),
-      );
-      const pos = newEntityPositionAtCenter(320, 140);
-      await unwrapCommand(
-        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
+        commands.taskCreate({
+          project,
+          title,
+          content: null,
+          status: "next",
+          area: null,
+          color: null,
+          position: pos,
+        }),
       );
       onSelectEntity?.({ id: result.id, kind: "task" });
       queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 task 失败:", e);
     }
-  }, [taskDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [taskDraft, data.tasks, effectivePositions, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+
+  const handlePackTasks = useCallback(async () => {
+    if (!currentWhiteboardId.startsWith("projects/")) return;
+    if (data.tasks.length === 0) return;
+    const size = getVisibleViewportSize();
+    if (size.width === 0 || size.height === 0) return;
+
+    const confirmed = window.confirm(
+      "Pack all project tasks into visible columns? This rewrites task positions only.",
+    );
+    if (!confirmed) return;
+
+    const center = viewportCenterWorld(
+      viewport.state.zoom,
+      viewport.state.panX,
+      viewport.state.panY,
+      size.width,
+      size.height,
+    );
+    const packed = packTaskPositions(data.tasks, center);
+    const packedPositions = Object.values(packed);
+
+    setLocalPositions((prev) => ({ ...prev, ...packed }));
+
+    try {
+      await Promise.all(
+        Object.entries(packed).map(([taskId, position]) =>
+          unwrapCommand(
+            commands.layoutSetPosition(
+              currentWhiteboardId,
+              taskId,
+              position.x,
+              position.y,
+            ),
+          ),
+        ),
+      );
+      await queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+      viewport.actions.fitToContent(
+        packedPositions,
+        size.width,
+        size.height,
+      );
+    } catch (e) {
+      console.error("整理 task 位置失败:", e);
+      queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+    }
+  }, [
+    currentWhiteboardId,
+    data.tasks,
+    getVisibleViewportSize,
+    queryClient,
+    viewport.actions,
+    viewport.state.panX,
+    viewport.state.panY,
+    viewport.state.zoom,
+  ]);
 
   const handleCreateWhiteboard = useCallback(async () => {
     if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
@@ -1125,12 +1304,14 @@ export function GraphView({
         if (!alias) return;
         const cardPos = effectivePositions[alias.cardId];
         if (!cardPos) return;
+        const size = getVisibleViewportSize();
+        if (size.width === 0 || size.height === 0) return;
         const dim = allDimensions[alias.cardId];
         viewport.actions.centerOn(
           cardPos.x,
           cardPos.y,
-          containerSize.width,
-          containerSize.height,
+          size.width,
+          size.height,
           dim?.width ?? 520,
           dim?.height ?? 220,
         );
@@ -1269,7 +1450,7 @@ export function GraphView({
       effectivePositions,
       entityToSectionId,
       allDimensions,
-      containerSize,
+      getVisibleViewportSize,
       viewport.actions,
       currentWhiteboardId,
       queryClient,
@@ -1282,6 +1463,8 @@ export function GraphView({
   // 跳转到指定 section — 用 allDimensions 算出真实尺寸后调 viewport.centerOn
   const handleJumpToSection = useCallback(
     (sectionId: string) => {
+      const size = getVisibleViewportSize();
+      if (size.width === 0 || size.height === 0) return;
       const dim = allDimensions[sectionId] ?? { width: 400, height: 300 };
       const sectionEntity = allEntities.find(
         (e) => e.kind === "section" && e.id === sectionId,
@@ -1290,8 +1473,8 @@ export function GraphView({
         viewport.actions.centerOn(
           sectionEntity.position.x,
           sectionEntity.position.y,
-          containerSize.width,
-          containerSize.height,
+          size.width,
+          size.height,
           dim.width,
           dim.height,
         );
@@ -1310,8 +1493,8 @@ export function GraphView({
         viewport.actions.centerOn(
           minX - SECTION_PADDING,
           minY - SECTION_PADDING,
-          containerSize.width,
-          containerSize.height,
+          size.width,
+          size.height,
           dim.width,
           dim.height,
         );
@@ -1323,13 +1506,68 @@ export function GraphView({
       viewport.actions.centerOn(
         ownPos.x,
         ownPos.y,
-        containerSize.width,
-        containerSize.height,
+        size.width,
+        size.height,
         dim.width,
         dim.height,
       );
     },
-    [allDimensions, allEntities, containerSize, data.sections, effectivePositions, viewport.actions],
+    [allDimensions, allEntities, data.sections, effectivePositions, getVisibleViewportSize, viewport.actions],
+  );
+
+  const handleJumpToTask = useCallback(
+    async (taskId: string) => {
+      const task = data.tasks.find((item) => item.id === taskId);
+      if (!task) return;
+      const size = getVisibleViewportSize();
+      if (size.width === 0 || size.height === 0) return;
+
+      let position = effectivePositions[taskId];
+      if (!position) {
+        const fallbackPos = newEntityPositionAtCenter(TASK_NODE_WIDTH, TASK_NODE_HEIGHT);
+        position = taskPositionAboveTopmost(data.tasks, effectivePositions, fallbackPos);
+        setLocalPositions((prev) => ({ ...prev, [taskId]: position }));
+
+        try {
+          await unwrapCommand(
+            commands.layoutSetPosition(
+              currentWhiteboardId,
+              taskId,
+              position.x,
+              position.y,
+            ),
+          );
+          await queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+        } catch (e) {
+          console.error("定位 task 失败:", e);
+          queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+          return;
+        }
+      }
+
+      const dim = allDimensions[taskId] ?? { width: TASK_NODE_WIDTH, height: TASK_NODE_HEIGHT };
+      viewport.actions.centerOn(
+        position.x,
+        position.y,
+        size.width,
+        size.height,
+        dim.width,
+        dim.height,
+        { minZoom: TASK_JUMP_MIN_ZOOM },
+      );
+      onSelectEntity?.({ id: taskId, kind: "task" });
+    },
+    [
+      allDimensions,
+      currentWhiteboardId,
+      data.tasks,
+      effectivePositions,
+      getVisibleViewportSize,
+      newEntityPositionAtCenter,
+      onSelectEntity,
+      queryClient,
+      viewport.actions,
+    ],
   );
 
   // 跳转到指定白板 — 直接切 currentWhiteboardId
@@ -1379,7 +1617,9 @@ export function GraphView({
   );
 
   useEffect(() => {
-    if (!focusTarget || containerSize.width === 0 || containerSize.height === 0) return;
+    if (!focusTarget) return;
+    const size = getVisibleViewportSize();
+    if (size.width === 0 || size.height === 0) return;
     if (handledFocusNonceRef.current === focusTarget.nonce) return;
 
     const entity = allEntities.find((candidate) => candidate.id === focusTarget.id);
@@ -1388,10 +1628,11 @@ export function GraphView({
       viewport.actions.centerOn(
         entity.position.x,
         entity.position.y,
-        containerSize.width,
-        containerSize.height,
+        size.width,
+        size.height,
         dim?.width ?? 320,
         dim?.height ?? 160,
+        entity.kind === "task" ? { minZoom: TASK_JUMP_MIN_ZOOM } : undefined,
       );
       handledFocusNonceRef.current = focusTarget.nonce;
       onSelectEntity?.({ id: entity.id, kind: entity.kind });
@@ -1403,8 +1644,8 @@ export function GraphView({
       viewport.actions.centerOn(
         whiteboard.position.x,
         whiteboard.position.y,
-        containerSize.width,
-        containerSize.height,
+        size.width,
+        size.height,
         320,
         130,
       );
@@ -1413,18 +1654,17 @@ export function GraphView({
   }, [
     allDimensions,
     allEntities,
-    containerSize.height,
-    containerSize.width,
     focusTarget,
+    getVisibleViewportSize,
     onSelectEntity,
     viewport.actions.centerOn,
     whiteboardEntities,
   ]);
 
   // Loading 状态作为 overlay 渲染，而不是 early return
-  // 原因：early return 会让 containerRef 无法 attach，ResizeObserver 永远收不到尺寸
+  // 原因：early return 会让 graphViewportRef 无法 attach，ResizeObserver 永远收不到尺寸
   return (
-    <div ref={containerRef} className="relative flex h-full w-full flex-col">
+    <div className="relative flex h-full w-full flex-col">
       <GraphToolbar
         viewport={viewport}
         entityCounts={entityCounts}
@@ -1456,6 +1696,8 @@ export function GraphView({
         onCancelWhiteboard={handleCancelCreateWhiteboard}
         onShowOrphans={onShowOrphans}
         onFitContent={handleFitContent}
+        onPackTasks={handlePackTasks}
+        onResetSavedViewport={handleResetSavedViewport}
         currentWhiteboardId={currentWhiteboardId}
         onNavigateBack={() => {
           setDrawingState(null);
@@ -1464,8 +1706,10 @@ export function GraphView({
           onWhiteboardChange(ROOT_WHITEBOARD);
         }}
         sections={data.sections}
+        tasks={data.tasks}
         whiteboards={whiteboards}
         onJumpToSection={handleJumpToSection}
+        onJumpToTask={handleJumpToTask}
         onJumpToBoard={handleJumpToBoard}
       />
       {data.isLoading && (
@@ -1473,7 +1717,7 @@ export function GraphView({
           <div className="text-sm text-muted-foreground">Loading whiteboard...</div>
         </div>
       )}
-      <div className="relative flex-1 overflow-hidden">
+      <div ref={graphViewportRef} className="relative flex-1 overflow-hidden">
         {drawingState && (
           <div className="pointer-events-none absolute left-4 top-3 z-40 rounded-md border border-sky-200 bg-sky-50/95 px-3 py-1.5 text-xs font-medium text-sky-900 shadow-sm">
             {drawingHint()}

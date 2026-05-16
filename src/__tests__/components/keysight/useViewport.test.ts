@@ -1,8 +1,12 @@
 import { renderHook, act } from "@testing-library/react";
 import { vi } from "vitest";
-import { useViewport } from "@/components/keysight/useViewport";
+import { clearSavedViewport, useViewport } from "@/components/keysight/useViewport";
 
 describe("useViewport", () => {
+  beforeEach(() => {
+    localStorage.clear();
+  });
+
   it("初始状态: zoom=1, panX=0, panY=0", () => {
     const { result } = renderHook(() => useViewport("test-wb"));
     expect(result.current.state.zoom).toBe(1);
@@ -45,6 +49,34 @@ describe("useViewport", () => {
     expect(result.current.state.zoom).toBe(1);
     expect(result.current.state.panX).toBe(0);
     expect(result.current.state.panY).toBe(0);
+  });
+
+  it("centerOn 支持最小可读 zoom，避免跳转后 task 太小", () => {
+    const { result } = renderHook(() => useViewport("test-wb"));
+
+    for (let i = 0; i < 12; i++) {
+      act(() => result.current.actions.zoomOut());
+    }
+
+    act(() => {
+      result.current.actions.centerOn(100, 200, 1000, 800, 320, 140, {
+        minZoom: 0.75,
+      });
+    });
+
+    expect(result.current.state.zoom).toBeCloseTo(0.75);
+    expect(result.current.state.panX).toBeCloseTo(1000 / 2 - (100 + 160) * 0.75);
+    expect(result.current.state.panY).toBeCloseTo(800 / 2 - (200 + 70) * 0.75);
+  });
+
+  it("clearSavedViewport 只清当前白板的 saved viewport", () => {
+    localStorage.setItem("keysight:viewport:test-wb", "{\"zoom\":0.1}");
+    localStorage.setItem("keysight:viewport:other-wb", "{\"zoom\":0.2}");
+
+    clearSavedViewport("test-wb");
+
+    expect(localStorage.getItem("keysight:viewport:test-wb")).toBeNull();
+    expect(localStorage.getItem("keysight:viewport:other-wb")).toBe("{\"zoom\":0.2}");
   });
 
   it("Cmd/Ctrl + wheel 缩放时不依赖事件对象在回调返回后仍然可用", () => {

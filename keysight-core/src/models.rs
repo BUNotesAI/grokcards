@@ -285,6 +285,22 @@ pub struct CardAlias {
     pub incoming_card_ids: Option<Vec<String>>,
 }
 
+/// IPC 输入:创建 project task。
+///
+/// `position = None` 表示由 Rust domain 使用默认自动布局;Graph view 可传入
+/// 当前视口中心,让新 task 创建后立刻在画布可见。
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TaskCreateRequest {
+    pub project: String,
+    pub title: String,
+    pub content: Option<String>,
+    pub status: TaskStatus,
+    pub area: Option<String>,
+    pub color: Option<String>,
+    pub position: Option<Position>,
+}
+
 /// 任务实体（entities + task_fields 的联合查询结果）。
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

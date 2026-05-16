@@ -11,9 +11,13 @@ const mockEntityRelate = vi.fn();
 const mockSectionCreate = vi.fn();
 const mockNoteCreate = vi.fn();
 const mockQuestionCreate = vi.fn();
+const mockTaskCreate = vi.fn();
 const mockWhiteboardCreate = vi.fn();
 const mockLayoutSetPosition = vi.fn();
 const mockSectionDelete = vi.fn();
+const mockClearSavedViewport = vi.fn((whiteboardId: string) => {
+  localStorage.removeItem(`keysight:viewport:${whiteboardId}`);
+});
 
 function makeWhiteboardData(): WhiteboardData {
   return {
@@ -106,6 +110,7 @@ const mockState = vi.hoisted(() => ({
       centerOn: vi.fn(),
     },
   },
+  containerSize: { width: 1280, height: 720 },
   whiteboardData: makeWhiteboardData(),
   visibleEntitiesOverride: null as unknown[] | null,
 }));
@@ -118,6 +123,7 @@ vi.mock("@/bindings", () => ({
     noteCreate: (...args: unknown[]) => mockNoteCreate(...args),
     questionCreate: (...args: unknown[]) => mockQuestionCreate(...args),
     questionUpdate: vi.fn(),
+    taskCreate: (...args: unknown[]) => mockTaskCreate(...args),
     whiteboardCreate: (...args: unknown[]) => mockWhiteboardCreate(...args),
     layoutSetPosition: (...args: unknown[]) => mockLayoutSetPosition(...args),
     sectionDelete: (...args: unknown[]) => mockSectionDelete(...args),
@@ -126,10 +132,11 @@ vi.mock("@/bindings", () => ({
 
 vi.mock("@/components/keysight/useViewport", () => ({
   useViewport: () => mockState.viewport,
+  clearSavedViewport: (whiteboardId: string) => mockClearSavedViewport(whiteboardId),
 }));
 
 vi.mock("@/components/keysight/hooks/useContainerSize", () => ({
-  useContainerSize: () => ({ width: 1280, height: 720 }),
+  useContainerSize: () => mockState.containerSize,
 }));
 
 vi.mock("@/components/keysight/hooks/useWhiteboardData", () => ({
@@ -170,6 +177,20 @@ function getEntityNode(entityId: string): HTMLElement {
   return node;
 }
 
+function makeTask(id: string, title: string, status: "inbox" | "next" | "active" | "done" | "blocked" = "next") {
+  return {
+    id,
+    title,
+    content: "",
+    whiteboardId: "projects/super-tauri",
+    status,
+    area: null,
+    project: "super-tauri",
+    color: null,
+    subtasks: [],
+  };
+}
+
 describe("GraphView", () => {
   beforeEach(() => {
     mockEntityConnect.mockReset();
@@ -184,6 +205,21 @@ describe("GraphView", () => {
     mockQuestionCreate.mockResolvedValue({
       status: "ok",
       data: { id: "q_new001", title: "New Question", content: "", whiteboardId: "wb_root", status: "pending" },
+    });
+    mockTaskCreate.mockReset();
+    mockTaskCreate.mockResolvedValue({
+      status: "ok",
+      data: {
+        id: "task_new001",
+        title: "New Task",
+        content: "",
+        whiteboardId: "projects/super-tauri",
+        status: "next",
+        area: null,
+        project: "super-tauri",
+        color: null,
+        subtasks: [],
+      },
     });
     mockWhiteboardCreate.mockReset();
     mockWhiteboardCreate.mockResolvedValue({
@@ -202,11 +238,16 @@ describe("GraphView", () => {
     mockLayoutSetPosition.mockResolvedValue({ status: "ok", data: null });
     mockSectionDelete.mockReset();
     mockSectionDelete.mockResolvedValue({ status: "ok", data: null });
+    mockClearSavedViewport.mockClear();
     mockState.viewport.actions.centerOn.mockReset();
     mockState.viewport.actions.fitToContent.mockReset();
+    mockState.viewport.actions.resetView.mockReset();
+    mockState.viewport.state = { zoom: 1, panX: 0, panY: 0 };
+    mockState.containerSize = { width: 1280, height: 720 };
     mockState.viewport.needsFit = false;
     mockState.whiteboardData = makeWhiteboardData();
     mockState.visibleEntitiesOverride = null;
+    localStorage.clear();
   });
 
   it("点击 Related 打开 picker，排除自己和已关联卡片", () => {
@@ -243,6 +284,46 @@ describe("GraphView", () => {
     await waitFor(() => {
       expect(mockWhiteboardCreate).toHaveBeenCalledWith("agent");
     });
+  });
+
+  it("project graph 创建 task 时基于当前最上方 task 往上放置", async () => {
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      tasks: [
+        makeTask("task_top", "Top Task"),
+        makeTask("task_lower", "Lower Task"),
+      ],
+      positions: {
+        task_top: { x: 240, y: 120 },
+        task_lower: { x: 560, y: 600 },
+      },
+    };
+
+    renderGraphView({ currentWhiteboardId: "projects/super-tauri" });
+
+    fireEvent.click(screen.getByRole("button", { name: /create task/i }));
+    fireEvent.change(screen.getByRole("textbox", { name: /task title/i }), {
+      target: { value: "Aha moment" },
+    });
+    fireEvent.keyDown(screen.getByRole("textbox", { name: /task title/i }), {
+      key: "Enter",
+    });
+
+    await waitFor(() => {
+      expect(mockTaskCreate).toHaveBeenCalledWith(
+        {
+          project: "super-tauri",
+          title: "Aha moment",
+          content: null,
+          status: "next",
+          area: null,
+          color: null,
+          position: { x: 240, y: -60 },
+        },
+      );
+    });
+    expect(mockLayoutSetPosition).not.toHaveBeenCalled();
   });
 
   it("在 picker 里点击候选项后直接创建 Related 并关闭 picker", async () => {
@@ -466,6 +547,224 @@ describe("GraphView", () => {
       600,
       260,
     );
+  });
+
+  it("Tasks 下拉点击 task 时应以可读 zoom 居中定位到对应 task", () => {
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      notes: [],
+      questions: [],
+      tasks: [
+        makeTask("task_aha2", "Aha 2 moment"),
+        makeTask("task_aha3", "aha 3 moment"),
+      ],
+      positions: {
+        task_aha2: { x: 220, y: 620 },
+        task_aha3: { x: 220, y: 820 },
+      },
+    };
+
+    renderGraphView({ currentWhiteboardId: "projects/super-tauri" });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /jump to task/i }));
+    });
+    act(() => {
+      fireEvent.click(screen.getAllByText("Aha 2 moment")[1]!);
+    });
+
+    expect(mockState.viewport.actions.centerOn).toHaveBeenCalledWith(
+      220,
+      620,
+      1280,
+      720,
+      320,
+      140,
+      { minZoom: 0.75 },
+    );
+  });
+
+  it("Tasks 下拉跳转时应把异常大的容器高度压到真实可见窗口高度", () => {
+    const originalInnerHeight = window.innerHeight;
+    Object.defineProperty(window, "innerHeight", { configurable: true, value: 900 });
+    mockState.containerSize = { width: 1280, height: 12500 };
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      notes: [],
+      questions: [],
+      tasks: [makeTask("task_aha2", "Aha 2 moment")],
+      positions: {
+        task_aha2: { x: 146.57, y: 6225.13 },
+      },
+    };
+
+    renderGraphView({ currentWhiteboardId: "projects/super-tauri" });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /jump to task/i }));
+    });
+    act(() => {
+      fireEvent.click(screen.getAllByText("Aha 2 moment")[1]!);
+    });
+
+    expect(mockState.viewport.actions.centerOn).toHaveBeenCalledWith(
+      146.57,
+      6225.13,
+      1280,
+      900,
+      320,
+      140,
+      { minZoom: 0.75 },
+    );
+
+    Object.defineProperty(window, "innerHeight", {
+      configurable: true,
+      value: originalInnerHeight,
+    });
+  });
+
+  it("Tasks 下拉点击无 position 的 task 时应先补 position 再居中", async () => {
+    const onSelectEntity = vi.fn();
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      notes: [],
+      questions: [],
+      tasks: [
+        makeTask("task_missing", "Missing Task"),
+        makeTask("task_anchor", "Anchor Task"),
+      ],
+      positions: {
+        task_anchor: { x: 240, y: 120 },
+      },
+    };
+
+    renderGraphView({
+      currentWhiteboardId: "projects/super-tauri",
+      onSelectEntity,
+    });
+
+    act(() => {
+      fireEvent.click(screen.getByRole("button", { name: /jump to task/i }));
+    });
+    act(() => {
+      fireEvent.click(screen.getByText("Missing Task"));
+    });
+
+    await waitFor(() => {
+      expect(mockLayoutSetPosition).toHaveBeenCalledWith(
+        "projects/super-tauri",
+        "task_missing",
+        240,
+        -60,
+      );
+    });
+    expect(mockState.viewport.actions.centerOn).toHaveBeenCalledWith(
+      240,
+      -60,
+      1280,
+      720,
+      320,
+      140,
+      { minZoom: 0.75 },
+    );
+    expect(onSelectEntity).toHaveBeenCalledWith({ id: "task_missing", kind: "task" });
+  });
+
+  it("Pack tasks 应只重写 project task positions，不删除 task", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm").mockReturnValue(true);
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      notes: [],
+      questions: [],
+      tasks: [
+        makeTask("task_inbox", "Inbox Task", "inbox"),
+        makeTask("task_next", "Next Task", "next"),
+        makeTask("task_done", "Done Task", "done"),
+      ],
+      positions: {
+        task_next: { x: 220, y: 6225 },
+      },
+    };
+
+    renderGraphView({ currentWhiteboardId: "projects/super-tauri" });
+
+    fireEvent.click(screen.getByRole("button", { name: /pack tasks/i }));
+
+    await waitFor(() => {
+      expect(mockLayoutSetPosition).toHaveBeenCalledTimes(3);
+    });
+    expect(mockLayoutSetPosition).toHaveBeenCalledWith(
+      "projects/super-tauri",
+      "task_inbox",
+      -80,
+      160,
+    );
+    expect(mockLayoutSetPosition).toHaveBeenCalledWith(
+      "projects/super-tauri",
+      "task_next",
+      280,
+      160,
+    );
+    expect(mockLayoutSetPosition).toHaveBeenCalledWith(
+      "projects/super-tauri",
+      "task_done",
+      1360,
+      160,
+    );
+    expect(mockState.viewport.actions.fitToContent).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        { x: -80, y: 160 },
+        { x: 280, y: 160 },
+        { x: 1360, y: 160 },
+      ]),
+      1280,
+      720,
+    );
+
+    confirmSpy.mockRestore();
+  });
+
+  it("Reset saved viewport 应清理当前 project 的 localStorage 并重新 fit，不写 DB", () => {
+    localStorage.setItem(
+      "keysight:viewport:projects/super-tauri",
+      JSON.stringify({ zoom: 0.05, panX: -9000, panY: -9000 }),
+    );
+    mockState.whiteboardData = {
+      ...makeWhiteboardData(),
+      cards: [],
+      sections: [],
+      aliases: [],
+      notes: [],
+      questions: [],
+      tasks: [makeTask("task_anchor", "Anchor Task", "next")],
+      positions: {
+        task_anchor: { x: 100, y: 200 },
+      },
+    };
+
+    renderGraphView({ currentWhiteboardId: "projects/super-tauri" });
+
+    fireEvent.click(screen.getByRole("button", { name: /reset saved viewport/i }));
+
+    expect(localStorage.getItem("keysight:viewport:projects/super-tauri")).toBeNull();
+    expect(mockState.viewport.actions.fitToContent).toHaveBeenCalledWith(
+      [{ x: 100, y: 200 }],
+      1280,
+      720,
+    );
+    expect(mockLayoutSetPosition).not.toHaveBeenCalled();
   });
 
   it("数据非空但当前视口无可见实体时自动 fit 一次，恢复 stale saved viewport", async () => {

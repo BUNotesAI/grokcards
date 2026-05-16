@@ -11,6 +11,11 @@ export interface ViewportState {
   panY: number;
 }
 
+export interface CenterOnOptions {
+  minZoom?: number;
+  zoom?: number;
+}
+
 interface ViewportWheelEvent {
   metaKey: boolean;
   ctrlKey: boolean;
@@ -48,6 +53,11 @@ export function hasSavedViewport(whiteboardId: string): boolean {
   } catch {
     return false;
   }
+}
+
+/** 删除指定白板的 saved viewport。用于用户主动恢复被 localStorage 卡住的画布视口。 */
+export function clearSavedViewport(whiteboardId: string): void {
+  localStorage.removeItem(STORAGE_PREFIX + whiteboardId);
 }
 
 /** 从 localStorage 读取白板视口 */
@@ -176,11 +186,19 @@ export function useViewport(whiteboardId: string) {
       containerHeight: number,
       width = 320,
       height = 160,
+      options: CenterOnOptions = {},
     ) => {
       setState((s) => ({
         ...s,
-        panX: containerWidth / 2 - (x + width / 2) * s.zoom,
-        panY: containerHeight / 2 - (y + height / 2) * s.zoom,
+        zoom: clampZoom(options.zoom ?? Math.max(s.zoom, options.minZoom ?? MIN_ZOOM)),
+        panX:
+          containerWidth / 2 -
+          (x + width / 2) *
+            clampZoom(options.zoom ?? Math.max(s.zoom, options.minZoom ?? MIN_ZOOM)),
+        panY:
+          containerHeight / 2 -
+          (y + height / 2) *
+            clampZoom(options.zoom ?? Math.max(s.zoom, options.minZoom ?? MIN_ZOOM)),
       }));
     },
     [],
