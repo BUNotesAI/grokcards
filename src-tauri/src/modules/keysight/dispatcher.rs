@@ -79,154 +79,31 @@ pub(super) fn dispatch_mutate(
 ) -> Result<MutateResponse, KeysightError> {
     let (entity_id, emit_payload) = match params {
         MutateParams::SectionCreate { wb, title, color } => {
-            let store = SqliteSectionStore::new(conn);
-            let sec = store.create(&wb, &title, color.as_deref())?;
-            let id = sec.id.clone();
-            (
-                Some(id.clone()),
-                json!({ "kind": "section", "id": id, "wb": wb }),
-            )
+            op_section_create(conn, &wb, &title, color.as_deref())?
         }
-        MutateParams::NoteCreate {
-            wb,
-            title,
-            content,
-            color,
-        } => {
-            let store = SqliteNoteStore::with_vault_fs(conn, vault_fs);
-            let note = store.create(&wb, &title, content.as_deref(), color.as_deref())?;
-            let id = note.id.clone();
-            (
-                Some(id.clone()),
-                json!({ "kind": "note", "id": id, "wb": wb }),
-            )
+        MutateParams::NoteCreate { wb, title, content, color } => {
+            op_note_create(conn, vault_fs, &wb, &title, content.as_deref(), color.as_deref())?
         }
-        MutateParams::NoteUpdate {
-            id,
-            title,
-            content,
-            color,
-        } => {
-            let store = SqliteNoteStore::with_vault_fs(conn, vault_fs);
-            store.update(
-                &id,
-                title.as_deref(),
-                content.as_deref(),
-                color.as_deref(),
-            )?;
-            (None, json!({ "kind": "note", "id": id }))
+        MutateParams::NoteUpdate { id, title, content, color } => {
+            op_note_update(conn, vault_fs, id, title.as_deref(), content.as_deref(), color.as_deref())?
         }
         MutateParams::AliasCreate { wb, card_id } => {
-            let store = SqliteAliasStore::new(conn);
-            let alias = store.create(&wb, &card_id)?;
-            let id = alias.alias_id.clone();
-            (
-                Some(id.clone()),
-                json!({ "kind": "alias", "id": id, "wb": wb, "card_id": card_id }),
-            )
+            op_alias_create(conn, &wb, &card_id)?
         }
-        MutateParams::SetPos {
-            wb,
-            entity_id,
-            x,
-            y,
-        } => {
-            let store = SqliteLayoutStore::new(conn);
-            store.set_position(&wb, &entity_id, x, y)?;
-            (
-                None,
-                json!({ "kind": "position", "entity_id": entity_id, "wb": wb, "x": x, "y": y }),
-            )
+        MutateParams::SetPos { wb, entity_id, x, y } => {
+            op_set_pos(conn, &wb, &entity_id, x, y)?
         }
         MutateParams::Connect { from, to } => {
-            // Edge variant 由 `EntityId::parse(from)` 的 kind 决定(Card/Note/
-            // Alias/Question → 对应 `*Link`;Section/Task → `ConnectionNotAllowed`)。
-            // wire 不传 edge_type:类型已强制保证唯一合法形状。
-            let from_id = EntityId::parse(&from)
-                .map_err(|e| KeysightError::ParseError(format!("from_id 解析失败: {e}")))?;
-            let to_id = EntityId::parse(&to)
-                .map_err(|e| KeysightError::ParseError(format!("to_id 解析失败: {e}")))?;
-            let edge = user_draw_edge(from_id, to_id)?;
-            let graph = SqliteEntityGraph::new(conn);
-            graph.connect(&edge)?;
-
-            // 文件 sync —— 对齐 entity_connect 的 Edge 变体穷尽 match(硬约束:
-            // 禁 `_` 通配,踩坑样例 1)
-            match &edge {
-                Edge::CardLink { from, .. }
-                | Edge::CardRelated { from, .. }
-                | Edge::CardSeeAlso { from, .. } => {
-                    let store = SqliteCardStore::with_vault_fs(conn, vault_fs);
-                    store.sync_edges_to_file(from.as_str())?;
-                }
-                Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
-                    let store = SqliteNoteStore::with_vault_fs(conn, vault_fs);
-                    store.sync_links_to_file(from.as_str())?;
-                }
-                Edge::AliasLink { .. } => {
-                    // alias 无独立文件内容(继承 owning card),不 sync
-                }
-                Edge::QuestionLink { from, .. } => {
-                    question::sync_links_to_file(conn, vault_fs, from.as_str())?;
-                }
-                Edge::CardToAlias { .. } => {
-                    // alias 定义关系反查路径,不单独写回 card file
-                }
-            }
-
-            (
-                None,
-                json!({ "kind": "edge", "op": "connect", "from": from, "to": to }),
-            )
+            op_connect(conn, vault_fs, from, to)?
         }
-        MutateParams::Disconnect {
-            from,
-            to,
-            edge_type,
-        } => {
-            let et = EdgeType::from_db_str(&edge_type).ok_or_else(|| {
-                KeysightError::ParseError(format!("未知 edge_type: {edge_type}"))
-            })?;
-            let graph = SqliteEntityGraph::new(conn);
-            graph.disconnect(&from, &to, et)?;
-
-            // 文件 sync —— 对齐 entity_disconnect(stringly-typed 旧 API 保留形状)
-            if from.starts_with("card_")
-                && matches!(et, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso)
-            {
-                let store = SqliteCardStore::with_vault_fs(conn, vault_fs);
-                store.sync_edges_to_file(&from)?;
-            } else if from.starts_with("note_") && et == EdgeType::NoteLink {
-                let store = SqliteNoteStore::with_vault_fs(conn, vault_fs);
-                store.sync_links_to_file(&from)?;
-            }
-
-            (
-                None,
-                json!({ "kind": "edge", "op": "disconnect", "from": from, "to": to, "edge_type": edge_type }),
-            )
+        MutateParams::Disconnect { from, to, edge_type } => {
+            op_disconnect(conn, vault_fs, from, to, edge_type)?
         }
-        MutateParams::SectionAdd {
-            section_id,
-            entity_id,
-        } => {
-            let store = SqliteSectionStore::new(conn);
-            store.add_member(&section_id, &entity_id)?;
-            (
-                None,
-                json!({ "kind": "section_member", "op": "add", "section_id": section_id, "entity_id": entity_id }),
-            )
+        MutateParams::SectionAdd { section_id, entity_id } => {
+            op_section_add(conn, &section_id, &entity_id)?
         }
-        MutateParams::SectionMove {
-            section_id,
-            target_wb,
-        } => {
-            let store = SqliteSectionStore::new(conn);
-            store.move_to_whiteboard(&section_id, &target_wb)?;
-            (
-                None,
-                json!({ "kind": "section", "id": section_id, "wb": target_wb }),
-            )
+        MutateParams::SectionMove { section_id, target_wb } => {
+            op_section_move(conn, &section_id, &target_wb)?
         }
     };
 
@@ -238,6 +115,149 @@ pub(super) fn dispatch_mutate(
         entity_id,
         message: None,
     })
+}
+
+/// 每个 op_* helper 的返回:`(新增 entity_id, emit_payload)`。
+/// `entity_id = Some` 仅 Create 类 variant;Update / 关系操作返 `None`。
+type OpResult = Result<(Option<String>, Value), KeysightError>;
+
+fn op_section_create(conn: &Connection, wb: &str, title: &str, color: Option<&str>) -> OpResult {
+    let sec = SqliteSectionStore::new(conn).create(wb, title, color)?;
+    let id = sec.id.clone();
+    Ok((Some(id.clone()), json!({ "kind": "section", "id": id, "wb": wb })))
+}
+
+fn op_note_create(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+    wb: &str,
+    title: &str,
+    content: Option<&str>,
+    color: Option<&str>,
+) -> OpResult {
+    let note = SqliteNoteStore::with_vault_fs(conn, vault_fs).create(wb, title, content, color)?;
+    let id = note.id.clone();
+    Ok((Some(id.clone()), json!({ "kind": "note", "id": id, "wb": wb })))
+}
+
+fn op_note_update(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+    id: String,
+    title: Option<&str>,
+    content: Option<&str>,
+    color: Option<&str>,
+) -> OpResult {
+    SqliteNoteStore::with_vault_fs(conn, vault_fs).update(&id, title, content, color)?;
+    Ok((None, json!({ "kind": "note", "id": id })))
+}
+
+fn op_alias_create(conn: &Connection, wb: &str, card_id: &str) -> OpResult {
+    let alias = SqliteAliasStore::new(conn).create(wb, card_id)?;
+    let id = alias.alias_id.clone();
+    Ok((
+        Some(id.clone()),
+        json!({ "kind": "alias", "id": id, "wb": wb, "card_id": card_id }),
+    ))
+}
+
+fn op_set_pos(conn: &Connection, wb: &str, entity_id: &str, x: f64, y: f64) -> OpResult {
+    SqliteLayoutStore::new(conn).set_position(wb, entity_id, x, y)?;
+    Ok((
+        None,
+        json!({ "kind": "position", "entity_id": entity_id, "wb": wb, "x": x, "y": y }),
+    ))
+}
+
+fn op_connect(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+    from: String,
+    to: String,
+) -> OpResult {
+    // Edge variant 由 `EntityId::parse(from)` 的 kind 决定(Card/Note/Alias/Question →
+    // 对应 `*Link`;Section/Task → `ConnectionNotAllowed`)。wire 不传 edge_type:
+    // 类型已强制保证唯一合法形状。
+    let from_id = EntityId::parse(&from)
+        .map_err(|e| KeysightError::ParseError(format!("from_id 解析失败: {e}")))?;
+    let to_id = EntityId::parse(&to)
+        .map_err(|e| KeysightError::ParseError(format!("to_id 解析失败: {e}")))?;
+    let edge = user_draw_edge(from_id, to_id)?;
+    SqliteEntityGraph::new(conn).connect(&edge)?;
+
+    sync_source_file_for_edge(conn, vault_fs, &edge)?;
+
+    Ok((None, json!({ "kind": "edge", "op": "connect", "from": from, "to": to })))
+}
+
+/// 文件 sync —— 对齐 entity_connect 的 Edge 变体穷尽 match(硬约束:禁 `_` 通配,踩坑样例 1)
+fn sync_source_file_for_edge(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+    edge: &Edge,
+) -> Result<(), KeysightError> {
+    match edge {
+        Edge::CardLink { from, .. }
+        | Edge::CardRelated { from, .. }
+        | Edge::CardSeeAlso { from, .. } => {
+            SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(from.as_str())?;
+        }
+        Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
+            SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(from.as_str())?;
+        }
+        Edge::AliasLink { .. } => {
+            // alias 无独立文件内容(继承 owning card),不 sync
+        }
+        Edge::QuestionLink { from, .. } => {
+            question::sync_links_to_file(conn, vault_fs, from.as_str())?;
+        }
+        Edge::CardToAlias { .. } => {
+            // alias 定义关系反查路径,不单独写回 card file
+        }
+    }
+    Ok(())
+}
+
+fn op_disconnect(
+    conn: &Connection,
+    vault_fs: &dyn VaultFs,
+    from: String,
+    to: String,
+    edge_type: String,
+) -> OpResult {
+    let et = EdgeType::from_db_str(&edge_type)
+        .ok_or_else(|| KeysightError::ParseError(format!("未知 edge_type: {edge_type}")))?;
+    SqliteEntityGraph::new(conn).disconnect(&from, &to, et)?;
+
+    // 文件 sync —— 对齐 entity_disconnect(stringly-typed 旧 API 保留形状)
+    if from.starts_with("card_")
+        && matches!(et, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso)
+    {
+        SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(&from)?;
+    } else if from.starts_with("note_") && et == EdgeType::NoteLink {
+        SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(&from)?;
+    }
+
+    Ok((
+        None,
+        json!({ "kind": "edge", "op": "disconnect", "from": from, "to": to, "edge_type": edge_type }),
+    ))
+}
+
+fn op_section_add(conn: &Connection, section_id: &str, entity_id: &str) -> OpResult {
+    SqliteSectionStore::new(conn).add_member(section_id, entity_id)?;
+    Ok((
+        None,
+        json!({ "kind": "section_member", "op": "add", "section_id": section_id, "entity_id": entity_id }),
+    ))
+}
+
+fn op_section_move(conn: &Connection, section_id: &str, target_wb: &str) -> OpResult {
+    SqliteSectionStore::new(conn).move_to_whiteboard(section_id, target_wb)?;
+    Ok((
+        None,
+        json!({ "kind": "section", "id": section_id, "wb": target_wb }),
+    ))
 }
 
 // -----------------------------------------------------------------------------
