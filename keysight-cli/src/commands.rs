@@ -8,6 +8,7 @@
 //! 所有业务规则由 server 侧 `MutateParams` dispatcher 判定(Phase 6.2b)。
 
 use keysight_core::domain::card::{CardStore, SqliteCardStore};
+use keysight_core::domain::id::WhiteboardId;
 use keysight_core::domain::note::{self, NoteStore, SqliteNoteStore};
 use keysight_core::domain::overview;
 
@@ -117,7 +118,8 @@ pub fn overview(client: &SqliteReadClient) -> Result<(), CliError> {
 
 pub fn graph_notes(client: &SqliteReadClient, wb: &str) -> Result<(), CliError> {
     let store = SqliteNoteStore::new(&client.conn);
-    let notes = store.query_all(wb)?;
+    let wb_id = WhiteboardId::parse(wb).map_err(|e| CliError::Query(format!("非法 wb id: {e}")))?;
+    let notes = store.query_all(&wb_id)?;
     println!("Whiteboard {}: {} notes", wb, notes.len());
     for n in &notes {
         println!("  {} [{}]", n.title, n.id);

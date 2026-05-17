@@ -2,16 +2,17 @@
 use rusqlite::{params, Connection};
 
 use crate::domain::edge::EntityId;
+use crate::domain::id::WhiteboardId;
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::CardAlias;
 
 /// 别名存储契约。
 pub trait AliasStore {
-    fn create(&self, whiteboard_id: &str, card_id: &str) -> Result<CardAlias, KeysightError>;
+    fn create(&self, whiteboard_id: &WhiteboardId, card_id: &str) -> Result<CardAlias, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn get(&self, id: &str) -> Result<CardAlias, KeysightError>;
-    fn query_all(&self, whiteboard_id: &str) -> Result<Vec<CardAlias>, KeysightError>;
+    fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<CardAlias>, KeysightError>;
 }
 
 pub struct SqliteAliasStore<'a> {
@@ -23,12 +24,12 @@ impl<'a> SqliteAliasStore<'a> {
 }
 
 impl AliasStore for SqliteAliasStore<'_> {
-    fn create(&self, whiteboard_id: &str, card_id: &str) -> Result<CardAlias, KeysightError> {
+    fn create(&self, whiteboard_id: &WhiteboardId, card_id: &str) -> Result<CardAlias, KeysightError> {
         let alias_id = id::gen_alias_id();
         // entities 表的 title 用源卡片 id 作占位（alias 自身无标题）
         self.conn.execute(
             "INSERT INTO entities (id, kind, title, whiteboard_id) VALUES (?1, 'alias', ?2, ?3)",
-            params![alias_id, card_id, whiteboard_id],
+            params![alias_id, card_id, whiteboard_id.as_str()],
         )?;
         self.conn.execute(
             "INSERT INTO alias_fields (entity_id, card_id) VALUES (?1, ?2)",
@@ -111,11 +112,11 @@ impl AliasStore for SqliteAliasStore<'_> {
         })
     }
 
-    fn query_all(&self, whiteboard_id: &str) -> Result<Vec<CardAlias>, KeysightError> {
+    fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<CardAlias>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT e.id FROM entities e WHERE e.kind = 'alias' AND e.whiteboard_id = ?1"
         )?;
-        let ids: Vec<String> = stmt.query_map([whiteboard_id], |r| r.get(0))?
+        let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         ids.iter().map(|id| self.get(id)).collect()
     }
@@ -136,7 +137,8 @@ mod tests {
     fn test_create_alias() {
         let conn = test_conn();
         let store = SqliteAliasStore::new(&conn);
-        let alias = store.create("wb_root", "card_aaa").unwrap();
+        let wb = WhiteboardId::parse("wb_root").unwrap();
+        let alias = store.create(&wb, "card_aaa").unwrap();
         assert!(alias.alias_id.starts_with("alias_"));
         assert_eq!(alias.card_id, "card_aaa");
     }
@@ -145,7 +147,8 @@ mod tests {
     fn test_delete_alias() {
         let conn = test_conn();
         let store = SqliteAliasStore::new(&conn);
-        let alias = store.create("wb_root", "card_aaa").unwrap();
+        let wb = WhiteboardId::parse("wb_root").unwrap();
+        let alias = store.create(&wb, "card_aaa").unwrap();
         store.delete(&alias.alias_id).unwrap();
         assert!(matches!(store.get(&alias.alias_id), Err(KeysightError::NotFound(_))));
     }
@@ -154,10 +157,15 @@ mod tests {
     fn test_query_all_aliases() {
         let conn = test_conn();
         let store = SqliteAliasStore::new(&conn);
-        store.create("wb_root", "card_aaa").unwrap();
-        store.create("wb_root", "card_bbb").unwrap();
-        store.create("other", "card_ccc").unwrap();
-        let aliases = store.query_all("wb_root").unwrap();
+        let wb_root = WhiteboardId::parse("wb_root").unwrap();
+        // `"other"` 字面量不带 wb_ prefix —— 这是一个 DB-level invariant 测试用例
+        // (kind='alias' 行的 whiteboard_id 列即便不是合法 wb_ prefix,SQL 查询仍 scope by =),
+        // 但我们的 trait 已强制 newtype。用 parse("wb_other") 维持语义。
+        let wb_other = WhiteboardId::parse("wb_other").unwrap();
+        store.create(&wb_root, "card_aaa").unwrap();
+        store.create(&wb_root, "card_bbb").unwrap();
+        store.create(&wb_other, "card_ccc").unwrap();
+        let aliases = store.query_all(&wb_root).unwrap();
         assert_eq!(aliases.len(), 2);
     }
 
@@ -170,7 +178,8 @@ mod tests {
 
         let conn = test_conn();
         let store = SqliteAliasStore::new(&conn);
-        let alias = store.create("wb_root", "card_aaa").unwrap();
+        let wb = WhiteboardId::parse("wb_root").unwrap();
+        let alias = store.create(&wb, "card_aaa").unwrap();
 
         let graph = SqliteEntityGraph::new(&conn);
         let to_question = user_draw_edge(
@@ -205,7 +214,8 @@ mod tests {
         // 不得 silent drop。
         let conn = test_conn();
         let store = SqliteAliasStore::new(&conn);
-        let alias = store.create("wb_root", "card_aaa").unwrap();
+        let wb = WhiteboardId::parse("wb_root").unwrap();
+        let alias = store.create(&wb, "card_aaa").unwrap();
 
         conn.execute(
             "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, 'xyz_garbage', 'alias_link')",

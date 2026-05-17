@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -26,7 +27,7 @@ export function useSectionActions(whiteboardId?: string) {
   const create = useCallback(
     async (wb: string, title: string, color: string | null) => {
       const result = await unwrapCommand(
-        commands.sectionCreate(wb, title, color),
+        commands.sectionCreate(wb as WhiteboardId, title, color),
       );
       invalidateSectionsAndPositions();
       return result;

@@ -2,6 +2,7 @@
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{params, Connection, OptionalExtension};
 
+use crate::domain::id::WhiteboardId;
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::{Position, Subtask, TaskEntity, TaskStatus};
@@ -114,8 +115,12 @@ impl ProjectName {
 
     /// 返回对应的 whiteboard_id(固定格式 `projects/{name}`,和 sync 的
     /// `derive_whiteboard_id` 反推规则对齐)。
-    pub fn whiteboard_id(&self) -> String {
-        format!("projects/{}", self.0)
+    ///
+    /// 走 `new_unchecked`(crate 内 trusted 派生):ProjectName 的 invariant
+    /// 已保证 self.0 合法,format 后字符串以 `projects/` 起头,不与 6 种 entity
+    /// prefix 冲突。
+    pub fn whiteboard_id(&self) -> WhiteboardId {
+        WhiteboardId::new_unchecked(format!("projects/{}", self.0))
     }
 }
 
@@ -402,17 +407,13 @@ const NODE_SPACING: f64 = 40.0;
 ///
 /// 空白板返回 `Position { x: 0, y: 0 }`(不是 error;空态是合法的,
 /// 意思是"这是白板第一个节点")。
-///
-/// TODO(B3 P2): WhiteboardId newtype —— 参数 `whiteboard_id: &str` 仍是 stringly typed,
-/// plan 明确推迟到 Phase B3 P2(WhiteboardId newtype + `for_project` 构造器)。
-/// 仅有一个调用点 `task::create`,通过 `project.whiteboard_id()` 派生,入口类型安全。
 pub fn compute_position_below_bottommost(
     conn: &Connection,
-    whiteboard_id: &str,
+    whiteboard_id: &WhiteboardId,
 ) -> Result<Position, KeysightError> {
     let max_y: Option<f64> = conn.query_row(
         "SELECT MAX(y) FROM positions WHERE whiteboard_id = ?1",
-        [whiteboard_id],
+        [whiteboard_id.as_str()],
         |row| row.get::<_, Option<f64>>(0),
     )?;
     let new_y = match max_y {
@@ -571,7 +572,7 @@ pub fn get(
 /// 查询指定白板的所有任务。
 pub fn query_all(
     conn: &Connection,
-    whiteboard_id: &str,
+    whiteboard_id: &WhiteboardId,
 ) -> Result<Vec<TaskEntity>, KeysightError> {
     let mut stmt = conn.prepare(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
@@ -579,7 +580,7 @@ pub fn query_all(
          FROM entities e JOIN task_fields t ON e.id = t.entity_id \
          WHERE e.whiteboard_id = ?1 ORDER BY e.title",
     )?;
-    let rows = stmt.query_map([whiteboard_id], |r| {
+    let rows = stmt.query_map([whiteboard_id.as_str()], |r| {
         let content = r.get::<_, String>(2)?.trim_end_matches('\n').to_string();
         let subtasks = parse_task_checklist(&content);
         Ok(TaskEntity {
@@ -638,7 +639,7 @@ pub fn query_kanban(
                  WHERE e.kind = 'task' AND e.whiteboard_id = ?1 \
                  ORDER BY e.title",
             )?;
-            stmt.query_map([wb], mapper)?
+            stmt.query_map([wb.as_str()], mapper)?
                 .collect::<rusqlite::Result<Vec<_>>>()
                 .map_err(KeysightError::from)
         }
@@ -768,7 +769,7 @@ pub fn create(
     };
     conn.execute(
         "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
-        params![&task_id, &whiteboard_id, position.x, position.y],
+        params![&task_id, whiteboard_id.as_str(), position.x, position.y],
     )?;
     get(conn, &task_id)
 }
@@ -959,7 +960,7 @@ mod tests {
     fn test_project_name_valid() {
         let p = ProjectName::new("super-tauri").unwrap();
         assert_eq!(p.as_str(), "super-tauri");
-        assert_eq!(p.whiteboard_id(), "projects/super-tauri");
+        assert_eq!(p.whiteboard_id().as_str(), "projects/super-tauri");
     }
 
     #[test]
@@ -1472,7 +1473,7 @@ mod tests {
         )
         .unwrap();
 
-        let tasks = query_all(&conn, "projects/super-tauri").unwrap();
+        let tasks = query_all(&conn, &WhiteboardId::parse("projects/super-tauri").unwrap()).unwrap();
         assert_eq!(tasks.len(), 2);
         // tasks 按 title ASC 排序 → Task one 先,Task two 后
         let one = tasks.iter().find(|t| t.title == "Task one").unwrap();
@@ -2016,7 +2017,7 @@ mod tests {
         )
         .unwrap();
 
-        let tasks = query_all(&conn, "projects/super-tauri").unwrap();
+        let tasks = query_all(&conn, &WhiteboardId::parse("projects/super-tauri").unwrap()).unwrap();
         assert_eq!(tasks.len(), 2);
         assert!(tasks.iter().all(|t| t.whiteboard_id == "projects/super-tauri"));
     }
@@ -2028,7 +2029,7 @@ mod tests {
         let project = ProjectName::new("super-tauri").unwrap();
         create(&conn, &vfs, &project, task_create_defaults("Task")).unwrap();
 
-        let tasks = query_all(&conn, "wb_root").unwrap();
+        let tasks = query_all(&conn, &WhiteboardId::parse("wb_root").unwrap()).unwrap();
         assert!(tasks.is_empty());
     }
 
@@ -2070,7 +2071,7 @@ mod tests {
     #[test]
     fn test_compute_position_empty_whiteboard_returns_origin() {
         let conn = test_conn();
-        let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
+        let pos = compute_position_below_bottommost(&conn, &WhiteboardId::parse("projects/test").unwrap()).unwrap();
         assert_eq!(pos.x, 0.0);
         assert_eq!(pos.y, 0.0);
     }
@@ -2083,7 +2084,7 @@ mod tests {
             [],
         )
         .unwrap();
-        let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
+        let pos = compute_position_below_bottommost(&conn, &WhiteboardId::parse("projects/test").unwrap()).unwrap();
         // x 始终是 0.0(简化版),y = 200 + 140 + 40 = 380
         assert_eq!(pos.x, 0.0);
         assert_eq!(pos.y, 380.0);
@@ -2098,7 +2099,7 @@ mod tests {
         )
         .unwrap();
         // B 白板空,不受 A 白板影响
-        let pos = compute_position_below_bottommost(&conn, "projects/B").unwrap();
+        let pos = compute_position_below_bottommost(&conn, &WhiteboardId::parse("projects/B").unwrap()).unwrap();
         assert_eq!(pos.y, 0.0);
     }
 
@@ -2112,7 +2113,7 @@ mod tests {
             )
             .unwrap();
         }
-        let pos = compute_position_below_bottommost(&conn, "projects/test").unwrap();
+        let pos = compute_position_below_bottommost(&conn, &WhiteboardId::parse("projects/test").unwrap()).unwrap();
         // max(50, 200, 100) = 200, + 140 + 40 = 380
         assert_eq!(pos.y, 380.0);
     }

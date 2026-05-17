@@ -2,6 +2,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::domain::edge::EntityId;
+use crate::domain::id::WhiteboardId;
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::QuestionEntity;
@@ -106,7 +107,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError>
 pub fn create(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    whiteboard_id: &str,
+    whiteboard_id: &WhiteboardId,
     title: &str,
     content: Option<&str>,
     status: Option<&str>,
@@ -118,7 +119,7 @@ pub fn create(
         id: question_id.clone(),
         title: title.to_string(),
         content: content.unwrap_or_default().to_string(),
-        whiteboard_id: whiteboard_id.to_string(),
+        whiteboard_id: whiteboard_id.as_str().to_string(),
         status: status.unwrap_or("pending").to_string(),
         color: color.filter(|v| !v.is_empty()).map(|v| v.to_string()),
         linked_section_ids: None,
@@ -172,7 +173,8 @@ pub fn update(
         linked_task_ids: current.linked_task_ids.clone(),
     };
     let previous_path = file_path.filter(|path| !path.is_empty());
-    let relative_path = desired_question_relative_path(&next.whiteboard_id, id, &next.title, previous_path.as_deref());
+    let next_wb = WhiteboardId::new_unchecked(next.whiteboard_id.clone());
+    let relative_path = desired_question_relative_path(&next_wb, id, &next.title, previous_path.as_deref());
     let markdown = render_question_markdown(&next);
     vault_fs.write_file(&relative_path, &markdown)?;
     sync::sync_file(conn, &relative_path, &markdown, current_mtime_ms())?;
@@ -195,8 +197,9 @@ pub fn sync_links_to_file(
         .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id], |r| r.get(0))
         .optional()?;
     let previous_path = file_path.filter(|path| !path.is_empty());
+    let current_wb = WhiteboardId::new_unchecked(current.whiteboard_id.clone());
     let relative_path = desired_question_relative_path(
-        &current.whiteboard_id,
+        &current_wb,
         id,
         &current.title,
         previous_path.as_deref(),
@@ -239,11 +242,11 @@ pub fn delete(
 }
 
 /// 查询指定白板的所有问题。
-pub fn query_all(conn: &Connection, whiteboard_id: &str) -> Result<Vec<QuestionEntity>, KeysightError> {
+pub fn query_all(conn: &Connection, whiteboard_id: &WhiteboardId) -> Result<Vec<QuestionEntity>, KeysightError> {
     let mut stmt = conn.prepare(
         "SELECT e.id FROM entities e WHERE e.kind = 'question' AND e.whiteboard_id = ?1 ORDER BY e.title"
     )?;
-    let ids: Vec<String> = stmt.query_map([whiteboard_id], |r| r.get(0))?
+    let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     ids.iter().map(|id| get(conn, id)).collect()
 }
@@ -279,11 +282,11 @@ fn current_mtime_ms() -> f64 {
         * 1000.0
 }
 
-fn whiteboard_relative_dir(whiteboard_id: &str) -> String {
-    if whiteboard_id == "wb_root" {
+fn whiteboard_relative_dir(whiteboard_id: &WhiteboardId) -> String {
+    if whiteboard_id.as_str() == "wb_root" {
         "whiteboard".to_string()
     } else {
-        format!("whiteboard/{whiteboard_id}")
+        format!("whiteboard/{}", whiteboard_id.as_str())
     }
 }
 
@@ -318,7 +321,7 @@ fn sanitize_file_component(text: &str) -> String {
 }
 
 fn desired_question_relative_path(
-    whiteboard_id: &str,
+    whiteboard_id: &WhiteboardId,
     question_id: &str,
     title: &str,
     current_file_path: Option<&str>,
@@ -336,7 +339,7 @@ fn desired_question_relative_path(
     }
 }
 
-fn question_relative_path(whiteboard_id: &str, question_id: &str, title: &str) -> String {
+fn question_relative_path(whiteboard_id: &WhiteboardId, question_id: &str, title: &str) -> String {
     format!(
         "{}/{} 【QUE】{}.md",
         whiteboard_relative_dir(whiteboard_id),
@@ -434,7 +437,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
 
-        let question = create(&conn, &vfs, "wb_root", "Test Question", Some("Body."), Some("doing"), None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Test Question", Some("Body."), Some("doing"), None).unwrap();
 
         assert_eq!(question.status, "doing");
         let file_path: String = conn
@@ -449,7 +452,7 @@ mod tests {
     fn test_update_question_rewrites_markdown_file() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending"), None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Old", Some("Body"), Some("pending"), None).unwrap();
 
         update(&conn, &vfs, &question.id, Some("New"), Some("Updated"), Some("done"), None).unwrap();
 
@@ -464,7 +467,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
 
-        let question = create(&conn, &vfs, "wb_root", "**Why** / Question", Some("Body"), None, None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"**Why** / Question", Some("Body"), None, None).unwrap();
 
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
@@ -476,7 +479,7 @@ mod tests {
     fn test_update_question_renames_file_when_title_changes() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Old", Some("Body"), Some("pending"), None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Old", Some("Body"), Some("pending"), None).unwrap();
         let old_file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
             .unwrap();
@@ -496,7 +499,7 @@ mod tests {
     fn test_delete_question_removes_markdown_file_and_db_rows() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Del", None, None, None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Del", None, None, None).unwrap();
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
             .unwrap();
@@ -527,7 +530,7 @@ mod tests {
     fn test_query_all_returns_typed_questions() {
         let conn = test_conn();
         seed_question(&conn);
-        let questions = query_all(&conn, "wb_root").unwrap();
+        let questions = query_all(&conn, &WhiteboardId::parse("wb_root").unwrap()).unwrap();
         assert_eq!(questions.len(), 1);
         assert_eq!(questions[0].id, "q_test00001");
         assert_eq!(questions[0].title, "Test Question");
@@ -538,7 +541,7 @@ mod tests {
     fn test_query_all_empty_whiteboard() {
         let conn = test_conn();
         seed_question(&conn);
-        let questions = query_all(&conn, "other").unwrap();
+        let questions = query_all(&conn, &WhiteboardId::parse("other").unwrap()).unwrap();
         assert!(questions.is_empty());
     }
 
@@ -550,7 +553,7 @@ mod tests {
         let question = create(
             &conn,
             &vfs,
-            "wb_root",
+            &WhiteboardId::parse("wb_root").unwrap(),
             "Colored Q",
             None,
             None,
@@ -575,7 +578,7 @@ mod tests {
     fn test_update_question_sets_and_clears_color() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "wb_root", "Q", None, None, None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Q", None, None, None).unwrap();
 
         // 第一步:设置 color
         update(
@@ -604,7 +607,7 @@ mod tests {
         let question = create(
             &conn,
             &vfs,
-            "wb_root",
+            &WhiteboardId::parse("wb_root").unwrap(),
             "Q",
             None,
             None,
@@ -623,7 +626,7 @@ mod tests {
     fn test_get_question_reads_question_link_targets() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "projects/super-tauri", "Links", Some("body"), None, None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("projects/super-tauri").unwrap(),"Links", Some("body"), None, None).unwrap();
         conn.execute(
             "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
             params![question.id, "note_target"],
@@ -644,7 +647,7 @@ mod tests {
     fn test_update_question_preserves_question_links_in_markdown() {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
-        let question = create(&conn, &vfs, "projects/super-tauri", "Links", Some("body"), None, None).unwrap();
+        let question = create(&conn, &vfs, &WhiteboardId::parse("projects/super-tauri").unwrap(),"Links", Some("body"), None, None).unwrap();
         conn.execute(
             "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
             params![question.id, "note_target"],

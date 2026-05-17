@@ -9,6 +9,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::domain::id::WhiteboardId;
+
 /// 写命令请求参数 — tagged enum,wire 层 discriminator 字段为 `kind`(kebab-case)。
 ///
 /// 与 keysight-cli 6.2a 的 9 live mutate CLI 命令 JSON shape 严格对齐。server
@@ -41,13 +43,13 @@ use serde::{Deserialize, Serialize};
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum MutateParams {
     SectionCreate {
-        wb: String,
+        wb: WhiteboardId,
         title: String,
         #[serde(default)]
         color: Option<String>,
     },
     NoteCreate {
-        wb: String,
+        wb: WhiteboardId,
         title: String,
         #[serde(default)]
         content: Option<String>,
@@ -64,11 +66,11 @@ pub enum MutateParams {
         color: Option<String>,
     },
     AliasCreate {
-        wb: String,
+        wb: WhiteboardId,
         card_id: String,
     },
     SetPos {
-        wb: String,
+        wb: WhiteboardId,
         entity_id: String,
         x: f64,
         y: f64,
@@ -88,7 +90,7 @@ pub enum MutateParams {
     },
     SectionMove {
         section_id: String,
-        target_wb: String,
+        target_wb: WhiteboardId,
     },
 }
 
@@ -121,7 +123,7 @@ mod tests {
     #[test]
     fn test_mutate_params_section_create_matches_cli_shape() {
         let params = MutateParams::SectionCreate {
-            wb: "wb_root".to_string(),
+            wb: WhiteboardId::parse("wb_root").unwrap(),
             title: "MySection".to_string(),
             color: Some("#ff0000".to_string()),
         };
@@ -141,7 +143,7 @@ mod tests {
     #[test]
     fn test_mutate_params_note_create_none_fields_emit_null() {
         let params = MutateParams::NoteCreate {
-            wb: "wb_root".into(),
+            wb: WhiteboardId::parse("wb_root").unwrap(),
             title: "untitled".into(),
             content: None,
             color: None,
@@ -156,7 +158,7 @@ mod tests {
     #[test]
     fn test_mutate_params_set_pos_kebab_case() {
         let params = MutateParams::SetPos {
-            wb: "wb_root".into(),
+            wb: WhiteboardId::parse("wb_root").unwrap(),
             entity_id: "sec_abc12345".into(),
             x: 100.5,
             y: -50.25,
@@ -193,7 +195,7 @@ mod tests {
         let cases: &[(MutateParams, &str)] = &[
             (
                 MutateParams::SectionCreate {
-                    wb: "w".into(),
+                    wb: WhiteboardId::parse("w").unwrap(),
                     title: "t".into(),
                     color: None,
                 },
@@ -201,7 +203,7 @@ mod tests {
             ),
             (
                 MutateParams::NoteCreate {
-                    wb: "w".into(),
+                    wb: WhiteboardId::parse("w").unwrap(),
                     title: "t".into(),
                     content: None,
                     color: None,
@@ -219,14 +221,14 @@ mod tests {
             ),
             (
                 MutateParams::AliasCreate {
-                    wb: "w".into(),
+                    wb: WhiteboardId::parse("w").unwrap(),
                     card_id: "c".into(),
                 },
                 "alias-create",
             ),
             (
                 MutateParams::SetPos {
-                    wb: "w".into(),
+                    wb: WhiteboardId::parse("w").unwrap(),
                     entity_id: "e".into(),
                     x: 0.0,
                     y: 0.0,
@@ -258,7 +260,7 @@ mod tests {
             (
                 MutateParams::SectionMove {
                     section_id: "s".into(),
-                    target_wb: "wb_target".into(),
+                    target_wb: WhiteboardId::parse("wb_target").unwrap(),
                 },
                 "section-move",
             ),

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -24,7 +25,7 @@ export function useNoteActions(whiteboardId?: string) {
       color: string | null,
     ) => {
       const result = await unwrapCommand(
-        commands.noteCreate(wb, title, content, color),
+        commands.noteCreate(wb as WhiteboardId, title, content, color),
       );
       invalidate();
       return result;

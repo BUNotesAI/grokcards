@@ -10,6 +10,7 @@ use super::super::models::{
     SkippedItem, WhiteboardMapping,
 };
 use super::super::parser;
+use super::id::WhiteboardId;
 use super::sync::derive_whiteboard_id;
 
 /// 旧 DB v1 schema DDL（测试用，不含 triggers）。
@@ -274,10 +275,12 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
 
         for wb in &reader.list_whiteboards()? {
             let meta_key = wb.meta_suffix.as_deref().unwrap_or("");
-            self.import_wb_sections(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
-            self.import_wb_notes(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
-            self.import_wb_aliases(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
-            self.import_wb_positions(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
+            // 例外:WhiteboardMapping 来自 legacy DB,信任 schema invariant —— 走 new_unchecked
+            let wb_id = WhiteboardId::new_unchecked(wb.whiteboard_id.clone());
+            self.import_wb_sections(reader, meta_key, &wb_id, &mut summary)?;
+            self.import_wb_notes(reader, meta_key, &wb_id, &mut summary)?;
+            self.import_wb_aliases(reader, meta_key, &wb_id, &mut summary)?;
+            self.import_wb_positions(reader, meta_key, &wb_id, &mut summary)?;
         }
 
         self.rebuild_fts_index()?;
@@ -318,7 +321,7 @@ impl<'a> SqliteLegacyImporter<'a> {
                 params![
                     ins.id,
                     parser::normalize_title_markdown_escapes(&ins.title),
-                    wb_id,
+                    wb_id.as_str(),
                     ins.file_path,
                     ins.content
                 ],
@@ -397,14 +400,14 @@ impl<'a> SqliteLegacyImporter<'a> {
         &self,
         reader: &dyn LegacyReader,
         meta_key: &str,
-        whiteboard_id: &str,
+        whiteboard_id: &WhiteboardId,
         summary: &mut ImportSummary,
     ) -> Result<(), KeysightError> {
         for sec in reader.read_sections(meta_key)? {
             self.conn.execute(
                 "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, color) \
                  VALUES (?1, 'section', ?2, ?3, ?4)",
-                params![sec.id, sec.title, whiteboard_id, sec.color],
+                params![sec.id, sec.title, whiteboard_id.as_str(), sec.color],
             )?;
             summary.sections += 1;
 
@@ -439,14 +442,14 @@ impl<'a> SqliteLegacyImporter<'a> {
         &self,
         reader: &dyn LegacyReader,
         meta_key: &str,
-        whiteboard_id: &str,
+        whiteboard_id: &WhiteboardId,
         summary: &mut ImportSummary,
     ) -> Result<(), KeysightError> {
         for note in reader.read_notes(meta_key)? {
             self.conn.execute(
                 "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, content) \
                  VALUES (?1, 'note', ?2, ?3, ?4)",
-                params![note.id, note.title, whiteboard_id, note.content],
+                params![note.id, note.title, whiteboard_id.as_str(), note.content],
             )?;
             summary.notes += 1;
 
@@ -474,14 +477,14 @@ impl<'a> SqliteLegacyImporter<'a> {
         &self,
         reader: &dyn LegacyReader,
         meta_key: &str,
-        whiteboard_id: &str,
+        whiteboard_id: &WhiteboardId,
         summary: &mut ImportSummary,
     ) -> Result<(), KeysightError> {
         for alias in reader.read_aliases(meta_key)? {
             self.conn.execute(
                 "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id) \
                  VALUES (?1, 'alias', ?2, ?3)",
-                params![alias.alias_id, alias.card_id, whiteboard_id],
+                params![alias.alias_id, alias.card_id, whiteboard_id.as_str()],
             )?;
             self.conn.execute(
                 "INSERT OR REPLACE INTO alias_fields (entity_id, card_id) \
@@ -521,14 +524,14 @@ impl<'a> SqliteLegacyImporter<'a> {
         &self,
         reader: &dyn LegacyReader,
         meta_key: &str,
-        whiteboard_id: &str,
+        whiteboard_id: &WhiteboardId,
         summary: &mut ImportSummary,
     ) -> Result<(), KeysightError> {
         for pos in reader.read_positions(meta_key)? {
             self.conn.execute(
                 "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) \
                  VALUES (?1, ?2, ?3, ?4)",
-                params![pos.entity_id, whiteboard_id, pos.x, pos.y],
+                params![pos.entity_id, whiteboard_id.as_str(), pos.x, pos.y],
             )?;
             summary.positions += 1;
         }

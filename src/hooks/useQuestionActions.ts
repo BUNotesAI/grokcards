@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -32,7 +33,7 @@ export function useQuestionActions(whiteboardId?: string) {
       color: string | null,
     ) => {
       const result = await unwrapCommand(
-        commands.questionCreate(wb, title, content, status, color),
+        commands.questionCreate(wb as WhiteboardId, title, content, status, color),
       );
       invalidateQuestionsAndPositions();
       return result;

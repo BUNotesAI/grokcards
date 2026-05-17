@@ -1,20 +1,21 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection};
 
+use crate::domain::id::WhiteboardId;
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::GraphSection;
 
 /// 分组存储契约。
 pub trait SectionStore {
-    fn create(&self, whiteboard_id: &str, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError>;
+    fn create(&self, whiteboard_id: &WhiteboardId, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn update(&self, id: &str, title: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
     fn add_member(&self, section_id: &str, entity_id: &str) -> Result<(), KeysightError>;
     fn remove_member(&self, section_id: &str, entity_id: &str) -> Result<(), KeysightError>;
     fn get(&self, id: &str) -> Result<GraphSection, KeysightError>;
-    fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphSection>, KeysightError>;
-    fn move_to_whiteboard(&self, section_id: &str, target_whiteboard_id: &str) -> Result<(), KeysightError>;
+    fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<GraphSection>, KeysightError>;
+    fn move_to_whiteboard(&self, section_id: &str, target_whiteboard_id: &WhiteboardId) -> Result<(), KeysightError>;
 }
 
 pub struct SqliteSectionStore<'a> {
@@ -26,11 +27,11 @@ impl<'a> SqliteSectionStore<'a> {
 }
 
 impl SectionStore for SqliteSectionStore<'_> {
-    fn create(&self, whiteboard_id: &str, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError> {
+    fn create(&self, whiteboard_id: &WhiteboardId, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError> {
         let sec_id = id::gen_sec_id();
         self.conn.execute(
             "INSERT INTO entities (id, kind, title, whiteboard_id, color) VALUES (?1, 'section', ?2, ?3, ?4)",
-            params![sec_id, title, whiteboard_id, color],
+            params![sec_id, title, whiteboard_id.as_str(), color],
         )?;
         // auto-position: 在 canvas 最底元素下方一个 node 高度 + spacing 处,
         // 避免新建 section 因无 positions 行而在画布不可见(对标 task::create 的 auto-position)。
@@ -40,7 +41,7 @@ impl SectionStore for SqliteSectionStore<'_> {
         )?;
         self.conn.execute(
             "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
-            params![sec_id, whiteboard_id, position.x, position.y],
+            params![sec_id, whiteboard_id.as_str(), position.x, position.y],
         )?;
         Ok(GraphSection {
             id: sec_id,
@@ -110,16 +111,16 @@ impl SectionStore for SqliteSectionStore<'_> {
         Ok(GraphSection { id: id.to_string(), title, card_ids, color, linked_section_ids })
     }
 
-    fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphSection>, KeysightError> {
+    fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<GraphSection>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM entities WHERE kind = 'section' AND whiteboard_id = ?1 ORDER BY title"
         )?;
-        let ids: Vec<String> = stmt.query_map([whiteboard_id], |r| r.get(0))?
+        let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         ids.iter().map(|id| self.get(id)).collect()
     }
 
-    fn move_to_whiteboard(&self, section_id: &str, target_whiteboard_id: &str) -> Result<(), KeysightError> {
+    fn move_to_whiteboard(&self, section_id: &str, target_whiteboard_id: &WhiteboardId) -> Result<(), KeysightError> {
         // 1. 验证存在并获取旧 whiteboard_id
         let old_wb: String = self.conn.query_row(
             "SELECT whiteboard_id FROM entities WHERE id = ?1 AND kind = 'section'",
@@ -133,7 +134,7 @@ impl SectionStore for SqliteSectionStore<'_> {
         // 2. 更新 whiteboard_id
         self.conn.execute(
             "UPDATE entities SET whiteboard_id = ?1 WHERE id = ?2",
-            params![target_whiteboard_id, section_id],
+            params![target_whiteboard_id.as_str(), section_id],
         )?;
 
         // 3. 查成员
@@ -171,7 +172,7 @@ impl SectionStore for SqliteSectionStore<'_> {
                 |r| r.get(0),
             );
             if let Ok(wb) = other_wb
-                && wb != target_whiteboard_id
+                && wb.as_str() != target_whiteboard_id.as_str()
             {
                 self.conn.execute(
                     "DELETE FROM edges WHERE from_id = ?1 AND to_id = ?2 AND edge_type = 'section_link'",
@@ -200,7 +201,7 @@ mod tests {
     fn test_create_section() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec = store.create("wb_root", "My Section", Some("blue")).unwrap();
+        let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"My Section", Some("blue")).unwrap();
         assert!(sec.id.starts_with("sec_"));
         assert_eq!(sec.title, "My Section");
         assert_eq!(sec.color, Some("blue".to_string()));
@@ -211,7 +212,7 @@ mod tests {
     fn test_delete_section() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec = store.create("wb_root", "To Delete", None).unwrap();
+        let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"To Delete", None).unwrap();
         store.delete(&sec.id).unwrap();
         assert!(matches!(store.get(&sec.id), Err(KeysightError::NotFound(_))));
     }
@@ -220,7 +221,7 @@ mod tests {
     fn test_update_section_title() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec = store.create("wb_root", "Old", None).unwrap();
+        let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Old", None).unwrap();
         store.update(&sec.id, Some("New"), None).unwrap();
         let updated = store.get(&sec.id).unwrap();
         assert_eq!(updated.title, "New");
@@ -230,7 +231,7 @@ mod tests {
     fn test_add_remove_member() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec = store.create("wb_root", "Sec", None).unwrap();
+        let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Sec", None).unwrap();
         store.add_member(&sec.id, "card_aaa").unwrap();
         store.add_member(&sec.id, "card_bbb").unwrap();
 
@@ -246,7 +247,7 @@ mod tests {
     fn test_add_member_idempotent() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec = store.create("wb_root", "Sec", None).unwrap();
+        let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Sec", None).unwrap();
         store.add_member(&sec.id, "card_aaa").unwrap();
         store.add_member(&sec.id, "card_aaa").unwrap(); // 重复
         let loaded = store.get(&sec.id).unwrap();
@@ -257,11 +258,11 @@ mod tests {
     fn test_query_all_sections() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        store.create("wb_root", "Alpha", None).unwrap();
-        store.create("wb_root", "Beta", None).unwrap();
-        store.create("other_wb", "Gamma", None).unwrap();
+        store.create(&WhiteboardId::parse("wb_root").unwrap(),"Alpha", None).unwrap();
+        store.create(&WhiteboardId::parse("wb_root").unwrap(),"Beta", None).unwrap();
+        store.create(&WhiteboardId::parse("wb_other").unwrap(), "Gamma", None).unwrap();
 
-        let sections = store.query_all("wb_root").unwrap();
+        let sections = store.query_all(&WhiteboardId::parse("wb_root").unwrap()).unwrap();
         assert_eq!(sections.len(), 2);
     }
 
@@ -269,7 +270,7 @@ mod tests {
     fn test_move_to_whiteboard() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec = store.create("wb_root", "Movable", None).unwrap();
+        let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Movable", None).unwrap();
         store.add_member(&sec.id, "card_aaa").unwrap();
 
         // 设置位置(create 已经写入 auto-position row,这里用 OR REPLACE 覆盖成固定坐标供断言)
@@ -278,7 +279,7 @@ mod tests {
             [&sec.id],
         ).unwrap();
 
-        store.move_to_whiteboard(&sec.id, "wb_target").unwrap();
+        store.move_to_whiteboard(&sec.id, &WhiteboardId::parse("wb_target").unwrap()).unwrap();
 
         // whiteboard_id 变了
         let new_wb: String = conn.query_row(
@@ -301,8 +302,8 @@ mod tests {
     fn test_move_cleans_cross_wb_section_links() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let sec1 = store.create("wb_root", "Sec1", None).unwrap();
-        let sec2 = store.create("wb_root", "Sec2", None).unwrap();
+        let sec1 = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Sec1", None).unwrap();
+        let sec2 = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Sec2", None).unwrap();
 
         // sec1 → sec2 section_link ——通过原始 SQL 模拟历史遗留数据。新 Edge
         // 枚举不含 SectionLink 变体(业务:section 不主动发边),所以无法通过
@@ -314,7 +315,7 @@ mod tests {
         let graph = SqliteEntityGraph::new(&conn);
 
         // 移 sec1 到另一个白板
-        store.move_to_whiteboard(&sec1.id, "wb_other").unwrap();
+        store.move_to_whiteboard(&sec1.id, &WhiteboardId::parse("wb_other").unwrap()).unwrap();
 
         // 跨白板 link 被清
         let edges = graph.edges_from(&sec1.id).unwrap();
@@ -329,7 +330,7 @@ mod tests {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
 
-        let first = store.create("wb_root", "First", None).unwrap();
+        let first = store.create(&WhiteboardId::parse("wb_root").unwrap(),"First", None).unwrap();
         let (x0, y0): (f64, f64) = conn
             .query_row(
                 "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = 'wb_root'",
@@ -339,7 +340,7 @@ mod tests {
             .unwrap();
         assert_eq!((x0, y0), (0.0, 0.0), "空白板第一个 section 应在 (0, 0)");
 
-        let second = store.create("wb_root", "Second", None).unwrap();
+        let second = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Second", None).unwrap();
         let (x1, y1): (f64, f64) = conn
             .query_row(
                 "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = 'wb_root'",
@@ -355,7 +356,7 @@ mod tests {
     fn test_move_nonexistent_section() {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
-        let result = store.move_to_whiteboard("sec_nonexist", "wb_target");
+        let result = store.move_to_whiteboard("sec_nonexist", &WhiteboardId::parse("wb_target").unwrap());
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 }

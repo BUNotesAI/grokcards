@@ -7,6 +7,7 @@ use super::domain::alias::{AliasStore, SqliteAliasStore};
 use super::domain::card::{CardStore, SqliteCardStore};
 use super::domain::edge::{user_draw_edge, Edge, EntityId};
 use super::domain::entity::{EntityGraph, SqliteEntityGraph};
+use super::domain::id::WhiteboardId;
 use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
@@ -283,7 +284,7 @@ pub fn section_get(
 #[specta::specta]
 pub fn section_query_all(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
 ) -> Result<Vec<GraphSection>, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:section_query_all");
@@ -315,7 +316,7 @@ pub fn section_query_all(
 #[specta::specta]
 pub fn section_create(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     title: String,
     color: Option<String>,
 ) -> Result<GraphSection, AppError> {
@@ -474,7 +475,7 @@ pub fn section_remove_member(
 pub fn section_move_to_whiteboard(
     state: State<'_, KeysightRuntimeState>,
     section_id: String,
-    target_whiteboard_id: String,
+    target_whiteboard_id: WhiteboardId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -494,7 +495,7 @@ pub fn section_move_to_whiteboard(
 #[specta::specta]
 pub fn task_query_all(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
 ) -> Result<Vec<TaskEntity>, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_query_all");
@@ -709,7 +710,7 @@ pub fn task_update_with_subtasks(
 #[specta::specta]
 pub fn question_query_all(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
 ) -> Result<Vec<QuestionEntity>, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:question_query_all");
@@ -722,7 +723,7 @@ pub fn question_query_all(
 #[specta::specta]
 pub fn question_create(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     title: String,
     content: Option<String>,
     status: Option<String>,
@@ -810,7 +811,7 @@ pub fn note_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<Gr
 #[specta::specta]
 pub fn note_query_all(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
 ) -> Result<Vec<GraphNote>, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:note_query_all");
@@ -838,7 +839,7 @@ pub fn note_query_all(
 #[specta::specta]
 pub fn note_create(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     title: String,
     content: Option<String>,
     color: Option<String>,
@@ -944,7 +945,7 @@ pub fn alias_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<C
 #[specta::specta]
 pub fn alias_query_all(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
 ) -> Result<Vec<CardAlias>, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:alias_query_all");
@@ -971,7 +972,7 @@ pub fn alias_query_all(
 #[specta::specta]
 pub fn alias_create(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     card_id: String,
 ) -> Result<CardAlias, AppError> {
     let state = state.resolved()?;
@@ -1015,7 +1016,7 @@ pub fn alias_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Resul
 #[specta::specta]
 pub fn layout_query_positions(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
 ) -> Result<HashMap<String, Position>, AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:layout_query_positions");
@@ -1042,7 +1043,7 @@ pub fn layout_query_positions(
 #[specta::specta]
 pub fn layout_set_position(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     entity_id: String,
     x: f64,
     y: f64,
@@ -1073,7 +1074,7 @@ pub fn layout_set_position(
 #[specta::specta]
 pub fn layout_remove_position(
     state: State<'_, KeysightRuntimeState>,
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     entity_id: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;

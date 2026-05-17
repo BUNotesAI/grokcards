@@ -9,6 +9,7 @@ import type {
   TaskEntity,
   QuestionEntity,
   Position,
+  WhiteboardId,
 } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 import { perfLog } from "@/lib/perf";
@@ -68,7 +69,7 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     queryFn: () =>
       timedQuery(
         `sections[${whiteboardId}]`,
-        () => unwrapCommand(commands.sectionQueryAll(whiteboardId)),
+        () => unwrapCommand(commands.sectionQueryAll(whiteboardId as WhiteboardId)),
         (r) => r.length,
       ),
   });
@@ -78,7 +79,7 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     queryFn: () =>
       timedQuery(
         `notes[${whiteboardId}]`,
-        () => unwrapCommand(commands.noteQueryAll(whiteboardId)),
+        () => unwrapCommand(commands.noteQueryAll(whiteboardId as WhiteboardId)),
         (r) => r.length,
       ),
   });
@@ -88,7 +89,7 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     queryFn: () =>
       timedQuery(
         `aliases[${whiteboardId}]`,
-        () => unwrapCommand(commands.aliasQueryAll(whiteboardId)),
+        () => unwrapCommand(commands.aliasQueryAll(whiteboardId as WhiteboardId)),
         (r) => r.length,
       ),
   });
@@ -98,7 +99,7 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     queryFn: () =>
       timedQuery(
         `tasks[${whiteboardId}]`,
-        () => unwrapCommand(commands.taskQueryAll(whiteboardId)),
+        () => unwrapCommand(commands.taskQueryAll(whiteboardId as WhiteboardId)),
         (r) => r.length,
       ),
   });
@@ -108,7 +109,7 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     queryFn: () =>
       timedQuery(
         `questions[${whiteboardId}]`,
-        () => unwrapCommand(commands.questionQueryAll(whiteboardId)),
+        () => unwrapCommand(commands.questionQueryAll(whiteboardId as WhiteboardId)),
         (r) => r.length,
       ),
   });
@@ -118,7 +119,7 @@ export function useWhiteboardData(whiteboardId: string): WhiteboardData {
     queryFn: () =>
       timedQuery(
         `positions[${whiteboardId}]`,
-        () => unwrapCommand(commands.layoutQueryPositions(whiteboardId)),
+        () => unwrapCommand(commands.layoutQueryPositions(whiteboardId as WhiteboardId)),
         (r) => Object.keys(r).length,
       ),
   });

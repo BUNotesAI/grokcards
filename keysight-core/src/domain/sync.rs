@@ -3,6 +3,7 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
+use crate::domain::id::WhiteboardId;
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::{SyncFileResponse, SyncVaultReport};
@@ -144,7 +145,7 @@ fn upsert_entity_row(
     id: &str,
     kind_str: &str,
     parsed: &parser::ParsedEntity,
-    wb_id: &str,
+    wb_id: &WhiteboardId,
     file_path: &str,
 ) -> Result<RowOp, KeysightError> {
     let exists = conn
@@ -158,13 +159,13 @@ fn upsert_entity_row(
     if exists {
         conn.execute(
             "UPDATE entities SET kind = ?1, title = ?2, whiteboard_id = ?3, file_path = ?4, content = ?5, color = ?6 WHERE id = ?7",
-            params![kind_str, parsed.title, wb_id, file_path, parsed.content, parsed.color, id],
+            params![kind_str, parsed.title, wb_id.as_str(), file_path, parsed.content, parsed.color, id],
         )?;
         Ok(RowOp::Updated)
     } else {
         conn.execute(
             "INSERT INTO entities (id, kind, title, whiteboard_id, file_path, content, color) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
-            params![id, kind_str, parsed.title, wb_id, file_path, parsed.content, parsed.color],
+            params![id, kind_str, parsed.title, wb_id.as_str(), file_path, parsed.content, parsed.color],
         )?;
         Ok(RowOp::Inserted)
     }
@@ -313,7 +314,15 @@ fn record_file_mtime(
 /// P1-7 修复:之前的实现对 `whiteboard/projects/loose.md` 会返回 `"projects"`,
 /// 但 `projects` 本身不是合法 whiteboard(是命名空间),这会创建一个影子 whiteboard
 /// 污染枚举结果。现在统一归到 wb_root。
-pub(super) fn derive_whiteboard_id(file_path: &str) -> String {
+///
+/// 走 `new_unchecked`(trusted 派生):路径解析后的 wb_id 字符串保证非空且不会
+/// 以 6 种 entity prefix 起头,信任 WhiteboardId invariant。
+pub(super) fn derive_whiteboard_id(file_path: &str) -> WhiteboardId {
+    let raw = derive_whiteboard_id_str(file_path);
+    WhiteboardId::new_unchecked(raw)
+}
+
+fn derive_whiteboard_id_str(file_path: &str) -> String {
     let Some(path) = file_path.strip_prefix("whiteboard/") else {
         return "wb_root".to_string();
     };
@@ -707,25 +716,25 @@ Question body.
     #[test]
     fn test_derive_whiteboard_id_root() {
         // whiteboard/ 下直接的文件映射到 wb_root
-        assert_eq!(derive_whiteboard_id("whiteboard/test.md"), "wb_root");
+        assert_eq!(derive_whiteboard_id("whiteboard/test.md").as_str(), "wb_root");
         // 非 whiteboard 目录也映射到 wb_root
-        assert_eq!(derive_whiteboard_id("other/test.md"), "wb_root");
+        assert_eq!(derive_whiteboard_id("other/test.md").as_str(), "wb_root");
     }
 
     #[test]
     fn test_derive_whiteboard_id_sub() {
-        assert_eq!(derive_whiteboard_id("whiteboard/myboard/test.md"), "myboard");
+        assert_eq!(derive_whiteboard_id("whiteboard/myboard/test.md").as_str(), "myboard");
     }
 
     #[test]
     fn test_derive_whiteboard_id_project() {
         // projects/ 下二级目录作为 project whiteboard id
         assert_eq!(
-            derive_whiteboard_id("whiteboard/projects/super-tauri/task_abc 【TASK】Add login.md"),
+            derive_whiteboard_id("whiteboard/projects/super-tauri/task_abc 【TASK】Add login.md").as_str(),
             "projects/super-tauri"
         );
         assert_eq!(
-            derive_whiteboard_id("whiteboard/projects/agent-slipbox/note_xyz 【NOTE】Thoughts.md"),
+            derive_whiteboard_id("whiteboard/projects/agent-slipbox/note_xyz 【NOTE】Thoughts.md").as_str(),
             "projects/agent-slipbox"
         );
     }
@@ -736,11 +745,11 @@ Question body.
         // 不再创建 `projects` 影子 whiteboard,而是 quarantine 到 wb_root。
         // `projects` 是 reserved 父目录命名空间,不是合法 whiteboard。
         assert_eq!(
-            derive_whiteboard_id("whiteboard/projects/loose.md"),
+            derive_whiteboard_id("whiteboard/projects/loose.md").as_str(),
             "wb_root"
         );
         // 空 project 名也一样归 wb_root
-        assert_eq!(derive_whiteboard_id("whiteboard/projects/"), "wb_root");
+        assert_eq!(derive_whiteboard_id("whiteboard/projects/").as_str(), "wb_root");
     }
 
     // --- remove_file ---

@@ -17,6 +17,7 @@ use keysight_core::domain::alias::{AliasStore, SqliteAliasStore};
 use keysight_core::domain::card::SqliteCardStore;
 use keysight_core::domain::edge::{user_draw_edge, Edge, EntityId};
 use keysight_core::domain::entity::{EntityGraph, SqliteEntityGraph};
+use keysight_core::domain::id::WhiteboardId;
 use keysight_core::domain::layout::{LayoutStore, SqliteLayoutStore};
 use keysight_core::domain::note::{NoteStore, SqliteNoteStore};
 use keysight_core::domain::question;
@@ -121,23 +122,23 @@ pub(super) fn dispatch_mutate(
 /// `entity_id = Some` 仅 Create 类 variant;Update / 关系操作返 `None`。
 type OpResult = Result<(Option<String>, Value), KeysightError>;
 
-fn op_section_create(conn: &Connection, wb: &str, title: &str, color: Option<&str>) -> OpResult {
+fn op_section_create(conn: &Connection, wb: &WhiteboardId, title: &str, color: Option<&str>) -> OpResult {
     let sec = SqliteSectionStore::new(conn).create(wb, title, color)?;
     let id = sec.id.clone();
-    Ok((Some(id.clone()), json!({ "kind": "section", "id": id, "wb": wb })))
+    Ok((Some(id.clone()), json!({ "kind": "section", "id": id, "wb": wb.as_str() })))
 }
 
 fn op_note_create(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    wb: &str,
+    wb: &WhiteboardId,
     title: &str,
     content: Option<&str>,
     color: Option<&str>,
 ) -> OpResult {
     let note = SqliteNoteStore::with_vault_fs(conn, vault_fs).create(wb, title, content, color)?;
     let id = note.id.clone();
-    Ok((Some(id.clone()), json!({ "kind": "note", "id": id, "wb": wb })))
+    Ok((Some(id.clone()), json!({ "kind": "note", "id": id, "wb": wb.as_str() })))
 }
 
 fn op_note_update(
@@ -152,20 +153,20 @@ fn op_note_update(
     Ok((None, json!({ "kind": "note", "id": id })))
 }
 
-fn op_alias_create(conn: &Connection, wb: &str, card_id: &str) -> OpResult {
+fn op_alias_create(conn: &Connection, wb: &WhiteboardId, card_id: &str) -> OpResult {
     let alias = SqliteAliasStore::new(conn).create(wb, card_id)?;
     let id = alias.alias_id.clone();
     Ok((
         Some(id.clone()),
-        json!({ "kind": "alias", "id": id, "wb": wb, "card_id": card_id }),
+        json!({ "kind": "alias", "id": id, "wb": wb.as_str(), "card_id": card_id }),
     ))
 }
 
-fn op_set_pos(conn: &Connection, wb: &str, entity_id: &str, x: f64, y: f64) -> OpResult {
+fn op_set_pos(conn: &Connection, wb: &WhiteboardId, entity_id: &str, x: f64, y: f64) -> OpResult {
     SqliteLayoutStore::new(conn).set_position(wb, entity_id, x, y)?;
     Ok((
         None,
-        json!({ "kind": "position", "entity_id": entity_id, "wb": wb, "x": x, "y": y }),
+        json!({ "kind": "position", "entity_id": entity_id, "wb": wb.as_str(), "x": x, "y": y }),
     ))
 }
 
@@ -252,11 +253,11 @@ fn op_section_add(conn: &Connection, section_id: &str, entity_id: &str) -> OpRes
     ))
 }
 
-fn op_section_move(conn: &Connection, section_id: &str, target_wb: &str) -> OpResult {
+fn op_section_move(conn: &Connection, section_id: &str, target_wb: &WhiteboardId) -> OpResult {
     SqliteSectionStore::new(conn).move_to_whiteboard(section_id, target_wb)?;
     Ok((
         None,
-        json!({ "kind": "section", "id": section_id, "wb": target_wb }),
+        json!({ "kind": "section", "id": section_id, "wb": target_wb.as_str() }),
     ))
 }
 
@@ -324,7 +325,7 @@ mod tests {
         let emitter = RecordingEmitter::new();
 
         let params = MutateParams::SectionCreate {
-            wb: "wb_root".to_string(),
+            wb: WhiteboardId::parse("wb_root").unwrap(),
             title: "TestSec".to_string(),
             color: None,
         };
@@ -356,7 +357,7 @@ mod tests {
         let emitter = RecordingEmitter::new();
 
         let params = MutateParams::SectionCreate {
-            wb: "wb_root".to_string(),
+            wb: WhiteboardId::parse("wb_root").unwrap(),
             title: "EventSec".to_string(),
             color: None,
         };

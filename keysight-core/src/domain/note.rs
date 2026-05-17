@@ -4,6 +4,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::domain::edge::EntityId;
+use crate::domain::id::WhiteboardId;
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::{GraphNote, NoteFileMigrationReport};
@@ -14,11 +15,11 @@ use super::sync;
 
 /// 笔记存储契约。
 pub trait NoteStore {
-    fn create(&self, whiteboard_id: &str, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError>;
+    fn create(&self, whiteboard_id: &WhiteboardId, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError>;
     fn delete(&self, id: &str) -> Result<(), KeysightError>;
     fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
     fn get(&self, id: &str) -> Result<GraphNote, KeysightError>;
-    fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphNote>, KeysightError>;
+    fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<GraphNote>, KeysightError>;
     /// Phase 6.1 新增 — 按 file_path 精确匹配返 0..N 条 notes(对齐 `CardStore::query_by_file` 形状)
     fn query_by_file(&self, file_path: &str) -> Result<Vec<GraphNote>, KeysightError>;
 }
@@ -29,7 +30,7 @@ pub struct SqliteNoteStore<'a> {
 }
 
 struct NoteSnapshot {
-    whiteboard_id: String,
+    whiteboard_id: WhiteboardId,
     title: String,
     color: Option<String>,
     file_path: Option<String>,
@@ -38,7 +39,7 @@ struct NoteSnapshot {
 
 struct NoteFileState<'a> {
     id: &'a str,
-    whiteboard_id: &'a str,
+    whiteboard_id: &'a WhiteboardId,
     title: &'a str,
     content: &'a str,
     color: Option<&'a str>,
@@ -87,6 +88,8 @@ impl<'a> SqliteNoteStore<'a> {
             )
             .optional()?;
         let (whiteboard_id, title, color, file_path) = row.ok_or_else(|| KeysightError::NotFound(id.to_string()))?;
+        // DB schema 已 invariant 保证 wb_id 合法,走 new_unchecked。
+        let whiteboard_id = WhiteboardId::new_unchecked(whiteboard_id);
         let note = self.get(id)?;
         Ok(NoteSnapshot {
             whiteboard_id,
@@ -149,7 +152,7 @@ impl<'a> SqliteNoteStore<'a> {
 }
 
 impl NoteStore for SqliteNoteStore<'_> {
-    fn create(&self, whiteboard_id: &str, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError> {
+    fn create(&self, whiteboard_id: &WhiteboardId, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError> {
         let title = validate_title(title)?;
         let note_id = id::gen_note_id();
         let normalized_content = content
@@ -284,11 +287,11 @@ impl NoteStore for SqliteNoteStore<'_> {
         })
     }
 
-    fn query_all(&self, whiteboard_id: &str) -> Result<Vec<GraphNote>, KeysightError> {
+    fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<GraphNote>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM entities WHERE kind = 'note' AND whiteboard_id = ?1 ORDER BY title"
         )?;
-        let ids: Vec<String> = stmt.query_map([whiteboard_id], |r| r.get(0))?
+        let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
         ids.iter().map(|id| self.get(id)).collect()
     }
@@ -372,11 +375,11 @@ fn current_mtime_ms() -> f64 {
         * 1000.0
 }
 
-fn whiteboard_relative_dir(whiteboard_id: &str) -> String {
-    if whiteboard_id == "wb_root" {
+fn whiteboard_relative_dir(whiteboard_id: &WhiteboardId) -> String {
+    if whiteboard_id.as_str() == "wb_root" {
         "whiteboard".to_string()
     } else {
-        format!("whiteboard/{whiteboard_id}")
+        format!("whiteboard/{}", whiteboard_id.as_str())
     }
 }
 
@@ -411,7 +414,7 @@ fn sanitize_file_component(text: &str) -> String {
 }
 
 fn desired_note_relative_path(
-    whiteboard_id: &str,
+    whiteboard_id: &WhiteboardId,
     note_id: &str,
     title: &str,
     current_file_path: Option<&str>,
@@ -429,7 +432,7 @@ fn desired_note_relative_path(
     }
 }
 
-fn note_relative_path(whiteboard_id: &str, note_id: &str, title: &str) -> String {
+fn note_relative_path(whiteboard_id: &WhiteboardId, note_id: &str, title: &str) -> String {
     format!(
         "{}/{} 【NOTE】{}.md",
         whiteboard_relative_dir(whiteboard_id),
@@ -574,7 +577,7 @@ mod tests {
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
 
-        let note = store.create("wb_root", "My Note", Some("Content"), Some("yellow")).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"My Note", Some("Content"), Some("yellow")).unwrap();
 
         assert!(note.id.starts_with("note_"));
         let file_path: String = conn
@@ -591,7 +594,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("wb_root", "Del", None, None).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Del", None, None).unwrap();
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
             .unwrap();
@@ -607,7 +610,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("wb_root", "Old", Some("old"), None).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Old", Some("old"), None).unwrap();
 
         store.update(&note.id, Some("New"), Some("new content"), Some("blue")).unwrap();
 
@@ -632,7 +635,7 @@ mod tests {
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
 
         let note = store
-            .create("wb_root", "**My** / Note", Some("Content"), None)
+            .create(&WhiteboardId::parse("wb_root").unwrap(),"**My** / Note", Some("Content"), None)
             .unwrap();
 
         let file_path: String = conn
@@ -646,7 +649,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("wb_root", "Old", Some("body"), None).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Old", Some("body"), None).unwrap();
         let old_file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
             .unwrap();
@@ -669,7 +672,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("wb_root", "Old", Some("old"), None).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Old", Some("old"), None).unwrap();
         store
             .update(
                 &note.id,
@@ -706,10 +709,10 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        store.create("wb_root", "A", None, None).unwrap();
-        store.create("wb_root", "B", None, None).unwrap();
-        store.create("other", "C", None, None).unwrap();
-        let notes = store.query_all("wb_root").unwrap();
+        store.create(&WhiteboardId::parse("wb_root").unwrap(),"A", None, None).unwrap();
+        store.create(&WhiteboardId::parse("wb_root").unwrap(),"B", None, None).unwrap();
+        store.create(&WhiteboardId::parse("other").unwrap(),"C", None, None).unwrap();
+        let notes = store.query_all(&WhiteboardId::parse("wb_root").unwrap()).unwrap();
         assert_eq!(notes.len(), 2);
     }
 
@@ -720,9 +723,9 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        store.create("wb_root", "A", None, None).unwrap();
-        store.create("wb_root", "B", None, None).unwrap();
-        store.create("other", "C", None, None).unwrap();
+        store.create(&WhiteboardId::parse("wb_root").unwrap(),"A", None, None).unwrap();
+        store.create(&WhiteboardId::parse("wb_root").unwrap(),"B", None, None).unwrap();
+        store.create(&WhiteboardId::parse("other").unwrap(),"C", None, None).unwrap();
 
         let notes = query_all_cross_whiteboard(&conn).unwrap();
         assert_eq!(notes.len(), 3);
@@ -739,8 +742,8 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let target = store.create("wb_root", "Target", Some("body"), None).unwrap();
-        let _other = store.create("wb_root", "Other", Some("other"), None).unwrap();
+        let target = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Target", Some("body"), None).unwrap();
+        let _other = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Other", Some("other"), None).unwrap();
 
         let target_path: String = conn
             .query_row(
@@ -761,7 +764,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("wb_root", "Links", Some("body"), None).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Links", Some("body"), None).unwrap();
         conn.execute(
             "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
             params![note.id, "card_target"],
@@ -788,7 +791,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("projects/super-tauri", "Links", Some("body"), None).unwrap();
+        let note = store.create(&WhiteboardId::parse("projects/super-tauri").unwrap(), "Links", Some("body"), None).unwrap();
         conn.execute(
             "INSERT INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
             params![note.id, "q_target"],
@@ -816,7 +819,7 @@ mod tests {
         let conn = test_conn();
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
-        let note = store.create("wb_root", "Color", Some("body"), None).unwrap();
+        let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Color", Some("body"), None).unwrap();
 
         store
             .update(&note.id, None, None, Some("#fff8b3"))
@@ -885,7 +888,7 @@ mod tests {
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         let note = store
-            .create("wb_root", "Note With Q/T", Some("body"), None)
+            .create(&WhiteboardId::parse("wb_root").unwrap(),"Note With Q/T", Some("body"), None)
             .unwrap();
 
         let graph = SqliteEntityGraph::new(&conn);
@@ -926,7 +929,7 @@ mod tests {
         let vfs = MockVaultFs::new();
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         let note = store
-            .create("wb_root", "Note Parse Err", Some("body"), None)
+            .create(&WhiteboardId::parse("wb_root").unwrap(),"Note Parse Err", Some("body"), None)
             .unwrap();
 
         conn.execute(

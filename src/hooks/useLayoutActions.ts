@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -22,7 +23,7 @@ export function useLayoutActions(whiteboardId?: string) {
    */
   const setPosition = useCallback(
     async (wb: string, entityId: string, x: number, y: number) => {
-      await unwrapCommand(commands.layoutSetPosition(wb, entityId, x, y));
+      await unwrapCommand(commands.layoutSetPosition(wb as WhiteboardId, entityId, x, y));
       invalidate();
     },
     [invalidate],
@@ -31,7 +32,7 @@ export function useLayoutActions(whiteboardId?: string) {
   /** 不 invalidate 的"裸"调用,供需要批量写 + 最后统一刷新的场景使用。 */
   const setPositionWithoutInvalidate = useCallback(
     async (wb: string, entityId: string, x: number, y: number) => {
-      await unwrapCommand(commands.layoutSetPosition(wb, entityId, x, y));
+      await unwrapCommand(commands.layoutSetPosition(wb as WhiteboardId, entityId, x, y));
     },
     [],
   );

@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -23,7 +24,7 @@ export function useAliasActions(whiteboardId?: string) {
 
   const create = useCallback(
     async (wb: string, cardId: string) => {
-      const result = await unwrapCommand(commands.aliasCreate(wb, cardId));
+      const result = await unwrapCommand(commands.aliasCreate(wb as WhiteboardId, cardId));
       invalidate();
       return result;
     },
