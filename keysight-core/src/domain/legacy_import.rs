@@ -265,28 +265,53 @@ impl<'a> SqliteLegacyImporter<'a> {
 
 impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
     fn import(&self, reader: &dyn LegacyReader) -> Result<ImportSummary, KeysightError> {
-        let mut summary = ImportSummary {
-            cards: 0,
-            sections: 0,
-            notes: 0,
-            aliases: 0,
-            edges: 0,
-            positions: 0,
-            section_members: 0,
-            skipped: Vec::new(),
-        };
-
+        let mut summary = empty_summary();
         self.conn.execute("BEGIN", [])?;
 
-        // ── 1. 导入 cards ──────────────────────────────────
         let insights = reader.read_insights()?;
-        let mut known_ids: HashSet<String> = HashSet::new();
+        let known_ids = self.import_cards(&insights, &mut summary)?;
+        self.import_card_edges(&insights, &known_ids, &mut summary)?;
 
-        for ins in &insights {
+        for wb in &reader.list_whiteboards()? {
+            let meta_key = wb.meta_suffix.as_deref().unwrap_or("");
+            self.import_wb_sections(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
+            self.import_wb_notes(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
+            self.import_wb_aliases(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
+            self.import_wb_positions(reader, meta_key, &wb.whiteboard_id, &mut summary)?;
+        }
+
+        self.rebuild_fts_index()?;
+        self.conn.execute("COMMIT", [])?;
+        Ok(summary)
+    }
+}
+
+fn empty_summary() -> ImportSummary {
+    ImportSummary {
+        cards: 0,
+        sections: 0,
+        notes: 0,
+        aliases: 0,
+        edges: 0,
+        positions: 0,
+        section_members: 0,
+        skipped: Vec::new(),
+    }
+}
+
+impl<'a> SqliteLegacyImporter<'a> {
+    /// 写 cards 的 entities + card_fields + tags(幂等),返回所有已注册 card id
+    /// 的集合,供后续 edge 注册时校验 dangling 引用。
+    fn import_cards(
+        &self,
+        insights: &[LegacyInsight],
+        summary: &mut ImportSummary,
+    ) -> Result<HashSet<String>, KeysightError> {
+        let mut known_ids: HashSet<String> = HashSet::new();
+        for ins in insights {
             known_ids.insert(ins.id.clone());
 
             let wb_id = derive_whiteboard_id(&ins.file_path);
-            // entities
             self.conn.execute(
                 "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, file_path, content) \
                  VALUES (?1, 'card', ?2, ?3, ?4, ?5)",
@@ -298,7 +323,6 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
                     ins.content
                 ],
             )?;
-            // card_fields
             self.conn.execute(
                 "INSERT OR REPLACE INTO card_fields (entity_id, understanding, source) \
                  VALUES (?1, ?2, ?3)",
@@ -306,7 +330,7 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
             )?;
             summary.cards += 1;
 
-            // tags — 先删后插，保证幂等
+            // tags — 先删后插,保证幂等
             self.conn.execute(
                 "DELETE FROM entity_tags WHERE entity_id = ?1",
                 [&ins.id],
@@ -317,207 +341,202 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
                     params![ins.id, tag],
                 )?;
             }
-
-            // edges — link_to / related / see_also（仅目标在 known_ids 中才写入）
-            // 先收集，等全部 card 注册完 known_ids 后统一处理
         }
+        Ok(known_ids)
+    }
 
-        // card edges — 需要 known_ids 完整后再处理
-        for ins in &insights {
-            // 先清理旧 edges
+    /// 写 link_to / related / see_also 三类 card edges。dangling target(不在
+    /// `known_ids` 内)记入 `summary.skipped`,不写 edge。
+    fn import_card_edges(
+        &self,
+        insights: &[LegacyInsight],
+        known_ids: &HashSet<String>,
+        summary: &mut ImportSummary,
+    ) -> Result<(), KeysightError> {
+        for ins in insights {
             self.conn.execute(
                 "DELETE FROM edges WHERE from_id = ?1 AND edge_type IN ('link_to','related','see_also')",
                 [&ins.id],
             )?;
+            self.write_edges_or_skip(&ins.id, &ins.link_to, "link_to", known_ids, summary)?;
+            self.write_edges_or_skip(&ins.id, &ins.related, "related", known_ids, summary)?;
+            self.write_edges_or_skip(&ins.id, &ins.see_also, "see_also", known_ids, summary)?;
+        }
+        Ok(())
+    }
 
-            for target in &ins.link_to {
-                if known_ids.contains(target) {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'link_to')",
-                        params![ins.id, target],
-                    )?;
-                    summary.edges += 1;
-                } else {
-                    summary.skipped.push(SkippedItem {
-                        entity_id: ins.id.clone(),
-                        reason: format!("dangling link_to target: {target}"),
-                    });
-                }
-            }
-            for target in &ins.related {
-                if known_ids.contains(target) {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'related')",
-                        params![ins.id, target],
-                    )?;
-                    summary.edges += 1;
-                } else {
-                    summary.skipped.push(SkippedItem {
-                        entity_id: ins.id.clone(),
-                        reason: format!("dangling related target: {target}"),
-                    });
-                }
-            }
-            for target in &ins.see_also {
-                if known_ids.contains(target) {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'see_also')",
-                        params![ins.id, target],
-                    )?;
-                    summary.edges += 1;
-                } else {
-                    summary.skipped.push(SkippedItem {
-                        entity_id: ins.id.clone(),
-                        reason: format!("dangling see_also target: {target}"),
-                    });
-                }
+    /// 批量写 edges,target 不在 `known_ids` 则记入 skipped。`edge_kind` 同时用于
+    /// SQL edge_type 列和 skipped reason 描述。
+    fn write_edges_or_skip(
+        &self,
+        from_id: &str,
+        targets: &[String],
+        edge_kind: &str,
+        known_ids: &HashSet<String>,
+        summary: &mut ImportSummary,
+    ) -> Result<(), KeysightError> {
+        for target in targets {
+            if known_ids.contains(target) {
+                self.conn.execute(
+                    "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, ?3)",
+                    params![from_id, target, edge_kind],
+                )?;
+                summary.edges += 1;
+            } else {
+                summary.skipped.push(SkippedItem {
+                    entity_id: from_id.to_string(),
+                    reason: format!("dangling {edge_kind} target: {target}"),
+                });
             }
         }
+        Ok(())
+    }
 
-        // ── 2. 导入每个白板的 sections / notes / aliases / positions ──
-        let whiteboards = reader.list_whiteboards()?;
-        for wb in &whiteboards {
-            let meta_key = wb.meta_suffix.as_deref().unwrap_or("");
+    /// 单白板:sections + section_members + section_link edges。
+    fn import_wb_sections(
+        &self,
+        reader: &dyn LegacyReader,
+        meta_key: &str,
+        whiteboard_id: &str,
+        summary: &mut ImportSummary,
+    ) -> Result<(), KeysightError> {
+        for sec in reader.read_sections(meta_key)? {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, color) \
+                 VALUES (?1, 'section', ?2, ?3, ?4)",
+                params![sec.id, sec.title, whiteboard_id, sec.color],
+            )?;
+            summary.sections += 1;
 
-            // ── sections ──
-            let sections = reader.read_sections(meta_key)?;
-            for sec in &sections {
+            self.conn.execute(
+                "DELETE FROM section_members WHERE section_id = ?1",
+                [&sec.id],
+            )?;
+            for member_id in &sec.card_ids {
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, color) \
-                     VALUES (?1, 'section', ?2, ?3, ?4)",
-                    params![sec.id, sec.title, wb.whiteboard_id, sec.color],
-                )?;
-                summary.sections += 1;
-
-                // section_members
-                self.conn.execute(
-                    "DELETE FROM section_members WHERE section_id = ?1",
-                    [&sec.id],
-                )?;
-                for member_id in &sec.card_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO section_members (section_id, entity_id) \
-                         VALUES (?1, ?2)",
-                        params![sec.id, member_id],
-                    )?;
-                    summary.section_members += 1;
-                }
-
-                // section_link edges
-                for target_sec_id in &sec.linked_section_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'section_link')",
-                        params![sec.id, target_sec_id],
-                    )?;
-                    summary.edges += 1;
-                }
-            }
-
-            // ── notes ──
-            let notes = reader.read_notes(meta_key)?;
-            for note in &notes {
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, content) \
-                     VALUES (?1, 'note', ?2, ?3, ?4)",
-                    params![note.id, note.title, wb.whiteboard_id, note.content],
-                )?;
-                summary.notes += 1;
-
-                // note_link edges（linked_card_ids + linked_note_ids + linked_section_ids）
-                for target in &note.linked_card_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'note_link')",
-                        params![note.id, target],
-                    )?;
-                    summary.edges += 1;
-                }
-                for target in &note.linked_note_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'note_link')",
-                        params![note.id, target],
-                    )?;
-                    summary.edges += 1;
-                }
-                for target in &note.linked_section_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'note_link')",
-                        params![note.id, target],
-                    )?;
-                    summary.edges += 1;
-                }
-            }
-
-            // ── aliases ──
-            let aliases = reader.read_aliases(meta_key)?;
-            for alias in &aliases {
-                // alias entity — title 存 cardId 以便追溯
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id) \
-                     VALUES (?1, 'alias', ?2, ?3)",
-                    params![alias.alias_id, alias.card_id, wb.whiteboard_id],
-                )?;
-                // alias_fields
-                self.conn.execute(
-                    "INSERT OR REPLACE INTO alias_fields (entity_id, card_id) \
+                    "INSERT OR REPLACE INTO section_members (section_id, entity_id) \
                      VALUES (?1, ?2)",
-                    params![alias.alias_id, alias.card_id],
+                    params![sec.id, member_id],
                 )?;
-                summary.aliases += 1;
-
-                // alias_link edges — 仅来自用户显式建立的 linked_card_ids / linked_section_ids
-                // alias.card_id 是元数据（"这是哪张卡的别名"），不应渲染为 edge
-
-                // alias_link edge（alias → linked_card_ids）
-                for target in &alias.linked_card_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'alias_link')",
-                        params![alias.alias_id, target],
-                    )?;
-                    summary.edges += 1;
-                }
-                for target in &alias.linked_section_ids {
-                    self.conn.execute(
-                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'alias_link')",
-                        params![alias.alias_id, target],
-                    )?;
-                    summary.edges += 1;
-                }
-
-                // card_to_alias edges — 来自 alias.incoming_card_ids
-                // 这些是用户**显式**建立的 card → alias 连接（不是父卡片元数据）。
-                // alias.card_id 表示"这个 alias 是哪张卡的别名"，是元数据，不应渲染为 edge。
-                for source in &alias.incoming_card_ids {
-                    if source.is_empty() {
-                        continue;
-                    }
-                    self.conn.execute(
-                        "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) \
-                         VALUES (?1, ?2, 'card_to_alias')",
-                        params![source, alias.alias_id],
-                    )?;
-                    summary.edges += 1;
-                }
+                summary.section_members += 1;
             }
 
-            // ── positions ──
-            let positions = reader.read_positions(meta_key)?;
-            for pos in &positions {
+            for target_sec_id in &sec.linked_section_ids {
                 self.conn.execute(
-                    "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) \
-                     VALUES (?1, ?2, ?3, ?4)",
-                    params![pos.entity_id, wb.whiteboard_id, pos.x, pos.y],
+                    "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
+                     VALUES (?1, ?2, 'section_link')",
+                    params![sec.id, target_sec_id],
                 )?;
-                summary.positions += 1;
+                summary.edges += 1;
             }
         }
+        Ok(())
+    }
 
-        // ── 3. 重建 FTS 索引 ──────────────────────────────
+    /// 单白板:notes + note_link edges(linked_card_ids ∪ linked_note_ids ∪
+    /// linked_section_ids 三类都统一记 `note_link` edge_type)。
+    fn import_wb_notes(
+        &self,
+        reader: &dyn LegacyReader,
+        meta_key: &str,
+        whiteboard_id: &str,
+        summary: &mut ImportSummary,
+    ) -> Result<(), KeysightError> {
+        for note in reader.read_notes(meta_key)? {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id, content) \
+                 VALUES (?1, 'note', ?2, ?3, ?4)",
+                params![note.id, note.title, whiteboard_id, note.content],
+            )?;
+            summary.notes += 1;
+
+            for targets in [&note.linked_card_ids, &note.linked_note_ids, &note.linked_section_ids] {
+                for target in targets {
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
+                         VALUES (?1, ?2, 'note_link')",
+                        params![note.id, target],
+                    )?;
+                    summary.edges += 1;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// 单白板:aliases + alias_fields + alias_link/card_to_alias edges。
+    ///
+    /// 重要语义:`alias.card_id` 是"这个 alias 属于哪张卡"的元数据,**不**渲染为 edge。
+    /// 真正的图边来自:
+    /// - `linked_card_ids` / `linked_section_ids` → `alias_link`(alias 主动指向)
+    /// - `incoming_card_ids` → `card_to_alias`(card 主动指向 alias,过滤空字符串)
+    fn import_wb_aliases(
+        &self,
+        reader: &dyn LegacyReader,
+        meta_key: &str,
+        whiteboard_id: &str,
+        summary: &mut ImportSummary,
+    ) -> Result<(), KeysightError> {
+        for alias in reader.read_aliases(meta_key)? {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO entities (id, kind, title, whiteboard_id) \
+                 VALUES (?1, 'alias', ?2, ?3)",
+                params![alias.alias_id, alias.card_id, whiteboard_id],
+            )?;
+            self.conn.execute(
+                "INSERT OR REPLACE INTO alias_fields (entity_id, card_id) \
+                 VALUES (?1, ?2)",
+                params![alias.alias_id, alias.card_id],
+            )?;
+            summary.aliases += 1;
+
+            for targets in [&alias.linked_card_ids, &alias.linked_section_ids] {
+                for target in targets {
+                    self.conn.execute(
+                        "INSERT OR REPLACE INTO edges (from_id, to_id, edge_type) \
+                         VALUES (?1, ?2, 'alias_link')",
+                        params![alias.alias_id, target],
+                    )?;
+                    summary.edges += 1;
+                }
+            }
+
+            for source in &alias.incoming_card_ids {
+                if source.is_empty() {
+                    continue;
+                }
+                self.conn.execute(
+                    "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) \
+                     VALUES (?1, ?2, 'card_to_alias')",
+                    params![source, alias.alias_id],
+                )?;
+                summary.edges += 1;
+            }
+        }
+        Ok(())
+    }
+
+    /// 单白板:节点 layout positions。
+    fn import_wb_positions(
+        &self,
+        reader: &dyn LegacyReader,
+        meta_key: &str,
+        whiteboard_id: &str,
+        summary: &mut ImportSummary,
+    ) -> Result<(), KeysightError> {
+        for pos in reader.read_positions(meta_key)? {
+            self.conn.execute(
+                "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) \
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![pos.entity_id, whiteboard_id, pos.x, pos.y],
+            )?;
+            summary.positions += 1;
+        }
+        Ok(())
+    }
+
+    /// 全量重建 entities_fts(只索引 kind = 'card' 的行)。
+    fn rebuild_fts_index(&self) -> Result<(), KeysightError> {
         self.conn.execute("DELETE FROM entities_fts", [])?;
         let mut fts_stmt = self.conn.prepare(
             "SELECT id, title, content FROM entities WHERE kind = 'card'",
@@ -539,10 +558,7 @@ impl<'a> LegacyImporter for SqliteLegacyImporter<'a> {
                 params![id, parser::normalize_title_markdown_escapes(title), content],
             )?;
         }
-
-        self.conn.execute("COMMIT", [])?;
-
-        Ok(summary)
+        Ok(())
     }
 }
 
