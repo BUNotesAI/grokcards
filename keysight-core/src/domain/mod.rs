@@ -2,6 +2,7 @@ pub mod alias;
 pub mod card;
 pub mod edge;
 pub mod entity;
+pub mod id;
 pub mod layout;
 pub mod migration;
 pub mod note;

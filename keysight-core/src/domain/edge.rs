@@ -125,94 +125,18 @@
 use crate::errors::KeysightError;
 
 // ====================================================================
-// Newtype id：每类实体一个强类型 wrapper
+// Id newtype + EntityId + IdError —— W0 起源迁至 domain::id,本处仅 re-export 保持兼容
 // ====================================================================
+//
+// 历史上 6 个 entity newtype + EntityId + IdError 直接定义在 edge.rs。task_ee2b6926(A Theme)
+// W0 把它们搬到独立的 `crate::domain::id` 模块,通过 prefixed_id! macro 一处生成 + 加
+// serde try_from / specta(type = String) derive,准备 W1+ trait 接口渗透 + TS 端 branded。
+// edge.rs 通过 `pub use` 保留旧 import path,所有 `use crate::domain::edge::EntityId` 等
+// 调用站零修改。
 
-/// Card 实体 id（DB prefix: `card_`）
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct CardId(String);
-
-impl CardId {
-    /// 仅限本文件内部使用的无校验构造入口，外部代码必须通过 [`EntityId::parse`] 进入
-    fn new_unchecked(raw: String) -> Self {
-        Self(raw)
-    }
-
-    /// 取出底层字符串表示，供 DB 参数绑定 / 日志使用
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Note 实体 id（DB prefix: `note_`）
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct NoteId(String);
-
-impl NoteId {
-    fn new_unchecked(raw: String) -> Self {
-        Self(raw)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Alias 实体 id（DB prefix: `alias_`）
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct AliasId(String);
-
-impl AliasId {
-    fn new_unchecked(raw: String) -> Self {
-        Self(raw)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Section 实体 id（DB prefix: `sec_`）
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct SectionId(String);
-
-impl SectionId {
-    fn new_unchecked(raw: String) -> Self {
-        Self(raw)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Question 实体 id（DB prefix: `q_`）
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct QuestionId(String);
-
-impl QuestionId {
-    fn new_unchecked(raw: String) -> Self {
-        Self(raw)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
-
-/// Task 实体 id（DB prefix: `task_`）
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct TaskId(String);
-
-impl TaskId {
-    fn new_unchecked(raw: String) -> Self {
-        Self(raw)
-    }
-
-    pub fn as_str(&self) -> &str {
-        &self.0
-    }
-}
+pub use crate::domain::id::{
+    AliasId, CardId, EntityId, IdError, NoteId, QuestionId, SectionId, TaskId,
+};
 
 // ====================================================================
 // ObsidianLink：SeeAlso 边的目标 —— 不是 entity，是外部 Obsidian 文档引用
@@ -249,67 +173,7 @@ impl ObsidianLink {
     }
 }
 
-// ====================================================================
-// EntityId：所有实体 id 的判别联合，字符串边界的唯一入口
-// ====================================================================
-
-/// 所有 keysight 实体 id 的判别联合。
-///
-/// 跨 IPC / DB 边界过来的字符串必须通过 [`EntityId::parse`] 进入强类型，
-/// 之后业务代码只接受 [`EntityId`] 或具体的 [`CardId`] / [`NoteId`] / ...，
-/// 不再接受 `&str`。这是「parse don't validate」的落地。
-///
-/// [`EntityId`] 同时也作为通用 link 变体（[`Edge::CardLink`] / [`Edge::NoteLink`] /
-/// [`Edge::AliasLink`] / [`Edge::QuestionLink`]）的 `to` 类型。任何 reader 读到
-/// 这些变体时，**必须穷尽 match 所有 6 个 variant**，禁止用 `_` 通配 —— 这是
-/// 踩坑样例 1 的新防御核心。
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub enum EntityId {
-    Card(CardId),
-    Note(NoteId),
-    Alias(AliasId),
-    Section(SectionId),
-    Question(QuestionId),
-    Task(TaskId),
-}
-
-impl EntityId {
-    /// 从字符串 id 边界进入强类型。失败返回 [`IdError::UnknownPrefix`]。
-    ///
-    /// 当前只按 prefix 派发，不深度校验 prefix 后的 hex 后缀 —— prefix 匹配后
-    /// 已经保证是这一类实体，后缀的完整性由 DB schema 和写入路径保证，读侧不
-    /// 重复校验。Prefix 之间互相不是前缀关系（`card_` / `note_` / `alias_` /
-    /// `sec_` / `q_` / `task_`），匹配顺序无关。空字符串也归入 `UnknownPrefix("")`。
-    pub fn parse(s: &str) -> Result<Self, IdError> {
-        if s.starts_with("card_") {
-            Ok(Self::Card(CardId::new_unchecked(s.to_string())))
-        } else if s.starts_with("note_") {
-            Ok(Self::Note(NoteId::new_unchecked(s.to_string())))
-        } else if s.starts_with("alias_") {
-            Ok(Self::Alias(AliasId::new_unchecked(s.to_string())))
-        } else if s.starts_with("sec_") {
-            Ok(Self::Section(SectionId::new_unchecked(s.to_string())))
-        } else if s.starts_with("q_") {
-            Ok(Self::Question(QuestionId::new_unchecked(s.to_string())))
-        } else if s.starts_with("task_") {
-            Ok(Self::Task(TaskId::new_unchecked(s.to_string())))
-        } else {
-            Err(IdError::UnknownPrefix(s.to_string()))
-        }
-    }
-
-    /// 取出底层字符串表示，供 DB 参数绑定 / 日志使用
-    pub fn as_str(&self) -> &str {
-        match self {
-            Self::Card(id) => id.as_str(),
-            Self::Note(id) => id.as_str(),
-            Self::Alias(id) => id.as_str(),
-            Self::Section(id) => id.as_str(),
-            Self::Question(id) => id.as_str(),
-            Self::Task(id) => id.as_str(),
-        }
-    }
-}
+// EntityId / IdError 已在文件顶部从 crate::domain::id re-export(W0 搬迁)。
 
 // ====================================================================
 // Edge：合法连接的判别联合
@@ -452,17 +316,7 @@ pub fn user_draw_edge(
     }
 }
 
-// ====================================================================
-// IdError：parse 边界的错误类型
-// ====================================================================
-
-/// id 边界 parse 时可能发生的错误
-#[derive(Debug, thiserror::Error, PartialEq, Eq)]
-pub enum IdError {
-    /// 传入字符串不匹配任何已知 id prefix（含空字符串 —— 空字符串也归入此类）
-    #[error("未知的 id prefix: {0:?}")]
-    UnknownPrefix(String),
-}
+// IdError 已在文件顶部从 crate::domain::id re-export(W0 搬迁)。
 
 // ====================================================================
 // Tests：EntityId::parse 覆盖 6 个合法 prefix + 1 个非法 prefix
