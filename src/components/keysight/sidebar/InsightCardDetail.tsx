@@ -1,9 +1,8 @@
 import { useEffect, useMemo, useState } from "react";
 import type { AtomicCard, CardAlias, CardLinksResponse, GraphNote } from "@/bindings";
 import type { GraphSelection } from "@/components/keysight/types";
-import { commands } from "@/bindings";
-import { unwrapCommand } from "@/lib/commandResult";
-import { useQueryClient } from "@tanstack/react-query";
+import { useCardActions } from "@/hooks/useCardActions";
+import { useNoteActions } from "@/hooks/useNoteActions";
 import { openPath } from "@tauri-apps/plugin-opener";
 import { ExternalLink, Focus } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -63,7 +62,9 @@ export function InsightCardDetail({
   aliasRefs,
   onFocusEntity,
 }: InsightCardDetailProps) {
-  const queryClient = useQueryClient();
+  // sidebar 不知具体 wb,用 broadcast invalidate(hook wb 省略)
+  const cards = useCardActions();
+  const notes = useNoteActions();
   const [title, setTitle] = useState("");
   const [understanding, setUnderstanding] = useState("");
   const [content, setContent] = useState("");
@@ -103,8 +104,7 @@ export function InsightCardDetail({
           <div className="mt-3 flex gap-2">
             <Button
               onClick={async () => {
-                await unwrapCommand(commands.noteUpdate(note.id, title, content, null));
-                await queryClient.invalidateQueries({ queryKey: ["notes"] });
+                await notes.update(note.id, title, content, null);
               }}
             >
               Save
@@ -166,10 +166,9 @@ export function InsightCardDetail({
           <div className="flex gap-2">
             <Button
               onClick={async () => {
-                await unwrapCommand(commands.cardEditTitle(detailCard.id, title));
-                await unwrapCommand(commands.cardUpdateUnderstanding(detailCard.id, understanding));
-                await unwrapCommand(commands.cardEditBody(detailCard.id, content));
-                await queryClient.invalidateQueries({ queryKey: ["cards"] });
+                await cards.editTitle(detailCard.id, title);
+                await cards.updateUnderstanding(detailCard.id, understanding);
+                await cards.editBody(detailCard.id, content);
               }}
             >
               Save Card

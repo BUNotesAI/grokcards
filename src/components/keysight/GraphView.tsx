@@ -22,9 +22,15 @@ import type {
 import type { Position, TaskStatus } from "@/bindings";
 import type { NodeContextMenuHandlers } from "@/components/keysight/nodes/EntityNode";
 import type { SectionListItem } from "@/components/keysight/nodes/NodeContextMenu";
-import { unwrapCommand } from "@/lib/commandResult";
-import { commands } from "@/bindings";
-import { useQueryClient } from "@tanstack/react-query";
+import { useCardActions } from "@/hooks/useCardActions";
+import { useNoteActions } from "@/hooks/useNoteActions";
+import { useTaskActions } from "@/hooks/useTaskActions";
+import { useSectionActions } from "@/hooks/useSectionActions";
+import { useAliasActions } from "@/hooks/useAliasActions";
+import { useQuestionActions } from "@/hooks/useQuestionActions";
+import { useLayoutActions } from "@/hooks/useLayoutActions";
+import { useWhiteboardActions } from "@/hooks/useWhiteboardActions";
+import { useEntityActions } from "@/hooks/useEntityActions";
 
 /** 拖拽阈值 — 小于此距离视为 click 而非 drag（屏幕像素） */
 const DRAG_THRESHOLD = 4;
@@ -307,7 +313,15 @@ export function GraphView({
     [containerSize],
   );
   const data = useWhiteboardData(currentWhiteboardId);
-  const queryClient = useQueryClient();
+  const cards = useCardActions();
+  const notes = useNoteActions(currentWhiteboardId);
+  const tasks = useTaskActions(currentWhiteboardId);
+  const sections = useSectionActions(currentWhiteboardId);
+  const aliases = useAliasActions(currentWhiteboardId);
+  const questions = useQuestionActions(currentWhiteboardId);
+  const layouts = useLayoutActions(currentWhiteboardId);
+  const whiteboardActions = useWhiteboardActions();
+  const entities = useEntityActions(currentWhiteboardId);
   const handledFocusNonceRef = useRef<number | null>(null);
 
   // 启动性能：mount + isLoading 转为 false 的时刻
@@ -430,46 +444,35 @@ export function GraphView({
     setEditing(null);
   }, []);
 
-  // 提交编辑 — 调用对应 Rust command 写回 + invalidate 查询
+  // 提交编辑 — 调用对应 entity hook(hook 内自动 invalidate 对应 query cache)
   const handleCommitEdit = useCallback(
     async (id: string, field: EditingField, value: string) => {
       try {
         switch (field) {
           case "card-title":
-            await unwrapCommand(commands.cardEditTitle(id, value));
+            await cards.editTitle(id, value);
             break;
           case "card-understanding":
-            await unwrapCommand(commands.cardUpdateUnderstanding(id, value));
+            await cards.updateUnderstanding(id, value);
             break;
           case "note-title":
-            await unwrapCommand(commands.noteUpdate(id, value, null, null));
+            await notes.update(id, value, null, null);
             break;
           case "note-body":
-            await unwrapCommand(commands.noteUpdate(id, null, value, null));
+            await notes.update(id, null, value, null);
             break;
           case "section-title":
-            await unwrapCommand(commands.sectionUpdate(id, value, null));
+            await sections.update(id, value, null);
             break;
           case "question-title":
-            await unwrapCommand(commands.questionUpdate(id, value, null, null, null));
+            await questions.update(id, value, null, null, null);
             break;
           case "question-body":
-            await unwrapCommand(commands.questionUpdate(id, null, value, null, null));
+            await questions.update(id, null, value, null, null);
             break;
           case "task-title":
-            await unwrapCommand(commands.taskUpdate(id, value, null, null, null, null));
+            await tasks.update(id, value, null, null, null, null);
             break;
-        }
-        if (field === "card-title" || field === "card-understanding") {
-          queryClient.invalidateQueries({ queryKey: ["cards"] });
-        } else if (field === "section-title") {
-          queryClient.invalidateQueries({ queryKey: ["sections", currentWhiteboardId] });
-        } else if (field === "question-title" || field === "question-body") {
-          queryClient.invalidateQueries({ queryKey: ["questions", currentWhiteboardId] });
-        } else if (field === "task-title") {
-          queryClient.invalidateQueries({ queryKey: ["tasks", currentWhiteboardId] });
-        } else {
-          queryClient.invalidateQueries({ queryKey: ["notes", currentWhiteboardId] });
         }
       } catch (e) {
         console.error(`提交 ${field} 失败:`, e);
@@ -477,7 +480,7 @@ export function GraphView({
         setEditing(null);
       }
     },
-    [queryClient, currentWhiteboardId],
+    [cards, notes, sections, questions, tasks],
   );
 
   // entityId → 所在 section id 的反向索引
@@ -569,15 +572,18 @@ export function GraphView({
       const x = 100 + col * colWidth;
       const y = startY + row * rowHeight;
       initializedRef.current.add(wb.whiteboardId);
-      await unwrapCommand(
-        commands.layoutSetPosition(currentWhiteboardId, `wb:${wb.whiteboardId}`, x, y),
+      await layouts.setPositionWithoutInvalidate(
+        currentWhiteboardId,
+        `wb:${wb.whiteboardId}`,
+        x,
+        y,
       );
     });
 
     Promise.all(writes).then(() => {
-      queryClient.invalidateQueries({ queryKey: ["positions", ROOT_WHITEBOARD] });
+      layouts.invalidatePositions();
     });
-  }, [whiteboards, data.positions, currentWhiteboardId, allEntities, queryClient]);
+  }, [whiteboards, data.positions, currentWhiteboardId, allEntities, layouts]);
 
   // 视口裁剪 — 传入 allDimensions 让 section 用真实 bounds 而非 placeholder
   const forceVisibleIds = useMemo(() => {
@@ -752,18 +758,14 @@ export function GraphView({
           const pos = prev[id];
           if (!pos) continue;
           writes.push(
-            unwrapCommand(
-              commands.layoutSetPosition(currentWhiteboardId, id, pos.x, pos.y),
-            ),
+            layouts.setPositionWithoutInvalidate(currentWhiteboardId, id, pos.x, pos.y),
           );
         }
 
         if (writes.length > 0) {
           Promise.all(writes)
             .then(() => {
-              queryClient.invalidateQueries({
-                queryKey: ["positions", currentWhiteboardId],
-              });
+              layouts.invalidatePositions();
             })
             .catch((err) => console.error("拖拽持久化失败:", err));
         }
@@ -777,7 +779,7 @@ export function GraphView({
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
-  }, [viewport.state.zoom, currentWhiteboardId, queryClient]);
+  }, [viewport.state.zoom, currentWhiteboardId, layouts]);
 
   // 服务器位置回来后，清理本地覆盖（避免 stale override）
   useEffect(() => {
@@ -991,9 +993,7 @@ export function GraphView({
   // 创建 Section 回调
   const handleCreateSection = useCallback(async () => {
     try {
-      const result = await unwrapCommand(
-        commands.sectionCreate(currentWhiteboardId, "New Section", null),
-      );
+      const result = await sections.create(currentWhiteboardId, "New Section", null);
       const preferredPos = newEntityPositionAtCenter(400, 300);
       const existingSectionRects = allEntities
         .filter((entity) => entity.kind === "section")
@@ -1007,16 +1007,13 @@ export function GraphView({
           };
         });
       const pos = avoidSectionOverlap(preferredPos, { width: 400, height: 300 }, existingSectionRects);
-      await unwrapCommand(
-        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
-      );
+      await layouts.setPosition(currentWhiteboardId, result.id, pos.x, pos.y);
       onSelectEntity?.({ id: result.id, kind: "section" });
       setEditing({ id: result.id, field: "section-title" });
-      queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 section 失败:", e);
     }
-  }, [allDimensions, allEntities, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [allDimensions, allEntities, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, sections, layouts]);
 
   // 创建 Note 回调
   const handleCreateNote = useCallback(() => {
@@ -1042,20 +1039,15 @@ export function GraphView({
     if (!title) return;
 
     try {
-      const result = await unwrapCommand(
-        commands.noteCreate(currentWhiteboardId, title, null, null),
-      );
+      const result = await notes.create(currentWhiteboardId, title, null, null);
       const pos = newEntityPositionAtCenter(520, 180);
-      await unwrapCommand(
-        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
-      );
+      await layouts.setPosition(currentWhiteboardId, result.id, pos.x, pos.y);
       onSelectEntity?.({ id: result.id, kind: "note" });
       setEditing({ id: result.id, field: "note-body" });
-      queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 note 失败:", e);
     }
-  }, [noteDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [noteDraft, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, notes, layouts]);
 
   const handleCreateQuestion = useCallback(async () => {
     setCreatingWhiteboard(false);
@@ -1080,20 +1072,15 @@ export function GraphView({
     if (!title) return;
 
     try {
-      const result = await unwrapCommand(
-        commands.questionCreate(currentWhiteboardId, title, null, null, null),
-      );
+      const result = await questions.create(currentWhiteboardId, title, null, null, null);
       const pos = newEntityPositionAtCenter(320, 140);
-      await unwrapCommand(
-        commands.layoutSetPosition(currentWhiteboardId, result.id, pos.x, pos.y),
-      );
+      await layouts.setPosition(currentWhiteboardId, result.id, pos.x, pos.y);
       onSelectEntity?.({ id: result.id, kind: "question" });
       setEditing({ id: result.id, field: "question-body" });
-      queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 question 失败:", e);
     }
-  }, [questionDraft, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [questionDraft, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, questions, layouts]);
 
   // 创建 Task 回调 — 仅在 currentWhiteboardId 形如 "projects/{name}" 时由 GraphToolbar 触发
   const handleCreateTask = useCallback(() => {
@@ -1134,23 +1121,20 @@ export function GraphView({
     try {
       const fallbackPos = newEntityPositionAtCenter(320, 140);
       const pos = taskPositionAboveTopmost(data.tasks, effectivePositions, fallbackPos);
-      const result = await unwrapCommand(
-        commands.taskCreate({
-          project,
-          title,
-          content: null,
-          status: "next",
-          area: null,
-          color: null,
-          position: pos,
-        }),
-      );
+      const result = await tasks.create({
+        project,
+        title,
+        content: null,
+        status: "next",
+        area: null,
+        color: null,
+        position: pos,
+      });
       onSelectEntity?.({ id: result.id, kind: "task" });
-      queryClient.invalidateQueries();
     } catch (e) {
       console.error("创建 task 失败:", e);
     }
-  }, [taskDraft, data.tasks, effectivePositions, onSelectEntity, queryClient, currentWhiteboardId, newEntityPositionAtCenter]);
+  }, [taskDraft, data.tasks, effectivePositions, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, tasks]);
 
   const handlePackTasks = useCallback(async () => {
     if (!currentWhiteboardId.startsWith("projects/")) return;
@@ -1181,17 +1165,15 @@ export function GraphView({
       // 如未来需要原子语义,加 layout_set_positions_bulk command 走单事务。
       await Promise.all(
         Object.entries(packed).map(([taskId, position]) =>
-          unwrapCommand(
-            commands.layoutSetPosition(
-              currentWhiteboardId,
-              taskId,
-              position.x,
-              position.y,
-            ),
+          layouts.setPositionWithoutInvalidate(
+            currentWhiteboardId,
+            taskId,
+            position.x,
+            position.y,
           ),
         ),
       );
-      await queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+      layouts.invalidatePositions();
       viewport.actions.fitToContent(
         packedPositions,
         size.width,
@@ -1199,13 +1181,13 @@ export function GraphView({
       );
     } catch (e) {
       console.error("整理 task 位置失败:", e);
-      queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+      layouts.invalidatePositions();
     }
   }, [
     currentWhiteboardId,
     data.tasks,
     getVisibleViewportSize,
-    queryClient,
+    layouts,
     viewport.actions,
     viewport.state.panX,
     viewport.state.panY,
@@ -1238,15 +1220,14 @@ export function GraphView({
     if (!name) return;
 
     try {
-      await unwrapCommand(commands.whiteboardCreate(name));
-      queryClient.invalidateQueries({ queryKey: ["whiteboards"] });
+      await whiteboardActions.create(name);
     } catch (e) {
       console.error("创建 whiteboard 失败:", e);
     }
-  }, [currentWhiteboardId, queryClient, whiteboardDraft]);
+  }, [currentWhiteboardId, whiteboardActions, whiteboardDraft]);
 
   // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode,memo 比较依赖它不变
-  // 依赖 data/viewport/queryClient,数据变化时整体替换(EntityNode 整体重渲染)
+  // 依赖 data/viewport/entity-actions,数据变化时整体替换(EntityNode 整体重渲染)
   const menuHandlers = useMemo<NodeContextMenuHandlers>(
     () => ({
       // 共享:Copy UUID + normalized title(所有节点)
@@ -1300,20 +1281,15 @@ export function GraphView({
       onCreateAlias: async (cardId) => {
         try {
           const cardPos = effectivePositions[cardId];
-          const alias = await unwrapCommand(
-            commands.aliasCreate(currentWhiteboardId, cardId),
-          );
+          const alias = await aliases.create(currentWhiteboardId, cardId);
           if (cardPos) {
-            await unwrapCommand(
-              commands.layoutSetPosition(
-                currentWhiteboardId,
-                alias.aliasId,
-                cardPos.x + 540,
-                cardPos.y,
-              ),
+            await layouts.setPosition(
+              currentWhiteboardId,
+              alias.aliasId,
+              cardPos.x + 540,
+              cardPos.y,
             );
           }
-          queryClient.invalidateQueries();
         } catch (e) {
           console.error("创建 alias 失败:", e);
         }
@@ -1339,8 +1315,7 @@ export function GraphView({
       // Alias: Delete alias
       onDeleteAlias: async (aliasId) => {
         try {
-          await unwrapCommand(commands.aliasDelete(aliasId));
-          queryClient.invalidateQueries();
+          await aliases.remove(aliasId);
         } catch (e) {
           console.error("删除 alias 失败:", e);
         }
@@ -1350,8 +1325,7 @@ export function GraphView({
       // Note: Delete
       onDeleteNote: async (noteId) => {
         try {
-          await unwrapCommand(commands.noteDelete(noteId));
-          queryClient.invalidateQueries();
+          await notes.remove(noteId);
         } catch (e) {
           console.error("删除 note 失败:", e);
         }
@@ -1359,8 +1333,7 @@ export function GraphView({
       // Note: Set background color
       onSetNoteColor: async (noteId, color) => {
         try {
-          await unwrapCommand(commands.noteUpdate(noteId, null, null, color));
-          queryClient.invalidateQueries();
+          await notes.update(noteId, null, null, color);
         } catch (e) {
           console.error("更新 note 颜色失败:", e);
         }
@@ -1371,8 +1344,7 @@ export function GraphView({
       // Question: Delete
       onDeleteQuestion: async (questionId) => {
         try {
-          await unwrapCommand(commands.questionDelete(questionId));
-          queryClient.invalidateQueries();
+          await questions.remove(questionId);
         } catch (e) {
           console.error("删除 question 失败:", e);
         }
@@ -1380,8 +1352,7 @@ export function GraphView({
       // Section: Delete
       onDeleteSection: async (sectionId) => {
         try {
-          await unwrapCommand(commands.sectionDelete(sectionId));
-          queryClient.invalidateQueries();
+          await sections.remove(sectionId);
         } catch (e) {
           console.error("删除 section 失败:", e);
         }
@@ -1389,8 +1360,7 @@ export function GraphView({
       // Section: Set background color (复用 section_update 的 color 参数)
       onSetSectionColor: async (sectionId, color) => {
         try {
-          await unwrapCommand(commands.sectionUpdate(sectionId, null, color));
-          queryClient.invalidateQueries();
+          await sections.update(sectionId, null, color);
         } catch (e) {
           console.error("更新 section 颜色失败:", e);
         }
@@ -1400,10 +1370,9 @@ export function GraphView({
         try {
           const prevSection = entityToSectionId[entityId];
           if (prevSection && prevSection !== sectionId) {
-            await unwrapCommand(commands.sectionRemoveMember(prevSection, entityId));
+            await sections.removeMember(prevSection, entityId);
           }
-          await unwrapCommand(commands.sectionAddMember(sectionId, entityId));
-          queryClient.invalidateQueries();
+          await sections.addMember(sectionId, entityId);
         } catch (e) {
           console.error("移动到 section 失败:", e);
         }
@@ -1413,8 +1382,7 @@ export function GraphView({
         try {
           const sectionId = entityToSectionId[entityId];
           if (!sectionId) return;
-          await unwrapCommand(commands.sectionRemoveMember(sectionId, entityId));
-          queryClient.invalidateQueries();
+          await sections.removeMember(sectionId, entityId);
         } catch (e) {
           console.error("从 section 移除失败:", e);
         }
@@ -1422,8 +1390,7 @@ export function GraphView({
       // Card: Set background color (B2 新增)
       onSetCardColor: async (cardId, color) => {
         try {
-          await unwrapCommand(commands.cardSetColor(cardId, color));
-          queryClient.invalidateQueries();
+          await cards.setColor(cardId, color);
         } catch (e) {
           console.error("更新 card 颜色失败:", e);
         }
@@ -1431,10 +1398,7 @@ export function GraphView({
       // Question: Set background color (B2 新增)
       onSetQuestionColor: async (questionId, color) => {
         try {
-          await unwrapCommand(
-            commands.questionUpdate(questionId, null, null, null, color),
-          );
-          queryClient.invalidateQueries();
+          await questions.update(questionId, null, null, null, color);
         } catch (e) {
           console.error("更新 question 颜色失败:", e);
         }
@@ -1444,8 +1408,7 @@ export function GraphView({
       // Task: Delete (B2 新增)
       onDeleteTask: async (taskId) => {
         try {
-          await unwrapCommand(commands.taskDelete(taskId));
-          queryClient.invalidateQueries();
+          await tasks.remove(taskId);
         } catch (e) {
           console.error("删除 task 失败:", e);
         }
@@ -1453,8 +1416,7 @@ export function GraphView({
       // Task: Set background color (B2 新增)
       onSetTaskColor: async (taskId, color) => {
         try {
-          await unwrapCommand(commands.taskSetColor(taskId, color));
-          queryClient.invalidateQueries();
+          await tasks.setColor(taskId, color);
         } catch (e) {
           console.error("更新 task 颜色失败:", e);
         }
@@ -1473,7 +1435,13 @@ export function GraphView({
       getVisibleViewportSize,
       viewport.actions,
       currentWhiteboardId,
-      queryClient,
+      cards,
+      notes,
+      sections,
+      questions,
+      tasks,
+      aliases,
+      layouts,
       setRelatedPickerCardId,
       setRelatedSearch,
     ],
@@ -1549,18 +1517,10 @@ export function GraphView({
         setLocalPositions((prev) => ({ ...prev, [taskId]: position }));
 
         try {
-          await unwrapCommand(
-            commands.layoutSetPosition(
-              currentWhiteboardId,
-              taskId,
-              position.x,
-              position.y,
-            ),
-          );
-          await queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+          await layouts.setPosition(currentWhiteboardId, taskId, position.x, position.y);
         } catch (e) {
           console.error("定位 task 失败:", e);
-          queryClient.invalidateQueries({ queryKey: ["positions", currentWhiteboardId] });
+          layouts.invalidatePositions();
           return;
         }
       }
@@ -1585,7 +1545,7 @@ export function GraphView({
       getVisibleViewportSize,
       newEntityPositionAtCenter,
       onSelectEntity,
-      queryClient,
+      layouts,
       viewport.actions,
     ],
   );
@@ -1619,10 +1579,8 @@ export function GraphView({
       if (drawingState && drawingState.fromId !== selection.id) {
         const { fromId } = drawingState;
         setDrawingState(null);
-        unwrapCommand(commands.entityConnect(fromId, selection.id))
-          .then(() => {
-            queryClient.invalidateQueries();
-          })
+        entities
+          .connect(fromId, selection.id)
           .catch((err) => console.error("建立连线失败:", err));
         return;
       }
@@ -1633,7 +1591,7 @@ export function GraphView({
       }
       onSelectEntity?.(selection);
     },
-    [onSelectEntity, drawingState, queryClient, relatedPickerCardId],
+    [onSelectEntity, drawingState, entities, relatedPickerCardId],
   );
 
   useEffect(() => {
@@ -1889,16 +1847,9 @@ export function GraphView({
                       onClick={() => {
                         setRelatedPickerCardId(null);
                         setRelatedSearch("");
-                        unwrapCommand(
-                          commands.entityRelate(
-                            relatedPickerCardId,
-                            card.id,
-                          ),
-                        )
-                          .then(() => {
-                            queryClient.invalidateQueries();
-                          })
-                          .catch((err) => console.error("建立 Related 失败:", err));
+                        entities
+                          .relate(relatedPickerCardId, card.id)
+                          .catch((err: unknown) => console.error("建立 Related 失败:", err));
                       }}
                       style={{
                         display: "block",

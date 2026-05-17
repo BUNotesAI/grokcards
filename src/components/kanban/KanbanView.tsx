@@ -1,14 +1,14 @@
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { commands } from "@/bindings";
 import type { Subtask, TaskEntity, TaskStatus } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
+import { useTaskActions } from "@/hooks/useTaskActions";
 import { KanbanBoard } from "./KanbanBoard";
 import { KanbanToolbar } from "./KanbanToolbar";
 import { CreateTaskModal } from "./CreateTaskModal";
 import { TaskEditModal } from "./TaskEditModal";
-import { invalidateAllTaskCaches } from "./invalidateAllTaskCaches";
 import { COLUMN_ORDER } from "./columns";
 
 interface ModalState {
@@ -30,13 +30,15 @@ interface EditState {
  * 创建 task 数据流:
  * - 列头 "+" 或 toolbar "+ New task" → openModal(status) → modalState.open = true
  * - modal 受控渲染 `{modalState.open && <CreateTaskModal />}`(stale state 防护)
- * - modal onSubmit → commands.taskCreate → invalidateAllTaskCaches → 关闭 modal
- * - 错误通过 unwrapCommand throw,由 CreateTaskModal 内部 try/catch 显示
+ * - modal onSubmit → taskActions.create → hook 内 invalidate → 关闭 modal
+ * - 错误通过 hook 内 unwrapCommand throw,由 CreateTaskModal 内部 try/catch 显示
  */
 export function KanbanView() {
   const [searchParams] = useSearchParams();
   const project = searchParams.get("project");
-  const queryClient = useQueryClient();
+  // kanban 跨 project view,用 broadcast invalidate(不传 wb)。
+  // 单 project mode 下 invalidate 多一些无关 wb 的 positions 是可接受的代价。
+  const taskActions = useTaskActions();
 
   const tasksQuery = useQuery({
     queryKey: ["tasks-kanban", project],
@@ -79,27 +81,21 @@ export function KanbanView() {
     title: string;
     status: TaskStatus;
   }) => {
-    await unwrapCommand(
-      commands.taskCreate({
-        project: data.project,
-        title: data.title,
-        content: null,
-        status: data.status,
-        area: null,
-        color: null,
-        position: null,
-      }),
-    );
-    invalidateAllTaskCaches(queryClient, `projects/${data.project}`);
+    await taskActions.create({
+      project: data.project,
+      title: data.title,
+      content: null,
+      status: data.status,
+      area: null,
+      color: null,
+      position: null,
+    });
     closeModal();
   };
 
   const handleTaskMove = async (taskId: string, newStatus: TaskStatus) => {
     try {
-      await unwrapCommand(
-        commands.taskUpdate(taskId, null, null, newStatus, null, null),
-      );
-      invalidateAllTaskCaches(queryClient);
+      await taskActions.update(taskId, null, null, newStatus, null, null);
     } catch (err) {
       // V1 不做 optimistic update,失败时 loud 报 console + query refetch 自动回滚视觉
       console.error("Task move failed:", err);
@@ -121,17 +117,14 @@ export function KanbanView() {
     area: string | null;
     color: string;
   }) => {
-    await unwrapCommand(
-      commands.taskUpdateWithSubtasks(
-        data.id,
-        data.title,
-        data.subtasks,
-        data.status,
-        data.area,
-        data.color,
-      ),
+    await taskActions.updateWithSubtasks(
+      data.id,
+      data.title,
+      data.subtasks,
+      data.status,
+      data.area,
+      data.color,
     );
-    invalidateAllTaskCaches(queryClient);
     closeEdit();
   };
 

@@ -1,8 +1,6 @@
 import { useEffect, useState } from "react";
 import type { GraphNote } from "@/bindings";
-import { commands } from "@/bindings";
-import { unwrapCommand } from "@/lib/commandResult";
-import { useQueryClient } from "@tanstack/react-query";
+import { useNoteActions } from "@/hooks/useNoteActions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,7 +10,8 @@ interface NoteEditorProps {
 }
 
 export function NoteEditor({ note }: NoteEditorProps) {
-  const queryClient = useQueryClient();
+  // sidebar 不知具体 wb,broadcast invalidate
+  const notes = useNoteActions();
   const [title, setTitle] = useState("");
   const [body, setBody] = useState("");
 
@@ -48,8 +47,7 @@ export function NoteEditor({ note }: NoteEditorProps) {
           <div className="flex gap-2">
             <Button
               onClick={async () => {
-                await unwrapCommand(commands.noteUpdate(note.id, title, body, null));
-                await queryClient.invalidateQueries({ queryKey: ["notes"] });
+                await notes.update(note.id, title, body, null);
               }}
             >
               Save Note
