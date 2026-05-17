@@ -9,6 +9,51 @@ use crate::models::{SyncFileResponse, SyncVaultReport};
 use crate::parser;
 use crate::vault_fs::VaultFs;
 
+/// entity id 的两种来源:沿用文件中已写入的,或本次新生成需 backfill 回写文件。
+///
+/// 用 enum 表达让"new_id 存在 ↔ needs_backfill=true"成为类型不变式,
+/// 避免散落的 `(id, needs_backfill, assigned_id)` 元组组合出非法状态。
+enum IdAssignment {
+    Existing(String),
+    Generated(String),
+}
+
+impl IdAssignment {
+    fn id(&self) -> &str {
+        match self {
+            Self::Existing(id) | Self::Generated(id) => id,
+        }
+    }
+
+    fn needs_backfill(&self) -> bool {
+        matches!(self, Self::Generated(_))
+    }
+
+    fn assigned(&self) -> String {
+        match self {
+            Self::Generated(id) => id.clone(),
+            Self::Existing(_) => String::new(),
+        }
+    }
+}
+
+/// entities 表 UPSERT 的两种结果。
+#[derive(Clone, Copy)]
+enum RowOp {
+    Inserted,
+    Updated,
+}
+
+impl RowOp {
+    fn inserted_count(self) -> u32 {
+        matches!(self, Self::Inserted) as u32
+    }
+
+    fn updated_count(self) -> u32 {
+        matches!(self, Self::Updated) as u32
+    }
+}
+
 /// 将 markdown 文件内容同步到数据库。
 ///
 /// ## 执行效果
@@ -26,77 +71,112 @@ pub fn sync_file(
     content: &str,
     mtime: f64,
 ) -> Result<SyncFileResponse, KeysightError> {
-    // 1. 解析 markdown
-    let parsed = match parser::parse_entity(content) {
-        Some(p) => p,
-        None => {
-            // 非实体文件 — 只记录 mtime
-            conn.execute(
-                "INSERT OR REPLACE INTO file_mtimes (filePath, mtime) VALUES (?1, ?2)",
-                params![file_path, mtime],
-            )?;
-            return Ok(SyncFileResponse {
-                updated: 0,
-                inserted: 0,
-                deleted: 0,
-                needs_id_backfill: false,
-                assigned_id: String::new(),
-            });
-        }
+    let Some(parsed) = parser::parse_entity(content) else {
+        return non_entity_response(conn, file_path, mtime);
     };
 
-    // 2. 确定 kind 字符串
-    let kind_str = match parsed.entity_type.as_str() {
-        "atomic-card" => "card",
-        "note" => "note",
-        "project-task" => "task",
-        "question" => "question",
-        other => return Err(KeysightError::InvalidEntityType(other.to_string())),
-    };
-
-    // 3. 推导 whiteboard_id
+    let kind_str = entity_kind_str(&parsed)?;
     let wb_id = derive_whiteboard_id(file_path);
+    let id_assignment = resolve_entity_id(&parsed, kind_str);
+    let id = id_assignment.id();
 
-    // 4. 确定或生成 ID
-    let mut needs_id_backfill = false;
-    let mut assigned_id = String::new();
-    let id = if let Some(ref existing_id) = parsed.id {
-        existing_id.clone()
-    } else {
-        let new_id = match kind_str {
-            "card" => id::gen_card_id(),
-            "note" => id::gen_note_id(),
-            "task" => id::gen_task_id(),
-            "question" => id::gen_question_id(),
-            _ => unreachable!(),
-        };
-        needs_id_backfill = true;
-        assigned_id = new_id.clone();
-        new_id
+    let row_op = upsert_entity_row(conn, id, kind_str, &parsed, &wb_id, file_path)?;
+    upsert_kind_specific_fields(conn, id, kind_str, &parsed)?;
+    replace_tags(conn, id, &parsed.tags)?;
+    replace_edges_for_kind(conn, id, kind_str, &parsed)?;
+    refresh_entity_fts(conn, id, &parsed)?;
+    record_file_mtime(conn, file_path, mtime)?;
+
+    Ok(SyncFileResponse {
+        updated: row_op.updated_count(),
+        inserted: row_op.inserted_count(),
+        deleted: 0,
+        needs_id_backfill: id_assignment.needs_backfill(),
+        assigned_id: id_assignment.assigned(),
+    })
+}
+
+/// 非实体文件路径:只更新 mtime,不动 entities 系表。
+fn non_entity_response(
+    conn: &Connection,
+    file_path: &str,
+    mtime: f64,
+) -> Result<SyncFileResponse, KeysightError> {
+    record_file_mtime(conn, file_path, mtime)?;
+    Ok(SyncFileResponse {
+        updated: 0,
+        inserted: 0,
+        deleted: 0,
+        needs_id_backfill: false,
+        assigned_id: String::new(),
+    })
+}
+
+/// 从 frontmatter `type` 字段映射到 DB `entities.kind` 列字符串。
+fn entity_kind_str(parsed: &parser::ParsedEntity) -> Result<&'static str, KeysightError> {
+    match parsed.entity_type.as_str() {
+        "atomic-card" => Ok("card"),
+        "note" => Ok("note"),
+        "project-task" => Ok("task"),
+        "question" => Ok("question"),
+        other => Err(KeysightError::InvalidEntityType(other.to_string())),
+    }
+}
+
+/// 决定本次同步使用的 entity id:沿用 frontmatter 已写入的,或按 kind 新生成。
+fn resolve_entity_id(parsed: &parser::ParsedEntity, kind_str: &str) -> IdAssignment {
+    if let Some(existing) = parsed.id.clone() {
+        return IdAssignment::Existing(existing);
+    }
+    let new_id = match kind_str {
+        "card" => id::gen_card_id(),
+        "note" => id::gen_note_id(),
+        "task" => id::gen_task_id(),
+        "question" => id::gen_question_id(),
+        _ => unreachable!("entity_kind_str 已穷尽 4 类合法 kind"),
     };
+    IdAssignment::Generated(new_id)
+}
 
-    // 5. UPSERT entities
-    let exists: bool = conn.query_row(
-        "SELECT COUNT(*) FROM entities WHERE id = ?1",
-        [&id],
-        |r| r.get::<_, i64>(0),
-    )? > 0;
+/// UPSERT entities 主表(共用列:kind/title/whiteboard_id/file_path/content/color)。
+fn upsert_entity_row(
+    conn: &Connection,
+    id: &str,
+    kind_str: &str,
+    parsed: &parser::ParsedEntity,
+    wb_id: &str,
+    file_path: &str,
+) -> Result<RowOp, KeysightError> {
+    let exists = conn
+        .query_row(
+            "SELECT COUNT(*) FROM entities WHERE id = ?1",
+            [id],
+            |r| r.get::<_, i64>(0),
+        )?
+        > 0;
 
-    let (updated, inserted) = if exists {
+    if exists {
         conn.execute(
             "UPDATE entities SET kind = ?1, title = ?2, whiteboard_id = ?3, file_path = ?4, content = ?5, color = ?6 WHERE id = ?7",
             params![kind_str, parsed.title, wb_id, file_path, parsed.content, parsed.color, id],
         )?;
-        (1u32, 0u32)
+        Ok(RowOp::Updated)
     } else {
         conn.execute(
             "INSERT INTO entities (id, kind, title, whiteboard_id, file_path, content, color) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
             params![id, kind_str, parsed.title, wb_id, file_path, parsed.content, parsed.color],
         )?;
-        (0u32, 1u32)
-    };
+        Ok(RowOp::Inserted)
+    }
+}
 
-    // 6. UPSERT 类型特定字段
+/// 写 kind 特定字段表(card_fields / task_fields / question_fields)。note 无此表。
+fn upsert_kind_specific_fields(
+    conn: &Connection,
+    id: &str,
+    kind_str: &str,
+    parsed: &parser::ParsedEntity,
+) -> Result<(), KeysightError> {
     match kind_str {
         "card" => {
             conn.execute(
@@ -124,73 +204,99 @@ pub fn sync_file(
         "note" => { /* note 无类型特定字段表 */ }
         _ => {}
     }
+    Ok(())
+}
 
-    // 7. 全量替换 entity_tags
-    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", [&id])?;
-    for tag in &parsed.tags {
+/// 全量替换 entity_tags(先 DELETE 再 INSERT,反映 frontmatter 最新状态)。
+fn replace_tags(
+    conn: &Connection,
+    id: &str,
+    tags: &[String],
+) -> Result<(), KeysightError> {
+    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", [id])?;
+    for tag in tags {
         conn.execute(
             "INSERT OR IGNORE INTO entity_tags (entity_id, tag) VALUES (?1, ?2)",
             params![id, tag],
         )?;
     }
+    Ok(())
+}
 
-    // 8. 全量替换 edges（从 frontmatter 重建）
-    conn.execute("DELETE FROM edges WHERE from_id = ?1", [&id])?;
-    if kind_str == "note" {
-        for target in parsed.link_to.iter().chain(parsed.see_also.iter()) {
-            conn.execute(
-                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'note_link')",
-                params![id, target],
-            )?;
+/// 全量替换 edges。kind 决定从 parsed 哪些字段抽出 edge:
+/// - note: link_to + see_also → note_link
+/// - question: link_to → question_link
+/// - card / task: link_to → link_to, related → related, see_also → see_also
+fn replace_edges_for_kind(
+    conn: &Connection,
+    id: &str,
+    kind_str: &str,
+    parsed: &parser::ParsedEntity,
+) -> Result<(), KeysightError> {
+    conn.execute("DELETE FROM edges WHERE from_id = ?1", [id])?;
+    match kind_str {
+        "note" => {
+            for target in parsed.link_to.iter().chain(parsed.see_also.iter()) {
+                insert_edge(conn, id, target, "note_link")?;
+            }
         }
-    } else if kind_str == "question" {
-        for target in &parsed.link_to {
-            conn.execute(
-                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'question_link')",
-                params![id, target],
-            )?;
+        "question" => {
+            for target in &parsed.link_to {
+                insert_edge(conn, id, target, "question_link")?;
+            }
         }
-    } else {
-        for target in &parsed.link_to {
-            conn.execute(
-                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'link_to')",
-                params![id, target],
-            )?;
-        }
-        for target in &parsed.related {
-            conn.execute(
-                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'related')",
-                params![id, target],
-            )?;
-        }
-        for target in &parsed.see_also {
-            conn.execute(
-                "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, 'see_also')",
-                params![id, target],
-            )?;
+        _ => {
+            for target in &parsed.link_to {
+                insert_edge(conn, id, target, "link_to")?;
+            }
+            for target in &parsed.related {
+                insert_edge(conn, id, target, "related")?;
+            }
+            for target in &parsed.see_also {
+                insert_edge(conn, id, target, "see_also")?;
+            }
         }
     }
+    Ok(())
+}
 
-    // 8.5 同步 FTS 索引
-    conn.execute("DELETE FROM entities_fts WHERE id = ?1", [&id])?;
+fn insert_edge(
+    conn: &Connection,
+    from_id: &str,
+    to_id: &str,
+    edge_type: &str,
+) -> Result<(), KeysightError> {
+    conn.execute(
+        "INSERT OR IGNORE INTO edges (from_id, to_id, edge_type) VALUES (?1, ?2, ?3)",
+        params![from_id, to_id, edge_type],
+    )?;
+    Ok(())
+}
+
+/// 刷新 FTS 索引(DELETE + INSERT,保持 title/content 与 entities 一致)。
+fn refresh_entity_fts(
+    conn: &Connection,
+    id: &str,
+    parsed: &parser::ParsedEntity,
+) -> Result<(), KeysightError> {
+    conn.execute("DELETE FROM entities_fts WHERE id = ?1", [id])?;
     conn.execute(
         "INSERT INTO entities_fts (id, title, content) VALUES (?1, ?2, ?3)",
         params![id, parsed.title, parsed.content],
     )?;
+    Ok(())
+}
 
-    // 9. UPSERT file_mtimes
+fn record_file_mtime(
+    conn: &Connection,
+    file_path: &str,
+    mtime: f64,
+) -> Result<(), KeysightError> {
     conn.execute(
         "INSERT OR REPLACE INTO file_mtimes (filePath, mtime) VALUES (?1, ?2)",
         params![file_path, mtime],
     )?;
-
-    Ok(SyncFileResponse {
-        updated,
-        inserted,
-        deleted: 0,
-        needs_id_backfill,
-        assigned_id,
-    })
+    Ok(())
 }
 
 /// 从 file_path 推导 whiteboard_id。
