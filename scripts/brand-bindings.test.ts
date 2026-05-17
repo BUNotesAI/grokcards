@@ -16,10 +16,7 @@ import { describe, it, expect, afterEach } from "vitest";
 import { writeFileSync, readFileSync, unlinkSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  brandBindingsFile,
-  BRANDED_ID_TYPES,
-} from "../../scripts/brand-bindings.ts";
+import { brandBindingsFile, BRANDED_ID_TYPES } from "./brand-bindings.ts";
 
 const FIXTURE_PATH = join(tmpdir(), `keysight-brand-test-${process.pid}.ts`);
 
