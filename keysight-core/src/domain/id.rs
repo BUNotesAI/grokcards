@@ -2,10 +2,14 @@
 //!
 //! ## 不变量
 //!
-//! 1. 所有 keysight 业务 id(card_*/note_*/alias_*/sec_*/q_*/task_*/wb_*)
-//!    跨 IPC / DB 边界进入业务层时必须 parse 到对应 newtype。业务代码不接受 &str。
-//! 2. 内部字段 String 私有,只能通过 as_str() 取 &str 给 SQL 参数 / 日志使用。
-//! 3. EntityId 是 6 个 entity newtype 的 union;WhiteboardId 不属于 EntityId
+//! 1. 6 个 entity id(card_*/note_*/alias_*/sec_*/q_*/task_*)跨 IPC / DB 边界
+//!    进入业务层时必须 parse 到对应 newtype。业务代码不接受 &str。
+//! 2. WhiteboardId 是 owner 命名空间标识(非 entity);业务里实际值有 3 种形态
+//!    (`wb_*` 兜底根白板 / `projects/{name}` Kanban 项目白板 / 扁平命名白板),
+//!    因此 parse 规则**不强制单一 prefix**,只**拒绝以 6 种 entity prefix 起头**
+//!    的字符串(防止 wb_id 与 entity_id 参数顺序混用),以及空字符串。
+//! 3. 内部字段 String 私有,只能通过 as_str() 取 &str 给 SQL 参数 / 日志使用。
+//! 4. EntityId 是 6 个 entity newtype 的 union;WhiteboardId 不属于 EntityId
 //!    (wb 不是 entity,wb owns entities)。
 //!
 //! ## 反序列化校验
@@ -18,10 +22,11 @@
 //!
 //! ## prefixed_id! macro
 //!
-//! 7 个 entity-related newtype 完全同构(只 prefix 字面量不同),抽 macro 把
+//! 6 个 entity newtype 完全同构(只 prefix 字面量不同),抽 macro 把
 //! "newtype + parse + new_unchecked + as_str + TryFrom<String> + From for String"
 //! 这套完整契约一次定义。新增 entity newtype 时只加一行 invocation,
 //! 不变量(try_from / pub(crate) new_unchecked / specta type)由 macro 强制。
+//! WhiteboardId 因 parse 规则不同(多形态接受 + entity prefix 黑名单)单独手写。
 
 use serde::{Deserialize, Serialize};
 
@@ -103,16 +108,89 @@ macro_rules! prefixed_id {
 }
 
 // ====================================================================
-// 7 个 entity-related newtype
+// 6 个 entity newtype(prefix 强校验,由 macro 一次定义)
 // ====================================================================
 
-prefixed_id!(WhiteboardId, "wb_");
 prefixed_id!(CardId,       "card_");
 prefixed_id!(NoteId,       "note_");
 prefixed_id!(AliasId,      "alias_");
 prefixed_id!(SectionId,    "sec_");
 prefixed_id!(QuestionId,   "q_");
 prefixed_id!(TaskId,       "task_");
+
+// ====================================================================
+// WhiteboardId —— owner 命名空间标识,parse 规则与 entity 不同
+// ====================================================================
+//
+// 业务里 wb_id 实际值由 `sync::derive_whiteboard_id` 或 `ProjectName::whiteboard_id`
+// 派生,有 3 种形态:
+//   - `wb_root`               兜底根白板(`wb_` 前缀,历史 / 默认)
+//   - `projects/{name}`       Kanban project 白板(reserved 二级路径)
+//   - `{flat_name}`           普通扁平白板(`whiteboard/{sub}/...` → `sub`)
+//
+// 因此 WhiteboardId::parse **不强制单一 prefix**,只拒绝两类输入:
+//   (a) 空字符串
+//   (b) 以 6 种 entity prefix(card_/note_/alias_/sec_/q_/task_)起头的字符串
+//       —— 防止 wb_id 与 entity_id 参数顺序混用
+//
+// IPC 边界仍通过 `#[serde(try_from = "String", into = "String")]` 强制 parse,
+// 业务代码不接受 &str。
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
+#[serde(try_from = "String", into = "String")]
+#[specta(type = String)]
+pub struct WhiteboardId(String);
+
+impl WhiteboardId {
+    /// 跨 IPC / DB 边界进入强类型的入口。
+    ///
+    /// 接受任意非空字符串,但拒绝以 6 种 entity prefix(card_/note_/alias_/sec_/q_/task_)
+    /// 起头的字符串。失败时返回 `IdError::UnknownPrefix(原 string)`。
+    pub fn parse(s: impl Into<String>) -> Result<Self, IdError> {
+        let s = s.into();
+        if s.is_empty() {
+            return Err(IdError::UnknownPrefix(s));
+        }
+        if [
+            CardId::PREFIX,
+            NoteId::PREFIX,
+            AliasId::PREFIX,
+            SectionId::PREFIX,
+            QuestionId::PREFIX,
+            TaskId::PREFIX,
+        ]
+        .iter()
+        .any(|p| s.starts_with(p))
+        {
+            return Err(IdError::UnknownPrefix(s));
+        }
+        Ok(Self(s))
+    }
+
+    /// 无校验构造 —— 仅 crate 内 DB read path / trusted 派生函数(如
+    /// `ProjectName::whiteboard_id` / `sync::derive_whiteboard_id`)使用,
+    /// 信任源 invariant。
+    pub(crate) fn new_unchecked(raw: String) -> Self {
+        Self(raw)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for WhiteboardId {
+    type Error = IdError;
+    fn try_from(s: String) -> Result<Self, IdError> {
+        Self::parse(s)
+    }
+}
+
+impl From<WhiteboardId> for String {
+    fn from(id: WhiteboardId) -> String {
+        id.0
+    }
+}
 
 // ====================================================================
 // EntityId —— 6 个 entity newtype 的判别联合
@@ -203,9 +281,27 @@ mod tests {
     // ---------- Scenario 2: parse 接受合法 prefix ----------
 
     #[test]
-    fn whiteboard_id_parse_accepts_valid_prefix() {
+    fn whiteboard_id_parse_accepts_wb_prefix() {
         let id = WhiteboardId::parse("wb_aaaa1111").unwrap();
         assert_eq!(id.as_str(), "wb_aaaa1111");
+    }
+
+    #[test]
+    fn whiteboard_id_parse_accepts_projects_path() {
+        let id = WhiteboardId::parse("projects/super-tauri").unwrap();
+        assert_eq!(id.as_str(), "projects/super-tauri");
+    }
+
+    #[test]
+    fn whiteboard_id_parse_accepts_flat_name() {
+        let id = WhiteboardId::parse("myboard").unwrap();
+        assert_eq!(id.as_str(), "myboard");
+    }
+
+    #[test]
+    fn whiteboard_id_parse_accepts_wb_root_default() {
+        let id = WhiteboardId::parse("wb_root").unwrap();
+        assert_eq!(id.as_str(), "wb_root");
     }
 
     #[test]
@@ -250,6 +346,25 @@ mod tests {
     fn whiteboard_id_parse_rejects_card_prefix() {
         let err = WhiteboardId::parse("card_xxx").unwrap_err();
         assert_eq!(err, IdError::UnknownPrefix("card_xxx".to_string()));
+    }
+
+    #[test]
+    fn whiteboard_id_parse_rejects_all_entity_prefixes() {
+        for entity_id in [
+            "card_xxx",
+            "note_xxx",
+            "alias_xxx",
+            "sec_xxx",
+            "q_xxx",
+            "task_xxx",
+        ] {
+            let err = WhiteboardId::parse(entity_id).unwrap_err();
+            assert_eq!(
+                err,
+                IdError::UnknownPrefix(entity_id.to_string()),
+                "{entity_id} 应被 WhiteboardId 拒(entity prefix 黑名单)"
+            );
+        }
     }
 
     #[test]
@@ -326,10 +441,12 @@ mod tests {
         );
     }
 
-    /// 验证 prefixed_id! macro 自身仍强制 try_from / into 路径,且 7 个 newtype 都通过
-    /// macro invocation 生成(不旁路出第 8 个手写 newtype 偷偷用 transparent)。
+    /// 验证 prefixed_id! macro 自身仍强制 try_from / into 路径,且 6 个 entity newtype
+    /// 都通过 macro invocation 生成(不旁路出手写 entity newtype 偷偷用 transparent)。
+    ///
+    /// WhiteboardId 单独手写(parse 规则不同),不在此 audit 范围。
     #[test]
-    fn macro_enforces_try_from_and_seven_invocations() {
+    fn macro_enforces_try_from_and_six_invocations() {
         // 1. macro 定义本身必须含 try_from / into 标记(确认未被改成 transparent)
         let try_from_attr = format!(
             "#[serde({lhs}, {rhs})]",
@@ -342,18 +459,18 @@ mod tests {
             "prefixed_id! macro 定义中应包含 try_from/into 序列化路径",
         );
 
-        // 2. invocation 数量必须 ≥ 7(每个 entity newtype 一次,prefix 各异)
+        // 2. invocation 数量必须 ≥ 6(每个 entity newtype 一次,prefix 各异)
         let invocation_count = production_src().matches("prefixed_id!(").count();
         assert!(
-            invocation_count >= 7,
-            "至少 7 个 prefixed_id! invocation,实际命中 {invocation_count} 次",
+            invocation_count >= 6,
+            "至少 6 个 prefixed_id! invocation,实际命中 {invocation_count} 次",
         );
 
-        // 3. production 段不应有任何具名 newtype 的手写 expanded form,绕过 macro
-        //    macro 定义里用 `$name` placeholder,具体 newtype name 只在 invocation 出现;
-        //    任何 `pub struct WhiteboardId(String);` 字面量都是手写绕过,fail
+        // 3. production 段不应有任何具名 entity newtype 的手写 expanded form,绕过 macro
+        //    macro 定义里用 `$name` placeholder,具体 entity newtype name 只在 invocation 出现;
+        //    任何 `pub struct CardId(String);` 字面量都是手写绕过,fail
+        //    WhiteboardId 单独手写(parse 规则与 entity 不同),不在 audit 范围。
         let manual_patterns = [
-            "pub struct WhiteboardId(String);",
             "pub struct CardId(String);",
             "pub struct NoteId(String);",
             "pub struct AliasId(String);",
