@@ -138,14 +138,10 @@ pub(super) fn dispatch_mutate(
                 json!({ "kind": "position", "entity_id": entity_id, "wb": wb, "x": x, "y": y }),
             )
         }
-        MutateParams::Connect {
-            from,
-            to,
-            edge_type: _wire_hint,
-        } => {
-            // `edge_type` 字符串仅供 wire 层兼容 legacy CLI —— 实际 `Edge` 变体由
-            // `user_draw_edge(from, to)` 按 kind 决定(踩坑样例 1 防御:不再依赖
-            // 调用方传对字符串)。
+        MutateParams::Connect { from, to } => {
+            // Edge variant 由 `EntityId::parse(from)` 的 kind 决定(Card/Note/
+            // Alias/Question → 对应 `*Link`;Section/Task → `ConnectionNotAllowed`)。
+            // wire 不传 edge_type:类型已强制保证唯一合法形状。
             let from_id = EntityId::parse(&from)
                 .map_err(|e| KeysightError::ParseError(format!("from_id 解析失败: {e}")))?;
             let to_id = EntityId::parse(&to)

@@ -234,18 +234,17 @@ pub fn graph_set_pos(
     Ok(())
 }
 
-/// 连接两个 entity(from → to)。edge_type 透传字符串,server 侧 `user_draw_edge` parse
+/// 连接两个 entity(from → to)。Edge variant 由 server 端 `user_draw_edge`
+/// 从 `EntityId::parse(from)` 的 kind 推导,wire 不传 edge_type。
 pub fn graph_connect(
     client: &dyn WriteClient,
     from: &str,
     to: &str,
-    edge_type: &str,
 ) -> Result<(), CliError> {
     let params = serde_json::json!({
         "kind": "connect",
         "from": from,
         "to": to,
-        "edge_type": edge_type,
     });
     let result = client.post_rpc("mutate", params)?;
     println!("connect OK: {}", result);

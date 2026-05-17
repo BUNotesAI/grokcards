@@ -155,12 +155,10 @@ pub enum GraphCommand {
         #[arg(long, default_value = "wb_root")]
         wb: String,
     },
-    /// 连接两个 entity(from → to)
+    /// 连接两个 entity(from → to)。Edge variant 由 server 从 from EntityId 推导
     Connect {
         from: String,
         to: String,
-        #[arg(long, default_value = "link_to")]
-        edge_type: String,
     },
     /// 断开两个 entity 的连接
     Disconnect {
@@ -243,7 +241,7 @@ fn dispatch_graph_mutate(http: &HttpClient, cmd: GraphCommand) -> Result<(), Cli
         GraphCommand::NoteUpdate { id, title, content, color } => commands::graph_note_update(http, &id, title.as_deref(), content.as_deref(), color.as_deref()),
         GraphCommand::AliasCreate { card_id, wb } => commands::graph_alias_create(http, &wb, &card_id),
         GraphCommand::SetPos { entity_id, x, y, wb } => commands::graph_set_pos(http, &wb, &entity_id, x, y),
-        GraphCommand::Connect { from, to, edge_type } => commands::graph_connect(http, &from, &to, &edge_type),
+        GraphCommand::Connect { from, to } => commands::graph_connect(http, &from, &to),
         GraphCommand::Disconnect { from, to, edge_type } => commands::graph_disconnect(http, &from, &to, &edge_type),
         GraphCommand::SectionAdd { section_id, entity_id } => commands::graph_section_add(http, &section_id, &entity_id),
         GraphCommand::SectionMove { section_id, target_wb } => commands::graph_section_move(http, &section_id, &target_wb),

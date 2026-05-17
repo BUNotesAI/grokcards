@@ -23,17 +23,20 @@ use serde::{Deserialize, Serialize};
 /// | `NoteUpdate` | `NoteStore::update(id, title?, content?, color?)` | No |
 /// | `AliasCreate` | `AliasStore::create(wb, card_id)` | Yes |
 /// | `SetPos` | `LayoutStore::set_position(wb, entity_id, x, y)` | No |
-/// | `Connect` | `user_draw_edge(from, to, edge_type.parse()?)` | No |
+/// | `Connect` | `user_draw_edge(EntityId::parse(from)?, EntityId::parse(to)?)` | No |
 /// | `Disconnect` | `EntityGraph::disconnect(from, to, edge_type.parse()?)` | No |
 /// | `SectionAdd` | `SectionStore::add_member(section_id, entity_id)` | No |
 /// | `SectionMove` | `SectionStore::move_to_whiteboard(section_id, target_wb)` | No |
 ///
-/// ## Design note — connect/disconnect 字符串透传
+/// ## Design note — Connect 由 EntityId 推导,Disconnect 仍 stringly-typed
 ///
-/// `edge_type: String` 在 CLI 侧原样透传,server 侧 6.2b dispatcher 用
-/// `EdgeType::from_str` parse 为 typed `Edge` 判别联合后再调 `user_draw_edge` /
-/// `EntityGraph::disconnect`(domain `disconnect` API 本身是 stringly-typed,
-/// 注释说 "子阶段 2a 保留旧字符串签名,子阶段 2b 可统一升级")。
+/// `Connect`: wire 只传 `from` / `to`。Edge variant 由 `EntityId::parse` 得到的
+/// kind 唯一决定(Card/Note/Alias/Question → 对应 `*Link` 变体;Section/Task →
+/// `ConnectionNotAllowed`),无需调用方判别。
+///
+/// `Disconnect`: 仍透传 `edge_type: String`,server 侧 `EdgeType::from_db_str`
+/// parse(domain `EntityGraph::disconnect` API 仍是 stringly-typed,子阶段统一
+/// 升级待 D Theme 后再做)。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum MutateParams {
@@ -73,7 +76,6 @@ pub enum MutateParams {
     Connect {
         from: String,
         to: String,
-        edge_type: String,
     },
     Disconnect {
         from: String,
@@ -165,13 +167,13 @@ mod tests {
         assert_eq!(j["y"], -50.25);
     }
 
-    /// `Connect` 接受字符串 edge_type(server dispatcher 侧 parse)
+    /// `Connect` wire shape 不含 edge_type:Edge variant 由 EntityId 推导,
+    /// 字段已退役。CLI / TS 构造时只需 from + to。
     #[test]
-    fn test_mutate_params_connect_edge_type_stringly_typed() {
+    fn test_mutate_params_connect_wire_has_no_edge_type() {
         let params = MutateParams::Connect {
             from: "note_aaa".into(),
             to: "card_bbb".into(),
-            edge_type: "note_link".into(),
         };
         let j = serde_json::to_value(&params).unwrap();
         assert_eq!(
@@ -180,9 +182,9 @@ mod tests {
                 "kind": "connect",
                 "from": "note_aaa",
                 "to": "card_bbb",
-                "edge_type": "note_link",
             })
         );
+        assert!(j.get("edge_type").is_none(), "edge_type 应已从 wire 移除");
     }
 
     /// 所有 9 kind 字符串 round-trip 稳定(避免 variant rename 悄悄破协议)
@@ -235,7 +237,6 @@ mod tests {
                 MutateParams::Connect {
                     from: "a".into(),
                     to: "b".into(),
-                    edge_type: "link_to".into(),
                 },
                 "connect",
             ),

@@ -256,9 +256,7 @@ pub fn parse_task_checklist_with_positions(
 /// - checkbox 后必须恰好一个空格
 /// - text 必须非空(trim 后)
 fn parse_checklist_line(line: &str) -> Option<Subtask> {
-    // 必须以 "- [" 起头(避免前置空白被允许)
     let rest = line.strip_prefix("- [")?;
-    // 接下来是 ` ` / `x` / `X` 之一,然后是 `]`
     let (marker, after_bracket) = {
         let mut chars = rest.chars();
         let first = chars.next()?;
@@ -273,7 +271,6 @@ fn parse_checklist_line(line: &str) -> Option<Subtask> {
         'x' | 'X' => true,
         _ => return None,
     };
-    // `]` 后必须恰好一个空格,然后是非空 text
     let text = after_bracket.strip_prefix(' ')?;
     let trimmed = text.trim();
     if trimmed.is_empty() {
