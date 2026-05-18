@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
-import type { WhiteboardId } from "@/bindings";
+import type { NoteId, WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -40,7 +40,7 @@ export function useNoteActions(whiteboardId?: string) {
       content: string | null,
       color: string | null,
     ) => {
-      await unwrapCommand(commands.noteUpdate(id, title, content, color));
+      await unwrapCommand(commands.noteUpdate(id as NoteId, title, content, color));
       invalidate();
     },
     [invalidate],
@@ -48,7 +48,7 @@ export function useNoteActions(whiteboardId?: string) {
 
   const remove = useCallback(
     async (id: string) => {
-      await unwrapCommand(commands.noteDelete(id));
+      await unwrapCommand(commands.noteDelete(id as NoteId));
       invalidate();
     },
     [invalidate],

@@ -7,7 +7,7 @@ use super::domain::alias::{AliasStore, SqliteAliasStore};
 use super::domain::card::{CardStore, SqliteCardStore};
 use super::domain::edge::{user_draw_edge, Edge, EntityId};
 use super::domain::entity::{EntityGraph, SqliteEntityGraph};
-use super::domain::id::{CardId, WhiteboardId};
+use super::domain::id::{CardId, NoteId, WhiteboardId};
 use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
@@ -798,7 +798,7 @@ pub fn question_delete(
 /// 按 ID 查询单个 note。
 #[tauri::command]
 #[specta::specta]
-pub fn note_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<GraphNote, AppError> {
+pub fn note_get(state: State<'_, KeysightRuntimeState>, id: NoteId) -> Result<GraphNote, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
@@ -871,7 +871,7 @@ pub fn note_create(
 /// - [`note_create`] — 创建（逆操作）
 #[tauri::command]
 #[specta::specta]
-pub fn note_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+pub fn note_delete(state: State<'_, KeysightRuntimeState>, id: NoteId) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
@@ -897,7 +897,7 @@ pub fn note_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result
 #[specta::specta]
 pub fn note_update(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: NoteId,
     title: Option<String>,
     content: Option<String>,
     color: Option<String>,
@@ -1180,7 +1180,7 @@ pub fn entity_connect(
         }
         Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
             let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
-            store.sync_links_to_file(from.as_str()).map_err(AppError::from)?;
+            store.sync_links_to_file(from).map_err(AppError::from)?;
         }
         Edge::AliasLink { .. } => {
             // alias 无独立文件内容(继承 owning card),不 sync
@@ -1283,7 +1283,12 @@ pub fn entity_disconnect(
         store.sync_edges_to_file(&card_id).map_err(AppError::from)?;
     } else if from_id.starts_with("note_") && edge_type == EdgeType::NoteLink {
         let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
-        store.sync_links_to_file(&from_id).map_err(AppError::from)?;
+        // 同 card 分支:prefix-checked,跨 crate parse 重校验,
+        // O(starts_with) 开销可忽略,不开放 new_unchecked API 表面;失败走 propagate。
+        let note_id = NoteId::parse(from_id.clone()).map_err(|e| AppError::Keysight {
+            message: format!("内部不变量:from_id 已 prefix-check 为 note_ 但 parse 失败: {e}"),
+        })?;
+        store.sync_links_to_file(&note_id).map_err(AppError::from)?;
     }
 
     Ok(())

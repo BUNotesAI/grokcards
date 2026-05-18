@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use rusqlite::{Connection, OptionalExtension};
 
 use crate::domain::edge::EntityId;
-use crate::domain::id::WhiteboardId;
+use crate::domain::id::{NoteId, WhiteboardId};
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::{GraphNote, NoteFileMigrationReport};
@@ -16,9 +16,9 @@ use super::sync;
 /// 笔记存储契约。
 pub trait NoteStore {
     fn create(&self, whiteboard_id: &WhiteboardId, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError>;
-    fn delete(&self, id: &str) -> Result<(), KeysightError>;
-    fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
-    fn get(&self, id: &str) -> Result<GraphNote, KeysightError>;
+    fn delete(&self, id: &NoteId) -> Result<(), KeysightError>;
+    fn update(&self, id: &NoteId, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
+    fn get(&self, id: &NoteId) -> Result<GraphNote, KeysightError>;
     fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<GraphNote>, KeysightError>;
     /// Phase 6.1 新增 — 按 file_path 精确匹配返 0..N 条 notes(对齐 `CardStore::query_by_file` 形状)
     fn query_by_file(&self, file_path: &str) -> Result<Vec<GraphNote>, KeysightError>;
@@ -38,7 +38,7 @@ struct NoteSnapshot {
 }
 
 struct NoteFileState<'a> {
-    id: &'a str,
+    id: &'a NoteId,
     whiteboard_id: &'a WhiteboardId,
     title: &'a str,
     content: &'a str,
@@ -78,16 +78,17 @@ impl<'a> SqliteNoteStore<'a> {
             .ok_or_else(|| KeysightError::FileError(format!("{op} 需要 VaultFs")))
     }
 
-    fn current_snapshot(&self, id: &str) -> Result<NoteSnapshot, KeysightError> {
+    fn current_snapshot(&self, id: &NoteId) -> Result<NoteSnapshot, KeysightError> {
+        let id_str = id.as_str();
         let row: Option<(String, String, Option<String>, Option<String>)> = self
             .conn
             .query_row(
                 "SELECT whiteboard_id, title, color, file_path FROM entities WHERE id = ?1 AND kind = 'note'",
-                [id],
+                [id_str],
                 |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?)),
             )
             .optional()?;
-        let (whiteboard_id, title, color, file_path) = row.ok_or_else(|| KeysightError::NotFound(id.to_string()))?;
+        let (whiteboard_id, title, color, file_path) = row.ok_or_else(|| KeysightError::NotFound(id_str.to_string()))?;
         // DB schema 已 invariant 保证 wb_id 合法,走 new_unchecked。
         let whiteboard_id = WhiteboardId::new_unchecked(whiteboard_id);
         let note = self.get(id)?;
@@ -109,7 +110,7 @@ impl<'a> SqliteNoteStore<'a> {
             state.file_path,
         );
         let markdown = render_note_markdown(NoteRenderInputs {
-            id: state.id,
+            id: state.id.as_str(),
             title: state.title,
             content: state.content,
             color: state.color,
@@ -132,7 +133,7 @@ impl<'a> SqliteNoteStore<'a> {
         Ok(relative_path)
     }
 
-    pub fn sync_links_to_file(&self, id: &str) -> Result<(), KeysightError> {
+    pub fn sync_links_to_file(&self, id: &NoteId) -> Result<(), KeysightError> {
         let snapshot = self.current_snapshot(id)?;
         self.rewrite_note_file_from_state(NoteFileState {
             id,
@@ -154,13 +155,14 @@ impl<'a> SqliteNoteStore<'a> {
 impl NoteStore for SqliteNoteStore<'_> {
     fn create(&self, whiteboard_id: &WhiteboardId, title: &str, content: Option<&str>, color: Option<&str>) -> Result<GraphNote, KeysightError> {
         let title = validate_title(title)?;
-        let note_id = id::gen_note_id();
+        // gen_note_id 新生成,已带 note_ 前缀,走 new_unchecked 收口为 NoteId
+        let note_id = NoteId::new_unchecked(id::gen_note_id());
         let normalized_content = content
             .map(parser::normalize_legacy_toggle_syntax)
             .unwrap_or_default();
         let relative_path = note_relative_path(whiteboard_id, &note_id, title);
         let markdown = render_note_markdown(NoteRenderInputs {
-            id: &note_id,
+            id: note_id.as_str(),
             title,
             content: &normalized_content,
             color,
@@ -177,12 +179,13 @@ impl NoteStore for SqliteNoteStore<'_> {
         self.get(&note_id)
     }
 
-    fn delete(&self, id: &str) -> Result<(), KeysightError> {
+    fn delete(&self, id: &NoteId) -> Result<(), KeysightError> {
+        let id_str = id.as_str();
         let file_path: Option<String> = self
             .conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'note'",
-                [id],
+                [id_str],
                 |r| r.get(0),
             )
             .optional()?;
@@ -193,13 +196,13 @@ impl NoteStore for SqliteNoteStore<'_> {
             return Ok(());
         }
 
-        self.conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM entities WHERE id = ?1", [id])?;
+        self.conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id_str])?;
+        self.conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id_str])?;
+        self.conn.execute("DELETE FROM entities WHERE id = ?1", [id_str])?;
         Ok(())
     }
 
-    fn update(&self, id: &str, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError> {
+    fn update(&self, id: &NoteId, title: Option<&str>, content: Option<&str>, color: Option<&str>) -> Result<(), KeysightError> {
         let snapshot = self.current_snapshot(id)?;
         let next_title = match title {
             Some(value) => validate_title(value)?,
@@ -230,13 +233,14 @@ impl NoteStore for SqliteNoteStore<'_> {
         Ok(())
     }
 
-    fn get(&self, id: &str) -> Result<GraphNote, KeysightError> {
+    fn get(&self, id: &NoteId) -> Result<GraphNote, KeysightError> {
+        let id_str = id.as_str();
         let (title, raw_content, color): (String, String, Option<String>) = self.conn.query_row(
             "SELECT title, COALESCE(content, ''), color FROM entities WHERE id = ?1 AND kind = 'note'",
-            [id],
+            [id_str],
             |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?)),
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
             other => KeysightError::Database(other),
         })?;
         let content = parser::normalize_legacy_toggle_syntax(&raw_content)
@@ -246,7 +250,7 @@ impl NoteStore for SqliteNoteStore<'_> {
         let mut stmt = self.conn.prepare(
             "SELECT to_id FROM edges WHERE from_id = ?1 AND edge_type = 'note_link'"
         )?;
-        let targets: Vec<String> = stmt.query_map([id], |r| r.get(0))?
+        let targets: Vec<String> = stmt.query_map([id_str], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         // 穷尽 match EntityId 所有 6 个 variant —— 禁止 `_` 通配,踩坑样例 1
@@ -275,7 +279,7 @@ impl NoteStore for SqliteNoteStore<'_> {
         }
 
         Ok(GraphNote {
-            id: id.to_string(),
+            id: id_str.to_string(),
             title,
             content,
             color,
@@ -293,7 +297,10 @@ impl NoteStore for SqliteNoteStore<'_> {
         )?;
         let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ids.iter().map(|id| self.get(id)).collect()
+        // DB read 路径,kind='note' 已保证 note_ 前缀,走 new_unchecked
+        ids.into_iter()
+            .map(|id| self.get(&NoteId::new_unchecked(id)))
+            .collect()
     }
 
     fn query_by_file(&self, file_path: &str) -> Result<Vec<GraphNote>, KeysightError> {
@@ -302,7 +309,10 @@ impl NoteStore for SqliteNoteStore<'_> {
         )?;
         let ids: Vec<String> = stmt.query_map([file_path], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ids.iter().map(|id| self.get(id)).collect()
+        // DB read 路径,kind='note' 已保证 note_ 前缀,走 new_unchecked
+        ids.into_iter()
+            .map(|id| self.get(&NoteId::new_unchecked(id)))
+            .collect()
     }
 }
 
@@ -317,7 +327,10 @@ pub fn query_all_cross_whiteboard(conn: &Connection) -> Result<Vec<GraphNote>, K
     let ids: Vec<String> = stmt.query_map([], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
     let store = SqliteNoteStore::new(conn);
-    ids.iter().map(|id| store.get(id)).collect()
+    // DB read 路径,kind='note' 已保证 note_ 前缀,走 new_unchecked
+    ids.into_iter()
+        .map(|id| store.get(&NoteId::new_unchecked(id)))
+        .collect()
 }
 
 /// 一次性把 DB-only note 导出为 `whiteboard/` 下的 markdown 文件，并同时备份 DB 与 whiteboard 目录。
@@ -352,7 +365,9 @@ pub fn migrate_db_notes_to_files(
     let mut skipped_notes = 0u32;
 
     for id in ids {
-        match store.sync_links_to_file(&id) {
+        // DB read 路径,kind='note' 已保证 note_ 前缀,走 new_unchecked
+        let note_id = NoteId::new_unchecked(id);
+        match store.sync_links_to_file(&note_id) {
             Ok(()) => migrated_notes += 1,
             Err(KeysightError::NotFound(_)) => skipped_notes += 1,
             Err(err) => return Err(err),
@@ -415,7 +430,7 @@ fn sanitize_file_component(text: &str) -> String {
 
 fn desired_note_relative_path(
     whiteboard_id: &WhiteboardId,
-    note_id: &str,
+    note_id: &NoteId,
     title: &str,
     current_file_path: Option<&str>,
 ) -> String {
@@ -432,11 +447,11 @@ fn desired_note_relative_path(
     }
 }
 
-fn note_relative_path(whiteboard_id: &WhiteboardId, note_id: &str, title: &str) -> String {
+fn note_relative_path(whiteboard_id: &WhiteboardId, note_id: &NoteId, title: &str) -> String {
     format!(
         "{}/{} 【NOTE】{}.md",
         whiteboard_relative_dir(whiteboard_id),
-        note_id,
+        note_id.as_str(),
         sanitize_file_component(title),
     )
 }
@@ -558,6 +573,13 @@ mod tests {
         conn
     }
 
+    /// 测试 fixture 桥接:把 String / &str id 包成 NoteId。W3 渗透后 trait
+    /// 方法签名要求 `&NoteId`,fixture 数据来自 `store.create(...).id`(String),
+    /// 这里集中转换避免每处重复 NoteId::parse(...).unwrap()。
+    fn nid(s: &str) -> NoteId {
+        NoteId::parse(s).expect("test fixture note id 应合法")
+    }
+
     fn temp_root(prefix: &str) -> PathBuf {
         let path = std::env::temp_dir().join(format!(
             "super_tauri_note_tests_{}_{}",
@@ -599,10 +621,10 @@ mod tests {
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
             .unwrap();
 
-        store.delete(&note.id).unwrap();
+        store.delete(&nid(&note.id)).unwrap();
 
         assert!(vfs.get_file(&file_path).is_none());
-        assert!(matches!(store.get(&note.id), Err(KeysightError::NotFound(_))));
+        assert!(matches!(store.get(&nid(&note.id)), Err(KeysightError::NotFound(_))));
     }
 
     #[test]
@@ -612,9 +634,9 @@ mod tests {
         let store = SqliteNoteStore::with_vault_fs(&conn, &vfs);
         let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Old", Some("old"), None).unwrap();
 
-        store.update(&note.id, Some("New"), Some("new content"), Some("blue")).unwrap();
+        store.update(&nid(&note.id), Some("New"), Some("new content"), Some("blue")).unwrap();
 
-        let loaded = store.get(&note.id).unwrap();
+        let loaded = store.get(&nid(&note.id)).unwrap();
         assert_eq!(loaded.title, "New");
         assert_eq!(loaded.content, "new content");
         assert_eq!(loaded.color, Some("blue".to_string()));
@@ -655,7 +677,7 @@ mod tests {
             .unwrap();
 
         store
-            .update(&note.id, Some("**Renamed** / Note"), None, None)
+            .update(&nid(&note.id), Some("**Renamed** / Note"), None, None)
             .unwrap();
 
         let new_file_path: String = conn
@@ -675,14 +697,14 @@ mod tests {
         let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Old", Some("old"), None).unwrap();
         store
             .update(
-                &note.id,
+                &nid(&note.id),
                 None,
                 Some("<details>\n<summary>折叠标题</summary>\n\n这里是详细内容\n</details>"),
                 None,
             )
             .unwrap();
 
-        let loaded = store.get(&note.id).unwrap();
+        let loaded = store.get(&nid(&note.id)).unwrap();
         assert_eq!(loaded.content, "?>> 折叠标题\n这里是详细内容\n?<<");
     }
 
@@ -700,7 +722,7 @@ mod tests {
         ).unwrap();
 
         let store = SqliteNoteStore::new(&conn);
-        let loaded = store.get("note_toggle001").unwrap();
+        let loaded = store.get(&nid("note_toggle001")).unwrap();
         assert_eq!(loaded.content, "?>> 折叠标题\n这里是详细内容\n?<<");
     }
 
@@ -776,7 +798,7 @@ mod tests {
         )
         .unwrap();
 
-        store.sync_links_to_file(&note.id).unwrap();
+        store.sync_links_to_file(&nid(&note.id)).unwrap();
 
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
@@ -803,7 +825,7 @@ mod tests {
         )
         .unwrap();
 
-        store.sync_links_to_file(&note.id).unwrap();
+        store.sync_links_to_file(&nid(&note.id)).unwrap();
 
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
@@ -822,10 +844,10 @@ mod tests {
         let note = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Color", Some("body"), None).unwrap();
 
         store
-            .update(&note.id, None, None, Some("#fff8b3"))
+            .update(&nid(&note.id), None, None, Some("#fff8b3"))
             .unwrap();
 
-        let loaded = store.get(&note.id).unwrap();
+        let loaded = store.get(&nid(&note.id)).unwrap();
         assert_eq!(loaded.color, Some("#fff8b3".to_string()));
         let file_path: String = conn
             .query_row("SELECT file_path FROM entities WHERE id = ?1", [&note.id], |r| r.get(0))
@@ -905,7 +927,7 @@ mod tests {
         graph.connect(&to_question).unwrap();
         graph.connect(&to_task).unwrap();
 
-        let loaded = store.get(&note.id).unwrap();
+        let loaded = store.get(&nid(&note.id)).unwrap();
         assert_eq!(
             loaded.linked_question_ids.clone().unwrap(),
             vec!["q_abc12345".to_string()],
@@ -938,7 +960,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = store.get(&note.id).unwrap_err();
+        let err = store.get(&nid(&note.id)).unwrap_err();
         assert!(
             matches!(err, KeysightError::ParseError(_)),
             "未知 prefix 应让 reader 返 ParseError 不允许 silent drop,实际: {err:?}"

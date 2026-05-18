@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::id::{CardId, WhiteboardId};
+use crate::domain::id::{CardId, NoteId, WhiteboardId};
 
 /// 写命令请求参数 — tagged enum,wire 层 discriminator 字段为 `kind`(kebab-case)。
 ///
@@ -57,7 +57,7 @@ pub enum MutateParams {
         color: Option<String>,
     },
     NoteUpdate {
-        id: String,
+        id: NoteId,
         #[serde(default)]
         title: Option<String>,
         #[serde(default)]
@@ -212,7 +212,7 @@ mod tests {
             ),
             (
                 MutateParams::NoteUpdate {
-                    id: "n".into(),
+                    id: NoteId::parse("note_n0000001").unwrap(),
                     title: None,
                     content: None,
                     color: None,

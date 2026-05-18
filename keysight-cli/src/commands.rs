@@ -8,7 +8,7 @@
 //! 所有业务规则由 server 侧 `MutateParams` dispatcher 判定(Phase 6.2b)。
 
 use keysight_core::domain::card::{CardStore, SqliteCardStore};
-use keysight_core::domain::id::{CardId, WhiteboardId};
+use keysight_core::domain::id::{CardId, NoteId, WhiteboardId};
 use keysight_core::domain::note::{self, NoteStore, SqliteNoteStore};
 use keysight_core::domain::overview;
 
@@ -132,7 +132,8 @@ pub fn graph_notes(client: &SqliteReadClient, wb: &str) -> Result<(), CliError> 
 pub fn graph_note(client: &SqliteReadClient, id: &str, _wb: &str) -> Result<(), CliError> {
     // 注:--wb 参数冗余(entity 行自带 whiteboard_id);接受但不 validate
     let store = SqliteNoteStore::new(&client.conn);
-    let n = store.get(id)?;
+    let note_id = NoteId::parse(id).map_err(|e| CliError::Query(format!("非法 note id: {e}")))?;
+    let n = store.get(&note_id)?;
     println!("Note: {} [{}]", n.title, n.id);
     println!("{}", n.content);
     Ok(())

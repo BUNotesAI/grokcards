@@ -17,7 +17,7 @@ use keysight_core::domain::alias::{AliasStore, SqliteAliasStore};
 use keysight_core::domain::card::SqliteCardStore;
 use keysight_core::domain::edge::{user_draw_edge, Edge, EntityId};
 use keysight_core::domain::entity::{EntityGraph, SqliteEntityGraph};
-use keysight_core::domain::id::{CardId, WhiteboardId};
+use keysight_core::domain::id::{CardId, NoteId, WhiteboardId};
 use keysight_core::domain::layout::{LayoutStore, SqliteLayoutStore};
 use keysight_core::domain::note::{NoteStore, SqliteNoteStore};
 use keysight_core::domain::question;
@@ -144,13 +144,13 @@ fn op_note_create(
 fn op_note_update(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    id: String,
+    id: NoteId,
     title: Option<&str>,
     content: Option<&str>,
     color: Option<&str>,
 ) -> OpResult {
     SqliteNoteStore::with_vault_fs(conn, vault_fs).update(&id, title, content, color)?;
-    Ok((None, json!({ "kind": "note", "id": id })))
+    Ok((None, json!({ "kind": "note", "id": id.as_str() })))
 }
 
 fn op_alias_create(conn: &Connection, wb: &WhiteboardId, card_id: &CardId) -> OpResult {
@@ -204,7 +204,7 @@ fn sync_source_file_for_edge(
             SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(from)?;
         }
         Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
-            SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(from.as_str())?;
+            SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(from)?;
         }
         Edge::AliasLink { .. } => {
             // alias 无独立文件内容(继承 owning card),不 sync
@@ -241,7 +241,12 @@ fn op_disconnect(
         })?;
         SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(&card_id)?;
     } else if from.starts_with("note_") && et == EdgeType::NoteLink {
-        SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(&from)?;
+        // 同 op_disconnect card 分支:prefix-checked,跨 crate parse 重校验,
+        // O(starts_with) 开销可忽略,不开放 new_unchecked API 表面;失败走 propagate。
+        let note_id = NoteId::parse(from.clone()).map_err(|e| {
+            KeysightError::ParseError(format!("内部不变量:from 已 prefix-check 为 note_ 但 parse 失败: {e}"))
+        })?;
+        SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(&note_id)?;
     }
 
     Ok((
@@ -394,7 +399,7 @@ mod tests {
 
         // NoteUpdate 用不存在的 id,内部 current_snapshot 会 NotFound
         let params = MutateParams::NoteUpdate {
-            id: "note_deadbeef".to_string(),
+            id: NoteId::parse("note_deadbeef").unwrap(),
             title: Some("X".to_string()),
             content: None,
             color: None,
