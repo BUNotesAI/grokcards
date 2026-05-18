@@ -2,7 +2,7 @@
 use rusqlite::types::{FromSql, FromSqlError, FromSqlResult, ToSql, ToSqlOutput, ValueRef};
 use rusqlite::{params, Connection, OptionalExtension};
 
-use crate::domain::id::WhiteboardId;
+use crate::domain::id::{TaskId, WhiteboardId};
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::{Position, Subtask, TaskEntity, TaskStatus};
@@ -321,7 +321,7 @@ fn render_checklist_line(item: &Subtask) -> String {
 /// - `old_body`: 当前 task body(通常来自 `current.content` merge base)
 /// - `new_subtasks`: TS 侧传来的新 subtasks 列表
 pub fn render_subtasks_into_body(
-    task_id: &str,
+    task_id: &TaskId,
     old_body: &str,
     new_subtasks: &[Subtask],
 ) -> Result<String, KeysightError> {
@@ -369,7 +369,7 @@ pub fn render_subtasks_into_body(
             }
         }
         return Err(KeysightError::MultiBlockChecklist {
-            task_id: task_id.to_string(),
+            task_id: task_id.as_str().to_string(),
             block_count,
         });
     }
@@ -468,11 +468,11 @@ fn sanitize_file_component(text: &str) -> String {
 /// 拼接 Task 文件的 vault 相对路径。
 ///
 /// 格式:`whiteboard/projects/{project}/{task_id} 【TASK】{sanitized_title}.md`
-fn task_relative_path(project: &ProjectName, task_id: &str, title: &str) -> String {
+fn task_relative_path(project: &ProjectName, task_id: &TaskId, title: &str) -> String {
     format!(
         "whiteboard/projects/{}/{} 【TASK】{}.md",
         project.as_str(),
-        task_id,
+        task_id.as_str(),
         sanitize_file_component(title),
     )
 }
@@ -480,7 +480,7 @@ fn task_relative_path(project: &ProjectName, task_id: &str, title: &str) -> Stri
 /// 计算 Task rename 时的目标路径。保留原路径如果它与 desired 一致。
 fn desired_task_relative_path(
     project: &ProjectName,
-    task_id: &str,
+    task_id: &TaskId,
     title: &str,
     current_file_path: Option<&str>,
 ) -> String {
@@ -496,7 +496,7 @@ fn desired_task_relative_path(
 /// Frontmatter 字段:`type: project-task` / `id` / `status` / `area?` / `project` / `color?`
 /// 正文开头:`# 【TASK】{title}`
 fn render_task_markdown(
-    task_id: &str,
+    task_id: &TaskId,
     title: &str,
     content: &str,
     status: TaskStatus,
@@ -504,11 +504,12 @@ fn render_task_markdown(
     area: Option<&str>,
     color: Option<&str>,
 ) -> String {
+    let task_id_str = task_id.as_str();
     let body = content.trim_end();
     let mut lines = vec![
         "---".to_string(),
         "type: project-task".to_string(),
-        format!("id: {task_id}"),
+        format!("id: {task_id_str}"),
         format!("status: {}", task_status_to_str(status)),
     ];
     if let Some(area) = area.filter(|value| !value.is_empty()) {
@@ -539,14 +540,15 @@ fn render_task_markdown(
 /// 按 id 查询单个 Task(跨 entities + task_fields 联合查询)。
 pub fn get(
     conn: &Connection,
-    id: &str,
+    id: &TaskId,
 ) -> Result<TaskEntity, KeysightError> {
+    let id_str = id.as_str();
     conn.query_row(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, \
          t.status, t.area, t.project, e.color \
          FROM entities e JOIN task_fields t ON e.id = t.entity_id \
          WHERE e.id = ?1 AND e.kind = 'task'",
-        [id],
+        [id_str],
         |r| {
             let content = r.get::<_, String>(2)?.trim_end_matches('\n').to_string();
             let subtasks = parse_task_checklist(&content);
@@ -564,7 +566,7 @@ pub fn get(
         },
     )
     .map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+        rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
         other => extract_keysight_err(other),
     })
 }
@@ -746,7 +748,8 @@ pub fn create(
     input: TaskCreateInput<'_>,
 ) -> Result<TaskEntity, KeysightError> {
     let title = validate_title(input.title)?;
-    let task_id = id::gen_task_id();
+    // gen_task_id 新生成,已带 task_ 前缀,走 new_unchecked 收口为 TaskId
+    let task_id = TaskId::new_unchecked(id::gen_task_id());
     let file_path = task_relative_path(project, &task_id, title);
     let body = input.content.unwrap_or_default();
     let markdown = render_task_markdown(
@@ -769,7 +772,7 @@ pub fn create(
     };
     conn.execute(
         "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
-        params![&task_id, whiteboard_id.as_str(), position.x, position.y],
+        params![task_id.as_str(), whiteboard_id.as_str(), position.x, position.y],
     )?;
     get(conn, &task_id)
 }
@@ -800,14 +803,15 @@ pub fn create(
 pub fn update(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    id: &str,
+    id: &TaskId,
     input: TaskUpdateInput<'_>,
 ) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let current = get(conn, id)?;
     let file_path: Option<String> = conn
         .query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'task'",
-            [id],
+            [id_str],
             |r| r.get(0),
         )
         .optional()?;
@@ -816,7 +820,7 @@ pub fn update(
     let current_project_str = current
         .project
         .clone()
-        .ok_or_else(|| KeysightError::InvalidProjectName(format!("task {id} 缺 project")))?;
+        .ok_or_else(|| KeysightError::InvalidProjectName(format!("task {id_str} 缺 project")))?;
     let project = ProjectName::new(&current_project_str)?;
 
     // current.status 已是强类型 TaskStatus(FromSql 在 get() 里已严格解析,
@@ -887,12 +891,13 @@ pub fn update(
 pub fn delete(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    id: &str,
+    id: &TaskId,
 ) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let file_path: Option<String> = conn
         .query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'task'",
-            [id],
+            [id_str],
             |r| r.get(0),
         )
         .optional()?;
@@ -909,16 +914,16 @@ pub fn delete(
     // entity_tags / edges / entities_fts / section_members,导致 task 有外部
     // 关联时留下悬挂的 edge / fts 行 / section 成员记录。
     // 对齐 `sync::remove_file` 的完整清理列表。
-    let rows = conn.execute("DELETE FROM task_fields WHERE entity_id = ?1", [id])?;
+    let rows = conn.execute("DELETE FROM task_fields WHERE entity_id = ?1", [id_str])?;
     if rows == 0 {
-        return Err(KeysightError::NotFound(id.to_string()));
+        return Err(KeysightError::NotFound(id_str.to_string()));
     }
-    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", [id])?;
-    conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id])?;
-    conn.execute("DELETE FROM entities_fts WHERE id = ?1", [id])?;
-    conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
-    conn.execute("DELETE FROM section_members WHERE entity_id = ?1", [id])?;
-    conn.execute("DELETE FROM entities WHERE id = ?1", [id])?;
+    conn.execute("DELETE FROM entity_tags WHERE entity_id = ?1", [id_str])?;
+    conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id_str])?;
+    conn.execute("DELETE FROM entities_fts WHERE id = ?1", [id_str])?;
+    conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id_str])?;
+    conn.execute("DELETE FROM section_members WHERE entity_id = ?1", [id_str])?;
+    conn.execute("DELETE FROM entities WHERE id = ?1", [id_str])?;
     Ok(())
 }
 
@@ -929,15 +934,16 @@ pub fn delete(
 /// 快速更新任务状态(仅 DB,不回写文件 —— 有漂移风险,新代码用 `update`)。
 pub(super) fn transition_status(
     conn: &Connection,
-    id: &str,
+    id: &TaskId,
     status: &str,
 ) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let rows = conn.execute(
         "UPDATE task_fields SET status = ?1 WHERE entity_id = ?2",
-        params![status, id],
+        params![status, id_str],
     )?;
     if rows == 0 {
-        return Err(KeysightError::NotFound(id.to_string()));
+        return Err(KeysightError::NotFound(id_str.to_string()));
     }
     Ok(())
 }
@@ -947,6 +953,11 @@ mod tests {
     use super::*;
     use crate::db::init_db;
     use crate::vault_fs::MockVaultFs;
+
+    /// 测试 fixture 桥接:把 String / &str task id 包成 TaskId。
+    fn tid(s: &str) -> TaskId {
+        TaskId::parse(s).expect("test fixture task id 应合法")
+    }
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -1231,7 +1242,7 @@ mod tests {
     #[test]
     fn test_task_relative_path_format() {
         let project = ProjectName::new("super-tauri").unwrap();
-        let path = task_relative_path(&project, "task_abc12345", "Add login");
+        let path = task_relative_path(&project, &tid("task_abc12345"), "Add login");
         assert_eq!(
             path,
             "whiteboard/projects/super-tauri/task_abc12345 【TASK】Add login.md"
@@ -1241,7 +1252,7 @@ mod tests {
     #[test]
     fn test_task_relative_path_sanitizes_title() {
         let project = ProjectName::new("super-tauri").unwrap();
-        let path = task_relative_path(&project, "task_x", "**Add** / Login?");
+        let path = task_relative_path(&project, &tid("task_x"), "**Add** / Login?");
         assert!(path.ends_with("task_x 【TASK】Add _ Login_.md"));
     }
 
@@ -1249,7 +1260,7 @@ mod tests {
     fn test_render_task_markdown_happy_path() {
         let project = ProjectName::new("super-tauri").unwrap();
         let md = render_task_markdown(
-            "task_abc12345",
+            &tid("task_abc12345"),
             "Add login",
             "Body with\n- [ ] subtask",
             TaskStatus::Active,
@@ -1271,7 +1282,7 @@ mod tests {
     fn test_render_task_markdown_no_optional_fields() {
         let project = ProjectName::new("super-tauri").unwrap();
         let md = render_task_markdown(
-            "task_xyz",
+            &tid("task_xyz"),
             "Simple",
             "",
             TaskStatus::Next,
@@ -1341,7 +1352,7 @@ mod tests {
         let file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&task.id],
+                [&tid(&task.id)],
                 |r| r.get(0),
             )
             .unwrap();
@@ -1375,7 +1386,7 @@ mod tests {
         let file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&task.id],
+                [&tid(&task.id)],
                 |r| r.get(0),
             )
             .unwrap();
@@ -1414,7 +1425,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = get(&conn, &task.id).unwrap();
+        let loaded = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(
             loaded.subtasks,
             vec![
@@ -1442,7 +1453,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = get(&conn, &task.id).unwrap();
+        let loaded = get(&conn, &tid(&task.id)).unwrap();
         assert!(loaded.subtasks.is_empty());
     }
 
@@ -1519,7 +1530,7 @@ mod tests {
     /// 空 body + 空 subtasks → 返回空字符串原样。
     #[test]
     fn test_render_subtasks_empty_body_empty_subtasks() {
-        let out = render_subtasks_into_body("task_id", "", &[]).unwrap();
+        let out = render_subtasks_into_body(&tid("task_id00001"), "", &[]).unwrap();
         assert_eq!(out, "");
     }
 
@@ -1527,7 +1538,7 @@ mod tests {
     #[test]
     fn test_render_subtasks_empty_body_with_subtasks() {
         let out = render_subtasks_into_body(
-            "task_id",
+            &tid("task_id00001"),
             "",
             &[subtask("first", false), subtask("second", true)],
         )
@@ -1539,7 +1550,7 @@ mod tests {
     #[test]
     fn test_render_subtasks_non_checklist_body_appends() {
         let out = render_subtasks_into_body(
-            "task_id",
+            &tid("task_id00001"),
             "free text\nline two",
             &[subtask("a", false)],
         )
@@ -1553,7 +1564,7 @@ mod tests {
     fn test_render_subtasks_single_block_replace() {
         let body = "intro\n- [ ] old one\n- [x] old two\nfooter";
         let new = [subtask("new a", false), subtask("new b", true)];
-        let out = render_subtasks_into_body("task_id", body, &new).unwrap();
+        let out = render_subtasks_into_body(&tid("task_id00001"), body, &new).unwrap();
         assert_eq!(out, "intro\n- [ ] new a\n- [x] new b\nfooter");
     }
 
@@ -1561,7 +1572,7 @@ mod tests {
     #[test]
     fn test_render_subtasks_single_block_clear() {
         let body = "intro\n- [ ] a\n- [x] b\nfooter";
-        let out = render_subtasks_into_body("task_id", body, &[]).unwrap();
+        let out = render_subtasks_into_body(&tid("task_id00001"), body, &[]).unwrap();
         assert_eq!(out, "intro\nfooter");
     }
 
@@ -1571,13 +1582,13 @@ mod tests {
         // line 0: "intro", 1: "- [ ] a", 2: "mid text", 3: "- [x] b", 4: "footer"
         // positions = [1, 3],len=2 != max-min+1=3 → 多 block
         let body = "intro\n- [ ] a\nmid text\n- [x] b\nfooter";
-        let result = render_subtasks_into_body("task_abc", body, &[subtask("new", false)]);
+        let result = render_subtasks_into_body(&tid("task_abc00001"), body, &[subtask("new", false)]);
         match result {
             Err(KeysightError::MultiBlockChecklist {
                 task_id,
                 block_count,
             }) => {
-                assert_eq!(task_id, "task_abc");
+                assert_eq!(task_id, "task_abc00001");
                 assert_eq!(block_count, 2);
             }
             other => panic!("expected MultiBlockChecklist, got {other:?}"),
@@ -1589,7 +1600,7 @@ mod tests {
     fn test_render_subtasks_three_blocks() {
         // lines 0-8: intro / item1 / text1 / item2 / text2 / item3 / text3 / item4 / end
         let body = "intro\n- [ ] a\ntext1\n- [ ] b\ntext2\n- [ ] c\ntext3\n- [ ] d\nend";
-        let result = render_subtasks_into_body("t", body, &[]);
+        let result = render_subtasks_into_body(&tid("task_t0000001"), body, &[]);
         match result {
             Err(KeysightError::MultiBlockChecklist { block_count, .. }) => {
                 assert_eq!(block_count, 4);
@@ -1603,9 +1614,9 @@ mod tests {
     fn test_render_subtasks_idempotent() {
         let body = "intro\n- [ ] a\n- [x] b\nfooter";
         let subs = parse_task_checklist(body);
-        let once = render_subtasks_into_body("t", body, &subs).unwrap();
+        let once = render_subtasks_into_body(&tid("task_t0000001"), body, &subs).unwrap();
         let subs2 = parse_task_checklist(&once);
-        let twice = render_subtasks_into_body("t", &once, &subs2).unwrap();
+        let twice = render_subtasks_into_body(&tid("task_t0000001"), &once, &subs2).unwrap();
         assert_eq!(once, twice);
     }
 
@@ -1615,7 +1626,7 @@ mod tests {
         let body = "- [X] capital";
         let subs = parse_task_checklist(body);
         assert_eq!(subs, vec![subtask("capital", true)]);
-        let rendered = render_subtasks_into_body("t", body, &subs).unwrap();
+        let rendered = render_subtasks_into_body(&tid("task_t0000001"), body, &subs).unwrap();
         assert_eq!(rendered, "- [x] capital");
     }
 
@@ -1643,18 +1654,18 @@ mod tests {
         .unwrap();
 
         // 模拟 command: get → render → update
-        let current = get(&conn, &task.id).unwrap();
+        let current = get(&conn, &tid(&task.id)).unwrap();
         let new_subs = vec![
             subtask("replaced 1", true),
             subtask("replaced 2", false),
             subtask("new 3", false),
         ];
         let new_body =
-            render_subtasks_into_body(&task.id, &current.content, &new_subs).unwrap();
+            render_subtasks_into_body(&tid(&task.id), &current.content, &new_subs).unwrap();
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 content: Some(&new_body),
                 ..task_update_defaults()
@@ -1662,7 +1673,7 @@ mod tests {
         )
         .unwrap();
 
-        let fresh = get(&conn, &task.id).unwrap();
+        let fresh = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(fresh.subtasks, new_subs);
         // 非 checklist 文本保留 —— "intro para" 和 "footer" 都还在
         assert!(fresh.content.contains("intro para"));
@@ -1686,12 +1697,12 @@ mod tests {
         )
         .unwrap();
 
-        let current = get(&conn, &task.id).unwrap();
-        let new_body = render_subtasks_into_body(&task.id, &current.content, &[]).unwrap();
+        let current = get(&conn, &tid(&task.id)).unwrap();
+        let new_body = render_subtasks_into_body(&tid(&task.id), &current.content, &[]).unwrap();
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 content: Some(&new_body),
                 ..task_update_defaults()
@@ -1699,7 +1710,7 @@ mod tests {
         )
         .unwrap();
 
-        let fresh = get(&conn, &task.id).unwrap();
+        let fresh = get(&conn, &tid(&task.id)).unwrap();
         assert!(fresh.subtasks.is_empty());
         assert!(fresh.content.contains("说明段"));
         assert!(fresh.content.contains("结尾段"));
@@ -1723,9 +1734,9 @@ mod tests {
         )
         .unwrap();
 
-        let current = get(&conn, &task.id).unwrap();
+        let current = get(&conn, &tid(&task.id)).unwrap();
         let result = render_subtasks_into_body(
-            &task.id,
+            &tid(&task.id),
             &current.content,
             &[subtask("new", false)],
         );
@@ -1735,7 +1746,7 @@ mod tests {
         ));
 
         // task 原数据未变
-        let unchanged = get(&conn, &task.id).unwrap();
+        let unchanged = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(unchanged.subtasks.len(), 2);
         assert_eq!(unchanged.subtasks[0].text, "a");
         assert_eq!(unchanged.subtasks[1].text, "b");
@@ -1758,14 +1769,14 @@ mod tests {
         )
         .unwrap();
 
-        let current = get(&conn, &task.id).unwrap();
+        let current = get(&conn, &tid(&task.id)).unwrap();
         let new_subs = vec![subtask("new item", true)];
         let new_body =
-            render_subtasks_into_body(&task.id, &current.content, &new_subs).unwrap();
+            render_subtasks_into_body(&tid(&task.id), &current.content, &new_subs).unwrap();
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 title: Some("New Title"),
                 content: Some(&new_body),
@@ -1774,7 +1785,7 @@ mod tests {
         )
         .unwrap();
 
-        let fresh = get(&conn, &task.id).unwrap();
+        let fresh = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(fresh.title, "New Title");
         assert_eq!(fresh.subtasks, new_subs);
     }
@@ -1798,7 +1809,7 @@ mod tests {
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 content: Some("New body"),
                 status: Some(TaskStatus::Active),
@@ -1807,7 +1818,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = get(&conn, &task.id).unwrap();
+        let loaded = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(loaded.content, "New body");
         assert_eq!(loaded.status, TaskStatus::Active);
         assert_eq!(loaded.title, "Original");
@@ -1822,7 +1833,7 @@ mod tests {
         let old_file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&task.id],
+                [&tid(&task.id)],
                 |r| r.get(0),
             )
             .unwrap();
@@ -1830,7 +1841,7 @@ mod tests {
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 title: Some("New Title"),
                 ..task_update_defaults()
@@ -1841,7 +1852,7 @@ mod tests {
         let new_file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&task.id],
+                [&tid(&task.id)],
                 |r| r.get(0),
             )
             .unwrap();
@@ -1861,7 +1872,7 @@ mod tests {
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 color: Some("#a0c4ff"),
                 ..task_update_defaults()
@@ -1869,7 +1880,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = get(&conn, &task.id).unwrap();
+        let loaded = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(loaded.color, Some("#a0c4ff".to_string()));
     }
 
@@ -1896,7 +1907,7 @@ mod tests {
         let result = update(
             &conn,
             &vfs,
-            "task_legacy0001",
+            &tid("task_legacy0001"),
             TaskUpdateInput {
                 title: Some("Renamed"),
                 ..task_update_defaults()
@@ -1942,7 +1953,7 @@ mod tests {
         update(
             &conn,
             &vfs,
-            &task.id,
+            &tid(&task.id),
             TaskUpdateInput {
                 color: Some("default"),
                 ..task_update_defaults()
@@ -1950,14 +1961,14 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = get(&conn, &task.id).unwrap();
+        let loaded = get(&conn, &tid(&task.id)).unwrap();
         assert_eq!(loaded.color, None);
 
         // 文件 frontmatter 里也不应该有字面 "default" 字符串
         let file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&task.id],
+                [&tid(&task.id)],
                 |r| r.get(0),
             )
             .unwrap();
@@ -1978,16 +1989,16 @@ mod tests {
         let file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&task.id],
+                [&tid(&task.id)],
                 |r| r.get(0),
             )
             .unwrap();
 
-        delete(&conn, &vfs, &task.id).unwrap();
+        delete(&conn, &vfs, &tid(&task.id)).unwrap();
 
         assert!(vfs.get_file(&file_path).is_none());
         assert!(matches!(
-            get(&conn, &task.id),
+            get(&conn, &tid(&task.id)),
             Err(KeysightError::NotFound(_))
         ));
     }
@@ -1995,7 +2006,7 @@ mod tests {
     #[test]
     fn test_get_not_found() {
         let conn = test_conn();
-        let result = get(&conn, "task_nonexistent");
+        let result = get(&conn, &tid("task_nonexistent"));
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 
@@ -2044,7 +2055,7 @@ mod tests {
     fn test_transition_status_legacy() {
         let conn = test_conn();
         seed_task_legacy(&conn);
-        transition_status(&conn, "task_test0001", "active").unwrap();
+        transition_status(&conn, &tid("task_test0001"), "active").unwrap();
 
         let status: String = conn
             .query_row(
@@ -2145,7 +2156,7 @@ mod tests {
         let pos: (f64, f64) = conn
             .query_row(
                 "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
-                params![&task.id, "projects/test"],
+                params![&tid(&task.id), "projects/test"],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
@@ -2182,7 +2193,7 @@ mod tests {
         let pos: (f64, f64) = conn
             .query_row(
                 "SELECT x, y FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
-                params![&task.id, "projects/test"],
+                params![&tid(&task.id), "projects/test"],
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();

@@ -2,7 +2,7 @@
 use rusqlite::{params, Connection, OptionalExtension};
 
 use crate::domain::edge::EntityId;
-use crate::domain::id::WhiteboardId;
+use crate::domain::id::{QuestionId, WhiteboardId};
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::QuestionEntity;
@@ -11,13 +11,14 @@ use crate::vault_fs::VaultFs;
 use super::sync;
 
 /// 更新问题状态。
-pub(super) fn transition_status(conn: &Connection, id: &str, status: &str) -> Result<(), KeysightError> {
+pub(super) fn transition_status(conn: &Connection, id: &QuestionId, status: &str) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let rows = conn.execute(
         "UPDATE question_fields SET status = ?1 WHERE entity_id = ?2",
-        params![status, id],
+        params![status, id_str],
     )?;
     if rows == 0 {
-        return Err(KeysightError::NotFound(id.to_string()));
+        return Err(KeysightError::NotFound(id_str.to_string()));
     }
     Ok(())
 }
@@ -32,12 +33,13 @@ struct QuestionLinkTargets {
 
 fn load_linked_targets(
     conn: &Connection,
-    id: &str,
+    id: &QuestionId,
 ) -> Result<QuestionLinkTargets, KeysightError> {
+    let id_str = id.as_str();
     let mut stmt = conn.prepare(
         "SELECT to_id FROM edges WHERE from_id = ?1 AND edge_type = 'question_link'"
     )?;
-    let targets: Vec<String> = stmt.query_map([id], |r| r.get(0))?
+    let targets: Vec<String> = stmt.query_map([id_str], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
 
     let mut linked_card_ids = Vec::new();
@@ -68,12 +70,13 @@ fn load_linked_targets(
     })
 }
 
-pub fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError> {
+pub fn get(conn: &Connection, id: &QuestionId) -> Result<QuestionEntity, KeysightError> {
+    let id_str = id.as_str();
     let mut question = conn.query_row(
         "SELECT e.id, e.title, COALESCE(e.content, '') AS content, e.whiteboard_id, q.status, e.color \
          FROM entities e JOIN question_fields q ON e.id = q.entity_id \
          WHERE e.id = ?1 AND e.kind = 'question'",
-        [id],
+        [id_str],
         |r| {
             Ok(QuestionEntity {
                 id: r.get(0)?,
@@ -91,7 +94,7 @@ pub fn get(conn: &Connection, id: &str) -> Result<QuestionEntity, KeysightError>
         },
     )
     .map_err(|e| match e {
-        rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+        rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
         other => KeysightError::Database(other),
     })?;
 
@@ -114,9 +117,10 @@ pub fn create(
     color: Option<&str>,
 ) -> Result<QuestionEntity, KeysightError> {
     let title = validate_title(title)?;
-    let question_id = id::gen_question_id();
+    // gen_question_id 新生成,已带 q_ 前缀,走 new_unchecked 收口为 QuestionId
+    let question_id = QuestionId::new_unchecked(id::gen_question_id());
     let question = QuestionEntity {
-        id: question_id.clone(),
+        id: question_id.as_str().to_string(),
         title: title.to_string(),
         content: content.unwrap_or_default().to_string(),
         whiteboard_id: whiteboard_id.as_str().to_string(),
@@ -138,15 +142,16 @@ pub fn create(
 pub fn update(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    id: &str,
+    id: &QuestionId,
     title: Option<&str>,
     content: Option<&str>,
     status: Option<&str>,
     color: Option<&str>,
 ) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let current = get(conn, id)?;
     let file_path: Option<String> = conn
-        .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id], |r| r.get(0))
+        .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id_str], |r| r.get(0))
         .optional()?;
 
     // color "default" sentinel 清空(和 note.rs 一致):
@@ -190,11 +195,12 @@ pub fn update(
 pub fn sync_links_to_file(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    id: &str,
+    id: &QuestionId,
 ) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let current = get(conn, id)?;
     let file_path: Option<String> = conn
-        .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id], |r| r.get(0))
+        .query_row("SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'", [id_str], |r| r.get(0))
         .optional()?;
     let previous_path = file_path.filter(|path| !path.is_empty());
     let current_wb = WhiteboardId::new_unchecked(current.whiteboard_id.clone());
@@ -219,12 +225,13 @@ pub fn sync_links_to_file(
 pub fn delete(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    id: &str,
+    id: &QuestionId,
 ) -> Result<(), KeysightError> {
+    let id_str = id.as_str();
     let file_path: Option<String> = conn
         .query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'question'",
-            [id],
+            [id_str],
             |r| r.get(0),
         )
         .optional()?;
@@ -235,9 +242,9 @@ pub fn delete(
         return Ok(());
     }
 
-    conn.execute("DELETE FROM question_fields WHERE entity_id = ?1", [id])?;
-    conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
-    conn.execute("DELETE FROM entities WHERE id = ?1", [id])?;
+    conn.execute("DELETE FROM question_fields WHERE entity_id = ?1", [id_str])?;
+    conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id_str])?;
+    conn.execute("DELETE FROM entities WHERE id = ?1", [id_str])?;
     Ok(())
 }
 
@@ -248,7 +255,10 @@ pub fn query_all(conn: &Connection, whiteboard_id: &WhiteboardId) -> Result<Vec<
     )?;
     let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    ids.iter().map(|id| get(conn, id)).collect()
+    // DB read 路径,kind='question' 已保证 q_ 前缀,走 new_unchecked
+    ids.into_iter()
+        .map(|id| get(conn, &QuestionId::new_unchecked(id)))
+        .collect()
 }
 
 /// 按状态查询问题。
@@ -322,7 +332,7 @@ fn sanitize_file_component(text: &str) -> String {
 
 fn desired_question_relative_path(
     whiteboard_id: &WhiteboardId,
-    question_id: &str,
+    question_id: &QuestionId,
     title: &str,
     current_file_path: Option<&str>,
 ) -> String {
@@ -339,11 +349,11 @@ fn desired_question_relative_path(
     }
 }
 
-fn question_relative_path(whiteboard_id: &WhiteboardId, question_id: &str, title: &str) -> String {
+fn question_relative_path(whiteboard_id: &WhiteboardId, question_id: &QuestionId, title: &str) -> String {
     format!(
         "{}/{} 【QUE】{}.md",
         whiteboard_relative_dir(whiteboard_id),
-        question_id,
+        question_id.as_str(),
         sanitize_file_component(title),
     )
 }
@@ -407,6 +417,11 @@ mod tests {
         conn
     }
 
+    /// 测试 fixture 桥接:把 String / &str question id 包成 QuestionId。
+    fn qid(s: &str) -> QuestionId {
+        QuestionId::parse(s).expect("test fixture question id 应合法")
+    }
+
     fn seed_question(conn: &Connection) {
         let md = "---\ntype: question\nid: q_test00001\nstatus: pending\n---\n\n# 【QUE】Test Question\n\nQuestion body.\n";
         sync::sync_file(conn, "questions/test.md", md, 1000.0).unwrap();
@@ -416,7 +431,7 @@ mod tests {
     fn test_transition_status() {
         let conn = test_conn();
         seed_question(&conn);
-        transition_status(&conn, "q_test00001", "doing").unwrap();
+        transition_status(&conn, &qid("q_test00001"), "doing").unwrap();
 
         let status: String = conn.query_row(
             "SELECT status FROM question_fields WHERE entity_id = 'q_test00001'",
@@ -428,7 +443,7 @@ mod tests {
     #[test]
     fn test_transition_status_not_found() {
         let conn = test_conn();
-        let result = transition_status(&conn, "q_nonexist00", "doing");
+        let result = transition_status(&conn, &qid("q_nonexist00"), "doing");
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 
@@ -441,7 +456,7 @@ mod tests {
 
         assert_eq!(question.status, "doing");
         let file_path: String = conn
-            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&qid(&question.id)], |r| r.get(0))
             .unwrap();
         let file = vfs.get_file(&file_path).unwrap();
         assert!(file.contains("type: question"));
@@ -454,9 +469,9 @@ mod tests {
         let vfs = MockVaultFs::new();
         let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Old", Some("Body"), Some("pending"), None).unwrap();
 
-        update(&conn, &vfs, &question.id, Some("New"), Some("Updated"), Some("done"), None).unwrap();
+        update(&conn, &vfs, &qid(&question.id), Some("New"), Some("Updated"), Some("done"), None).unwrap();
 
-        let loaded = get(&conn, &question.id).unwrap();
+        let loaded = get(&conn, &qid(&question.id)).unwrap();
         assert_eq!(loaded.title, "New");
         assert_eq!(loaded.content, "Updated");
         assert_eq!(loaded.status, "done");
@@ -470,7 +485,7 @@ mod tests {
         let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"**Why** / Question", Some("Body"), None, None).unwrap();
 
         let file_path: String = conn
-            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&qid(&question.id)], |r| r.get(0))
             .unwrap();
         assert!(file_path.ends_with("【QUE】Why _ Question.md"));
     }
@@ -481,13 +496,13 @@ mod tests {
         let vfs = MockVaultFs::new();
         let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Old", Some("Body"), Some("pending"), None).unwrap();
         let old_file_path: String = conn
-            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&qid(&question.id)], |r| r.get(0))
             .unwrap();
 
-        update(&conn, &vfs, &question.id, Some("**New** / Question"), None, None, None).unwrap();
+        update(&conn, &vfs, &qid(&question.id), Some("**New** / Question"), None, None, None).unwrap();
 
         let new_file_path: String = conn
-            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&qid(&question.id)], |r| r.get(0))
             .unwrap();
         assert_ne!(new_file_path, old_file_path);
         assert!(new_file_path.ends_with("【QUE】New _ Question.md"));
@@ -501,13 +516,13 @@ mod tests {
         let vfs = MockVaultFs::new();
         let question = create(&conn, &vfs, &WhiteboardId::parse("wb_root").unwrap(),"Del", None, None, None).unwrap();
         let file_path: String = conn
-            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&qid(&question.id)], |r| r.get(0))
             .unwrap();
 
-        delete(&conn, &vfs, &question.id).unwrap();
+        delete(&conn, &vfs, &qid(&question.id)).unwrap();
 
         assert!(vfs.get_file(&file_path).is_none());
-        assert!(matches!(get(&conn, &question.id), Err(KeysightError::NotFound(_))));
+        assert!(matches!(get(&conn, &qid(&question.id)), Err(KeysightError::NotFound(_))));
     }
 
     #[test]
@@ -565,7 +580,7 @@ mod tests {
         let file_path: String = conn
             .query_row(
                 "SELECT file_path FROM entities WHERE id = ?1",
-                [&question.id],
+                [&qid(&question.id)],
                 |r| r.get(0),
             )
             .unwrap();
@@ -584,19 +599,19 @@ mod tests {
         update(
             &conn,
             &vfs,
-            &question.id,
+            &qid(&question.id),
             None,
             None,
             None,
             Some("#a0c4ff"),
         )
         .unwrap();
-        let loaded = get(&conn, &question.id).unwrap();
+        let loaded = get(&conn, &qid(&question.id)).unwrap();
         assert_eq!(loaded.color, Some("#a0c4ff".to_string()));
 
         // 第二步:"default" sentinel 清空 color
-        update(&conn, &vfs, &question.id, None, None, None, Some("default")).unwrap();
-        let loaded = get(&conn, &question.id).unwrap();
+        update(&conn, &vfs, &qid(&question.id), None, None, None, Some("default")).unwrap();
+        let loaded = get(&conn, &qid(&question.id)).unwrap();
         assert_eq!(loaded.color, None);
     }
 
@@ -616,8 +631,8 @@ mod tests {
         .unwrap();
 
         // 不传 color 参数 → 保留当前 color
-        update(&conn, &vfs, &question.id, Some("New title"), None, None, None).unwrap();
-        let loaded = get(&conn, &question.id).unwrap();
+        update(&conn, &vfs, &qid(&question.id), Some("New title"), None, None, None).unwrap();
+        let loaded = get(&conn, &qid(&question.id)).unwrap();
         assert_eq!(loaded.color, Some("#ffadad".to_string()));
         assert_eq!(loaded.title, "New title");
     }
@@ -638,7 +653,7 @@ mod tests {
         )
         .unwrap();
 
-        let loaded = get(&conn, &question.id).unwrap();
+        let loaded = get(&conn, &qid(&question.id)).unwrap();
         assert_eq!(loaded.linked_note_ids, Some(vec!["note_target".to_string()]));
         assert_eq!(loaded.linked_task_ids, Some(vec!["task_target".to_string()]));
     }
@@ -659,14 +674,14 @@ mod tests {
         )
         .unwrap();
 
-        update(&conn, &vfs, &question.id, Some("Renamed"), None, None, None).unwrap();
+        update(&conn, &vfs, &qid(&question.id), Some("Renamed"), None, None, None).unwrap();
 
-        let loaded = get(&conn, &question.id).unwrap();
+        let loaded = get(&conn, &qid(&question.id)).unwrap();
         assert_eq!(loaded.linked_note_ids, Some(vec!["note_target".to_string()]));
         assert_eq!(loaded.linked_section_ids, Some(vec!["sec_target".to_string()]));
 
         let file_path: String = conn
-            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&question.id], |r| r.get(0))
+            .query_row("SELECT file_path FROM entities WHERE id = ?1", [&qid(&question.id)], |r| r.get(0))
             .unwrap();
         let content = vfs.get_file(&file_path).unwrap();
         assert!(content.contains("linkTo:"));

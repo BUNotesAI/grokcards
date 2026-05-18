@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::id::{CardId, NoteId, WhiteboardId};
+use crate::domain::id::{CardId, NoteId, SectionId, WhiteboardId};
 
 /// 写命令请求参数 — tagged enum,wire 层 discriminator 字段为 `kind`(kebab-case)。
 ///
@@ -85,11 +85,11 @@ pub enum MutateParams {
         edge_type: String,
     },
     SectionAdd {
-        section_id: String,
+        section_id: SectionId,
         entity_id: String,
     },
     SectionMove {
-        section_id: String,
+        section_id: SectionId,
         target_wb: WhiteboardId,
     },
 }
@@ -252,14 +252,14 @@ mod tests {
             ),
             (
                 MutateParams::SectionAdd {
-                    section_id: "s".into(),
+                    section_id: SectionId::parse("sec_s0000001").unwrap(),
                     entity_id: "e".into(),
                 },
                 "section-add",
             ),
             (
                 MutateParams::SectionMove {
-                    section_id: "s".into(),
+                    section_id: SectionId::parse("sec_s0000001").unwrap(),
                     target_wb: WhiteboardId::parse("wb_target").unwrap(),
                 },
                 "section-move",

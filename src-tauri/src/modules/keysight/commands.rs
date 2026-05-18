@@ -7,7 +7,7 @@ use super::domain::alias::{AliasStore, SqliteAliasStore};
 use super::domain::card::{CardStore, SqliteCardStore};
 use super::domain::edge::{user_draw_edge, Edge, EntityId};
 use super::domain::entity::{EntityGraph, SqliteEntityGraph};
-use super::domain::id::{CardId, NoteId, WhiteboardId};
+use super::domain::id::{AliasId, CardId, NoteId, QuestionId, SectionId, TaskId, WhiteboardId};
 use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
@@ -270,7 +270,7 @@ pub fn card_set_color(
 #[specta::specta]
 pub fn section_get(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: SectionId,
 ) -> Result<GraphSection, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -350,7 +350,7 @@ pub fn section_create(
 /// - [`section_create`] — 创建（逆操作）
 #[tauri::command]
 #[specta::specta]
-pub fn section_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+pub fn section_delete(state: State<'_, KeysightRuntimeState>, id: SectionId) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
@@ -378,7 +378,7 @@ pub fn section_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Res
 #[specta::specta]
 pub fn section_update(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: SectionId,
     title: Option<String>,
     color: Option<String>,
 ) -> Result<(), AppError> {
@@ -411,7 +411,7 @@ pub fn section_update(
 #[specta::specta]
 pub fn section_add_member(
     state: State<'_, KeysightRuntimeState>,
-    section_id: String,
+    section_id: SectionId,
     entity_id: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -438,7 +438,7 @@ pub fn section_add_member(
 #[specta::specta]
 pub fn section_remove_member(
     state: State<'_, KeysightRuntimeState>,
-    section_id: String,
+    section_id: SectionId,
     entity_id: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -474,7 +474,7 @@ pub fn section_remove_member(
 #[specta::specta]
 pub fn section_move_to_whiteboard(
     state: State<'_, KeysightRuntimeState>,
-    section_id: String,
+    section_id: SectionId,
     target_whiteboard_id: WhiteboardId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -567,7 +567,7 @@ pub fn task_create(
 #[specta::specta]
 pub fn task_update(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: TaskId,
     title: Option<String>,
     content: Option<String>,
     status: Option<TaskStatus>,
@@ -596,7 +596,7 @@ pub fn task_update(
 /// 删除 task —— 文件 + DB 级联。
 #[tauri::command]
 #[specta::specta]
-pub fn task_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+pub fn task_delete(state: State<'_, KeysightRuntimeState>, id: TaskId) -> Result<(), AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:task_delete");
     let conn = lock_db(&state.core.db, "task_delete");
@@ -612,7 +612,7 @@ pub fn task_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result
 #[specta::specta]
 pub fn task_set_color(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: TaskId,
     color: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -663,7 +663,7 @@ pub fn task_set_color(
 #[specta::specta]
 pub fn task_update_with_subtasks(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: TaskId,
     title: Option<String>,
     subtasks: Vec<Subtask>,
     status: Option<TaskStatus>,
@@ -755,7 +755,7 @@ pub fn question_create(
 #[specta::specta]
 pub fn question_update(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: QuestionId,
     title: Option<String>,
     content: Option<String>,
     status: Option<String>,
@@ -782,7 +782,7 @@ pub fn question_update(
 #[specta::specta]
 pub fn question_delete(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: QuestionId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     let _t = ScopedTimer::new("cmd:question_delete");
@@ -932,7 +932,7 @@ pub fn note_migrate_to_files(
 /// 按 ID 查询单个 alias。
 #[tauri::command]
 #[specta::specta]
-pub fn alias_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<CardAlias, AppError> {
+pub fn alias_get(state: State<'_, KeysightRuntimeState>, id: AliasId) -> Result<CardAlias, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
@@ -999,7 +999,7 @@ pub fn alias_create(
 /// - [`alias_create`] — 创建（逆操作）
 #[tauri::command]
 #[specta::specta]
-pub fn alias_delete(state: State<'_, KeysightRuntimeState>, id: String) -> Result<(), AppError> {
+pub fn alias_delete(state: State<'_, KeysightRuntimeState>, id: AliasId) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
@@ -1186,7 +1186,7 @@ pub fn entity_connect(
             // alias 无独立文件内容(继承 owning card),不 sync
         }
         Edge::QuestionLink { from, .. } => {
-            question::sync_links_to_file(&conn, &vault_fs, from.as_str()).map_err(AppError::from)?;
+            question::sync_links_to_file(&conn, &vault_fs, from).map_err(AppError::from)?;
         }
         Edge::CardToAlias { .. } => {
             // alias 定义关系的反查路径,不单独写回 card file

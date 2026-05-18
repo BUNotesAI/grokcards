@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
-import type { CardId, WhiteboardId } from "@/bindings";
+import type { AliasId, CardId, WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -33,7 +33,7 @@ export function useAliasActions(whiteboardId?: string) {
 
   const remove = useCallback(
     async (id: string) => {
-      await unwrapCommand(commands.aliasDelete(id));
+      await unwrapCommand(commands.aliasDelete(id as AliasId));
       invalidate();
     },
     [invalidate],

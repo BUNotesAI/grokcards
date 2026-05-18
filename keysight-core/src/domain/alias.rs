@@ -2,7 +2,7 @@
 use rusqlite::{params, Connection};
 
 use crate::domain::edge::EntityId;
-use crate::domain::id::{CardId, WhiteboardId};
+use crate::domain::id::{AliasId, CardId, WhiteboardId};
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::CardAlias;
@@ -10,8 +10,8 @@ use crate::models::CardAlias;
 /// 别名存储契约。
 pub trait AliasStore {
     fn create(&self, whiteboard_id: &WhiteboardId, card_id: &CardId) -> Result<CardAlias, KeysightError>;
-    fn delete(&self, id: &str) -> Result<(), KeysightError>;
-    fn get(&self, id: &str) -> Result<CardAlias, KeysightError>;
+    fn delete(&self, id: &AliasId) -> Result<(), KeysightError>;
+    fn get(&self, id: &AliasId) -> Result<CardAlias, KeysightError>;
     fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<CardAlias>, KeysightError>;
 }
 
@@ -47,21 +47,23 @@ impl AliasStore for SqliteAliasStore<'_> {
         })
     }
 
-    fn delete(&self, id: &str) -> Result<(), KeysightError> {
-        self.conn.execute("DELETE FROM alias_fields WHERE entity_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id])?;
-        self.conn.execute("DELETE FROM entities WHERE id = ?1", [id])?;
+    fn delete(&self, id: &AliasId) -> Result<(), KeysightError> {
+        let id_str = id.as_str();
+        self.conn.execute("DELETE FROM alias_fields WHERE entity_id = ?1", [id_str])?;
+        self.conn.execute("DELETE FROM positions WHERE entity_id = ?1", [id_str])?;
+        self.conn.execute("DELETE FROM edges WHERE from_id = ?1 OR to_id = ?1", [id_str])?;
+        self.conn.execute("DELETE FROM entities WHERE id = ?1", [id_str])?;
         Ok(())
     }
 
-    fn get(&self, id: &str) -> Result<CardAlias, KeysightError> {
+    fn get(&self, id: &AliasId) -> Result<CardAlias, KeysightError> {
+        let id_str = id.as_str();
         let card_id: String = self.conn.query_row(
             "SELECT card_id FROM alias_fields WHERE entity_id = ?1",
-            [id],
+            [id_str],
             |r| r.get(0),
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
             other => KeysightError::Database(other),
         })?;
 
@@ -69,7 +71,7 @@ impl AliasStore for SqliteAliasStore<'_> {
         let mut stmt = self.conn.prepare(
             "SELECT to_id FROM edges WHERE from_id = ?1 AND edge_type = 'alias_link'"
         )?;
-        let targets: Vec<String> = stmt.query_map([id], |r| r.get(0))?
+        let targets: Vec<String> = stmt.query_map([id_str], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         // 穷尽 match EntityId 所有 6 个 variant —— 禁止 `_` 通配(同 note.rs::get 的防御)。
@@ -97,11 +99,11 @@ impl AliasStore for SqliteAliasStore<'_> {
         let mut stmt2 = self.conn.prepare(
             "SELECT from_id FROM edges WHERE to_id = ?1 AND edge_type = 'card_to_alias'"
         )?;
-        let incoming: Vec<String> = stmt2.query_map([id], |r| r.get(0))?
+        let incoming: Vec<String> = stmt2.query_map([id_str], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
 
         Ok(CardAlias {
-            alias_id: id.to_string(),
+            alias_id: id_str.to_string(),
             card_id,
             linked_card_ids: if linked_card_ids.is_empty() { None } else { Some(linked_card_ids) },
             linked_section_ids: if linked_section_ids.is_empty() { None } else { Some(linked_section_ids) },
@@ -118,7 +120,10 @@ impl AliasStore for SqliteAliasStore<'_> {
         )?;
         let ids: Vec<String> = stmt.query_map([whiteboard_id.as_str()], |r| r.get(0))?
             .collect::<rusqlite::Result<Vec<_>>>()?;
-        ids.iter().map(|id| self.get(id)).collect()
+        // DB read 路径,kind='alias' 已保证 alias_ 前缀,走 new_unchecked
+        ids.into_iter()
+            .map(|id| self.get(&AliasId::new_unchecked(id)))
+            .collect()
     }
 }
 
@@ -131,6 +136,11 @@ mod tests {
         let conn = Connection::open_in_memory().unwrap();
         init_db(&conn).unwrap();
         conn
+    }
+
+    /// 测试 fixture 桥接:把 String / &str alias id 包成 AliasId。
+    fn aid(s: &str) -> AliasId {
+        AliasId::parse(s).expect("test fixture alias id 应合法")
     }
 
     #[test]
@@ -149,8 +159,8 @@ mod tests {
         let store = SqliteAliasStore::new(&conn);
         let wb = WhiteboardId::parse("wb_root").unwrap();
         let alias = store.create(&wb, &CardId::parse("card_aaa").unwrap()).unwrap();
-        store.delete(&alias.alias_id).unwrap();
-        assert!(matches!(store.get(&alias.alias_id), Err(KeysightError::NotFound(_))));
+        store.delete(&aid(&alias.alias_id)).unwrap();
+        assert!(matches!(store.get(&aid(&alias.alias_id)), Err(KeysightError::NotFound(_))));
     }
 
     #[test]
@@ -195,7 +205,7 @@ mod tests {
         graph.connect(&to_question).unwrap();
         graph.connect(&to_task).unwrap();
 
-        let loaded = store.get(&alias.alias_id).unwrap();
+        let loaded = store.get(&aid(&alias.alias_id)).unwrap();
         assert_eq!(
             loaded.linked_question_ids.clone().unwrap(),
             vec!["q_qqq11111".to_string()],
@@ -223,7 +233,7 @@ mod tests {
         )
         .unwrap();
 
-        let err = store.get(&alias.alias_id).unwrap_err();
+        let err = store.get(&aid(&alias.alias_id)).unwrap_err();
         assert!(
             matches!(err, KeysightError::ParseError(_)),
             "未知 prefix 应让 reader 返 ParseError,实际: {err:?}"

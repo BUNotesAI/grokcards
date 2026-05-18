@@ -17,7 +17,7 @@ use keysight_core::domain::alias::{AliasStore, SqliteAliasStore};
 use keysight_core::domain::card::SqliteCardStore;
 use keysight_core::domain::edge::{user_draw_edge, Edge, EntityId};
 use keysight_core::domain::entity::{EntityGraph, SqliteEntityGraph};
-use keysight_core::domain::id::{CardId, NoteId, WhiteboardId};
+use keysight_core::domain::id::{CardId, NoteId, SectionId, WhiteboardId};
 use keysight_core::domain::layout::{LayoutStore, SqliteLayoutStore};
 use keysight_core::domain::note::{NoteStore, SqliteNoteStore};
 use keysight_core::domain::question;
@@ -210,7 +210,7 @@ fn sync_source_file_for_edge(
             // alias 无独立文件内容(继承 owning card),不 sync
         }
         Edge::QuestionLink { from, .. } => {
-            question::sync_links_to_file(conn, vault_fs, from.as_str())?;
+            question::sync_links_to_file(conn, vault_fs, from)?;
         }
         Edge::CardToAlias { .. } => {
             // alias 定义关系反查路径,不单独写回 card file
@@ -255,15 +255,15 @@ fn op_disconnect(
     ))
 }
 
-fn op_section_add(conn: &Connection, section_id: &str, entity_id: &str) -> OpResult {
+fn op_section_add(conn: &Connection, section_id: &SectionId, entity_id: &str) -> OpResult {
     SqliteSectionStore::new(conn).add_member(section_id, entity_id)?;
     Ok((
         None,
-        json!({ "kind": "section_member", "op": "add", "section_id": section_id, "entity_id": entity_id }),
+        json!({ "kind": "section_member", "op": "add", "section_id": section_id.as_str(), "entity_id": entity_id }),
     ))
 }
 
-fn op_section_move(conn: &Connection, section_id: &str, target_wb: &WhiteboardId) -> OpResult {
+fn op_section_move(conn: &Connection, section_id: &SectionId, target_wb: &WhiteboardId) -> OpResult {
     SqliteSectionStore::new(conn).move_to_whiteboard(section_id, target_wb)?;
     Ok((
         None,

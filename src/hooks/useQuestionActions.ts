@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
-import type { WhiteboardId } from "@/bindings";
+import type { QuestionId, WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -50,7 +50,7 @@ export function useQuestionActions(whiteboardId?: string) {
       color: string | null,
     ) => {
       await unwrapCommand(
-        commands.questionUpdate(id, title, content, status, color),
+        commands.questionUpdate(id as QuestionId, title, content, status, color),
       );
       invalidateQuestions();
     },
@@ -59,7 +59,7 @@ export function useQuestionActions(whiteboardId?: string) {
 
   const remove = useCallback(
     async (id: string) => {
-      await unwrapCommand(commands.questionDelete(id));
+      await unwrapCommand(commands.questionDelete(id as QuestionId));
       invalidateQuestionsAndPositions();
     },
     [invalidateQuestionsAndPositions],

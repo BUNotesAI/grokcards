@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useQueryClient, type QueryClient } from "@tanstack/react-query";
-import { commands, type Subtask, type TaskCreateRequest } from "@/bindings";
+import { commands, type Subtask, type TaskCreateRequest, type TaskId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -52,7 +52,7 @@ export function useTaskActions(whiteboardId?: string) {
       color: string | null,
     ) => {
       await unwrapCommand(
-        commands.taskUpdate(id, title, content, status, area, color),
+        commands.taskUpdate(id as TaskId, title, content, status, area, color),
       );
       invalidate();
     },
@@ -69,7 +69,7 @@ export function useTaskActions(whiteboardId?: string) {
       color: string | null,
     ) => {
       const result = await unwrapCommand(
-        commands.taskUpdateWithSubtasks(id, title, subtasks, status, area, color),
+        commands.taskUpdateWithSubtasks(id as TaskId, title, subtasks, status, area, color),
       );
       invalidate();
       return result;
@@ -79,7 +79,7 @@ export function useTaskActions(whiteboardId?: string) {
 
   const remove = useCallback(
     async (id: string) => {
-      await unwrapCommand(commands.taskDelete(id));
+      await unwrapCommand(commands.taskDelete(id as TaskId));
       invalidate();
     },
     [invalidate],
@@ -87,7 +87,7 @@ export function useTaskActions(whiteboardId?: string) {
 
   const setColor = useCallback(
     async (id: string, color: string) => {
-      await unwrapCommand(commands.taskSetColor(id, color));
+      await unwrapCommand(commands.taskSetColor(id as TaskId, color));
       invalidate();
     },
     [invalidate],

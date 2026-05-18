@@ -1,7 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
-import type { WhiteboardId } from "@/bindings";
+import type { SectionId, WhiteboardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -37,7 +37,7 @@ export function useSectionActions(whiteboardId?: string) {
 
   const update = useCallback(
     async (id: string, title: string | null, color: string | null) => {
-      await unwrapCommand(commands.sectionUpdate(id, title, color));
+      await unwrapCommand(commands.sectionUpdate(id as SectionId, title, color));
       invalidateSections();
     },
     [invalidateSections],
@@ -45,7 +45,7 @@ export function useSectionActions(whiteboardId?: string) {
 
   const remove = useCallback(
     async (id: string) => {
-      await unwrapCommand(commands.sectionDelete(id));
+      await unwrapCommand(commands.sectionDelete(id as SectionId));
       invalidateSectionsAndPositions();
     },
     [invalidateSectionsAndPositions],
@@ -53,7 +53,7 @@ export function useSectionActions(whiteboardId?: string) {
 
   const addMember = useCallback(
     async (sectionId: string, entityId: string) => {
-      await unwrapCommand(commands.sectionAddMember(sectionId, entityId));
+      await unwrapCommand(commands.sectionAddMember(sectionId as SectionId, entityId));
       invalidateSectionsAndPositions();
     },
     [invalidateSectionsAndPositions],
@@ -61,7 +61,7 @@ export function useSectionActions(whiteboardId?: string) {
 
   const removeMember = useCallback(
     async (sectionId: string, entityId: string) => {
-      await unwrapCommand(commands.sectionRemoveMember(sectionId, entityId));
+      await unwrapCommand(commands.sectionRemoveMember(sectionId as SectionId, entityId));
       invalidateSectionsAndPositions();
     },
     [invalidateSectionsAndPositions],
