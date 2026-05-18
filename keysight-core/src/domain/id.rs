@@ -82,6 +82,10 @@ macro_rules! prefixed_id {
             }
 
             /// 无校验构造 —— 仅 crate 内 DB read path 使用,信任 schema invariant。
+            ///
+            /// **W2 决定**:守住 `pub(crate)` 不开放 —— 跨 crate(src-tauri command 层)
+            /// 即使在 `if from_id.starts_with("card_")` 之后,也强制走 `parse(...)`
+            /// 重新校验(O(starts_with) 开销可忽略,换取 API 表面不外泄 unchecked 构造)。
             #[allow(dead_code)] // W0 阶段尚未渗透业务层,W1+ 渗透后会有真实调用
             pub(crate) fn new_unchecked(raw: String) -> Self {
                 Self(raw)
@@ -102,6 +106,17 @@ macro_rules! prefixed_id {
         impl From<$name> for String {
             fn from(id: $name) -> String {
                 id.0
+            }
+        }
+
+        // SQL bind 支持。让 `params![card_id]` / `Vec<&dyn ToSql>` 直接接 newtype,
+        // 不需要在每个调用点写 `.as_str()`(W2 batch_load 等 `iter().map(|id| ...)`
+        // collect 到 `Vec<&dyn ToSql>` 的场景必须靠 ToSql impl)。
+        impl rusqlite::types::ToSql for $name {
+            fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+                Ok(rusqlite::types::ToSqlOutput::Borrowed(
+                    rusqlite::types::ValueRef::Text(self.0.as_bytes()),
+                ))
             }
         }
     };

@@ -17,7 +17,7 @@ use keysight_core::domain::alias::{AliasStore, SqliteAliasStore};
 use keysight_core::domain::card::SqliteCardStore;
 use keysight_core::domain::edge::{user_draw_edge, Edge, EntityId};
 use keysight_core::domain::entity::{EntityGraph, SqliteEntityGraph};
-use keysight_core::domain::id::WhiteboardId;
+use keysight_core::domain::id::{CardId, WhiteboardId};
 use keysight_core::domain::layout::{LayoutStore, SqliteLayoutStore};
 use keysight_core::domain::note::{NoteStore, SqliteNoteStore};
 use keysight_core::domain::question;
@@ -153,12 +153,12 @@ fn op_note_update(
     Ok((None, json!({ "kind": "note", "id": id })))
 }
 
-fn op_alias_create(conn: &Connection, wb: &WhiteboardId, card_id: &str) -> OpResult {
+fn op_alias_create(conn: &Connection, wb: &WhiteboardId, card_id: &CardId) -> OpResult {
     let alias = SqliteAliasStore::new(conn).create(wb, card_id)?;
     let id = alias.alias_id.clone();
     Ok((
         Some(id.clone()),
-        json!({ "kind": "alias", "id": id, "wb": wb.as_str(), "card_id": card_id }),
+        json!({ "kind": "alias", "id": id, "wb": wb.as_str(), "card_id": card_id.as_str() }),
     ))
 }
 
@@ -201,7 +201,7 @@ fn sync_source_file_for_edge(
         Edge::CardLink { from, .. }
         | Edge::CardRelated { from, .. }
         | Edge::CardSeeAlso { from, .. } => {
-            SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(from.as_str())?;
+            SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(from)?;
         }
         Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
             SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(from.as_str())?;
@@ -234,7 +234,12 @@ fn op_disconnect(
     if from.starts_with("card_")
         && matches!(et, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso)
     {
-        SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(&from)?;
+        // 同 commands::entity_disconnect:prefix-checked,跨 crate parse 重校验,
+        // O(starts_with) 开销可忽略,不开放 new_unchecked API 表面;失败走 propagate。
+        let card_id = CardId::parse(from.clone()).map_err(|e| {
+            KeysightError::ParseError(format!("内部不变量:from 已 prefix-check 为 card_ 但 parse 失败: {e}"))
+        })?;
+        SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(&card_id)?;
     } else if from.starts_with("note_") && et == EdgeType::NoteLink {
         SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(&from)?;
     }

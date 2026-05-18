@@ -4,6 +4,7 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
+use crate::domain::id::CardId;
 use crate::errors::KeysightError;
 use crate::models::AtomicCard;
 use crate::models::CardLinksResponse;
@@ -13,30 +14,30 @@ use crate::vault_fs::VaultFs;
 /// 卡片存储契约。
 pub trait CardStore {
     /// 按 ID 查询单张卡片（含 tags、edges、card_fields）。
-    fn get(&self, id: &str) -> Result<AtomicCard, KeysightError>;
+    fn get(&self, id: &CardId) -> Result<AtomicCard, KeysightError>;
     /// 查询所有卡片，按 mtime 降序，支持分页。
     fn query_all(&self, limit: Option<i64>, offset: Option<i64>) -> Result<Vec<AtomicCard>, KeysightError>;
     /// 按文件路径查询。
     fn query_by_file(&self, file_path: &str) -> Result<Vec<AtomicCard>, KeysightError>;
     /// 按 ID 列表批量查询。
-    fn query_by_ids(&self, ids: &[String]) -> Result<Vec<AtomicCard>, KeysightError>;
+    fn query_by_ids(&self, ids: &[CardId]) -> Result<Vec<AtomicCard>, KeysightError>;
     /// 卡片总数。
     fn count(&self) -> Result<i64, KeysightError>;
     /// 编辑卡片标题（同时写回文件）。
-    fn edit_title(&self, id: &str, new_title: &str) -> Result<(), KeysightError>;
+    fn edit_title(&self, id: &CardId, new_title: &str) -> Result<(), KeysightError>;
     /// 编辑卡片正文（同时写回文件）。
-    fn edit_body(&self, id: &str, new_body: &str) -> Result<(), KeysightError>;
+    fn edit_body(&self, id: &CardId, new_body: &str) -> Result<(), KeysightError>;
     /// 更新理解笔记（同时写回文件 frontmatter）。
-    fn update_understanding(&self, id: &str, text: &str) -> Result<(), KeysightError>;
+    fn update_understanding(&self, id: &CardId, text: &str) -> Result<(), KeysightError>;
     /// 设置或清空卡片背景色(同时写回 frontmatter)。
     ///
     /// `color == "default"` 时清空,其他值直接写入。用 serde_yaml 序列化避免
     /// hex `#ffadad` 被 YAML 当行内注释。
-    fn set_color(&self, id: &str, color: &str) -> Result<(), KeysightError>;
+    fn set_color(&self, id: &CardId, color: &str) -> Result<(), KeysightError>;
     /// 全文搜索卡片。
     fn search(&self, text: &str) -> Result<Vec<AtomicCard>, KeysightError>;
     /// 查询单卡片完整链接图谱。
-    fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError>;
+    fn query_links(&self, id: &CardId) -> Result<CardLinksResponse, KeysightError>;
 }
 
 pub struct SqliteCardStore<'a> {
@@ -53,7 +54,7 @@ impl<'a> SqliteCardStore<'a> {
         Self { conn, vault_fs: Some(vault_fs) }
     }
 
-    pub fn sync_edges_to_file(&self, id: &str) -> Result<(), KeysightError> {
+    pub fn sync_edges_to_file(&self, id: &CardId) -> Result<(), KeysightError> {
         let vault_fs = self.vault_fs.ok_or_else(|| {
             KeysightError::FileError("sync_edges_to_file 需要 VaultFs".to_string())
         })?;
@@ -81,7 +82,7 @@ impl<'a> SqliteCardStore<'a> {
 }
 
 /// 从一组 card id 批量加载 tags，返回 id → Vec<tag> 映射。
-fn batch_load_tags(conn: &Connection, ids: &[String]) -> Result<HashMap<String, Vec<String>>, KeysightError> {
+fn batch_load_tags(conn: &Connection, ids: &[CardId]) -> Result<HashMap<String, Vec<String>>, KeysightError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -91,7 +92,8 @@ fn batch_load_tags(conn: &Connection, ids: &[String]) -> Result<HashMap<String, 
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+    // CardId 通过 macro 一次性 impl ToSql,直接当 &dyn ToSql 用。
+    let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
     let rows = stmt.query_map(params.as_slice(), |row| {
         let entity_id: String = row.get(0)?;
         let tag: String = row.get(1)?;
@@ -108,7 +110,7 @@ fn batch_load_tags(conn: &Connection, ids: &[String]) -> Result<HashMap<String, 
 
 /// 从一组 card id 批量加载出边（link_to/related/see_also），返回 id → (link_to, related, see_also)。
 #[allow(clippy::type_complexity)]
-fn batch_load_edges(conn: &Connection, ids: &[String]) -> Result<HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>, KeysightError> {
+fn batch_load_edges(conn: &Connection, ids: &[CardId]) -> Result<HashMap<String, (Vec<String>, Vec<String>, Vec<String>)>, KeysightError> {
     if ids.is_empty() {
         return Ok(HashMap::new());
     }
@@ -118,7 +120,7 @@ fn batch_load_edges(conn: &Connection, ids: &[String]) -> Result<HashMap<String,
         placeholders.join(", ")
     );
     let mut stmt = conn.prepare(&sql)?;
-    let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+    let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
     let rows = stmt.query_map(params.as_slice(), |row| {
         let from_id: String = row.get(0)?;
         let to_id: String = row.get(1)?;
@@ -199,7 +201,9 @@ fn query_card_rows(conn: &Connection, where_clause: &str, params: &[&dyn rusqlit
 
 /// 将 CardRow + tags + edges 组装为 AtomicCard。
 fn assemble_cards(conn: &Connection, card_rows: Vec<CardRow>) -> Result<Vec<AtomicCard>, KeysightError> {
-    let ids: Vec<String> = card_rows.iter().map(|r| r.id.clone()).collect();
+    // DB read path:从 entities 表读出的 id 已保证 prefix 正确(写入时校验过),
+    // 走 new_unchecked 跳过校验。
+    let ids: Vec<CardId> = card_rows.iter().map(|r| CardId::new_unchecked(r.id.clone())).collect();
     let tags_map = batch_load_tags(conn, &ids)?;
     let edges_map = batch_load_edges(conn, &ids)?;
 
@@ -230,7 +234,7 @@ fn assemble_cards(conn: &Connection, card_rows: Vec<CardRow>) -> Result<Vec<Atom
     Ok(cards)
 }
 
-fn sort_cards_by_id_order(cards: Vec<AtomicCard>, ids: &[String]) -> Vec<AtomicCard> {
+fn sort_cards_by_id_order(cards: Vec<AtomicCard>, ids: &[CardId]) -> Vec<AtomicCard> {
     let rank_by_id: HashMap<&str, usize> = ids
         .iter()
         .enumerate()
@@ -347,14 +351,15 @@ pub fn cleanup_dirty_card_title_escapes(
 }
 
 impl CardStore for SqliteCardStore<'_> {
-    fn get(&self, id: &str) -> Result<AtomicCard, KeysightError> {
-        let rows = query_card_rows(self.conn, "AND e.id = ?1", &[&id])?;
+    fn get(&self, id: &CardId) -> Result<AtomicCard, KeysightError> {
+        let id_str = id.as_str();
+        let rows = query_card_rows(self.conn, "AND e.id = ?1", &[&id_str])?;
         match rows.into_iter().next() {
             Some(row) => {
                 let mut cards = assemble_cards(self.conn, vec![row])?;
                 Ok(cards.remove(0))
             }
-            None => Err(KeysightError::NotFound(id.to_string())),
+            None => Err(KeysightError::NotFound(id.as_str().to_string())),
         }
     }
 
@@ -433,13 +438,13 @@ impl CardStore for SqliteCardStore<'_> {
         assemble_cards(self.conn, rows)
     }
 
-    fn query_by_ids(&self, ids: &[String]) -> Result<Vec<AtomicCard>, KeysightError> {
+    fn query_by_ids(&self, ids: &[CardId]) -> Result<Vec<AtomicCard>, KeysightError> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
         let placeholders: Vec<String> = (1..=ids.len()).map(|i| format!("?{i}")).collect();
         let where_clause = format!("AND e.id IN ({})", placeholders.join(", "));
-        let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|s| s as &dyn rusqlite::types::ToSql).collect();
+        let params: Vec<&dyn rusqlite::types::ToSql> = ids.iter().map(|id| id as &dyn rusqlite::types::ToSql).collect();
         let rows = query_card_rows(self.conn, &where_clause, params.as_slice())?;
         let cards = assemble_cards(self.conn, rows)?;
         Ok(sort_cards_by_id_order(cards, ids))
@@ -454,7 +459,7 @@ impl CardStore for SqliteCardStore<'_> {
         Ok(count)
     }
 
-    fn edit_title(&self, id: &str, new_title: &str) -> Result<(), KeysightError> {
+    fn edit_title(&self, id: &CardId, new_title: &str) -> Result<(), KeysightError> {
         let new_title = new_title.trim();
         if new_title.is_empty() {
             return Err(KeysightError::EmptyTitle);
@@ -464,12 +469,13 @@ impl CardStore for SqliteCardStore<'_> {
         })?;
 
         // 查 file_path
+        let id_str = id.as_str();
         let file_path: String = self.conn.query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
-            [id],
+            [id_str],
             |r| r.get(0),
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
             other => KeysightError::Database(other),
         })?;
 
@@ -481,23 +487,24 @@ impl CardStore for SqliteCardStore<'_> {
         // 更新 DB
         self.conn.execute(
             "UPDATE entities SET title = ?1 WHERE id = ?2",
-            params![new_title, id],
+            params![new_title, id_str],
         )?;
         Ok(())
     }
 
-    fn edit_body(&self, id: &str, new_body: &str) -> Result<(), KeysightError> {
+    fn edit_body(&self, id: &CardId, new_body: &str) -> Result<(), KeysightError> {
         let vault_fs = self.vault_fs.ok_or_else(|| {
             KeysightError::FileError("edit_body 需要 VaultFs".to_string())
         })?;
         let new_body = parser::normalize_legacy_toggle_syntax(new_body);
 
+        let id_str = id.as_str();
         let file_path: String = self.conn.query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
-            [id],
+            [id_str],
             |r| r.get(0),
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
             other => KeysightError::Database(other),
         })?;
 
@@ -516,22 +523,23 @@ impl CardStore for SqliteCardStore<'_> {
 
         self.conn.execute(
             "UPDATE entities SET content = ?1 WHERE id = ?2",
-            params![new_body, id],
+            params![new_body, id_str],
         )?;
         Ok(())
     }
 
-    fn update_understanding(&self, id: &str, text: &str) -> Result<(), KeysightError> {
+    fn update_understanding(&self, id: &CardId, text: &str) -> Result<(), KeysightError> {
         let vault_fs = self.vault_fs.ok_or_else(|| {
             KeysightError::FileError("update_understanding 需要 VaultFs".to_string())
         })?;
 
+        let id_str = id.as_str();
         let file_path: String = self.conn.query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
-            [id],
+            [id_str],
             |r| r.get(0),
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
             other => KeysightError::Database(other),
         })?;
 
@@ -544,7 +552,7 @@ impl CardStore for SqliteCardStore<'_> {
 
         self.conn.execute(
             "UPDATE card_fields SET understanding = ?1 WHERE entity_id = ?2",
-            params![text, id],
+            params![text, id_str],
         )?;
         Ok(())
     }
@@ -555,17 +563,18 @@ impl CardStore for SqliteCardStore<'_> {
     /// P1-6 修复:不再手动 `UPDATE entities SET color`,改走 `sync_file` 统一路径,
     /// 保证 `file_mtimes` 正确更新,和 task/question/note 的写入路径一致,
     /// 避免下次 `sync_vault` 时因 mtime 不一致重新导入覆盖。
-    fn set_color(&self, id: &str, color: &str) -> Result<(), KeysightError> {
+    fn set_color(&self, id: &CardId, color: &str) -> Result<(), KeysightError> {
         let vault_fs = self.vault_fs.ok_or_else(|| {
             KeysightError::FileError("set_color 需要 VaultFs".to_string())
         })?;
 
+        let id_str = id.as_str();
         let file_path: String = self.conn.query_row(
             "SELECT file_path FROM entities WHERE id = ?1 AND kind = 'card'",
-            [id],
+            [id_str],
             |r| r.get(0),
         ).map_err(|e| match e {
-            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id.to_string()),
+            rusqlite::Error::QueryReturnedNoRows => KeysightError::NotFound(id_str.to_string()),
             other => KeysightError::Database(other),
         })?;
 
@@ -606,9 +615,13 @@ impl CardStore for SqliteCardStore<'_> {
         let mut stmt = self.conn.prepare(
             "SELECT id FROM entities_fts WHERE entities_fts MATCH ?1"
         )?;
-        let ids: Vec<String> = stmt
-            .query_map([&fts_query], |r| r.get(0))?
-            .collect::<rusqlite::Result<Vec<_>>>()?;
+        // DB read path: FTS 表的 id 已写入时校验,直接 new_unchecked 包成 CardId。
+        let ids: Vec<CardId> = stmt
+            .query_map([&fts_query], |r| r.get::<_, String>(0))?
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(CardId::new_unchecked)
+            .collect();
 
         if !ids.is_empty() {
             let cards = self.query_by_ids(&ids)?;
@@ -626,22 +639,23 @@ impl CardStore for SqliteCardStore<'_> {
         Ok(rank_search_results(cards, text))
     }
 
-    fn query_links(&self, id: &str) -> Result<CardLinksResponse, KeysightError> {
+    fn query_links(&self, id: &CardId) -> Result<CardLinksResponse, KeysightError> {
+        let id_str = id.as_str();
         // 验证卡片存在
         let exists: bool = self.conn.query_row(
             "SELECT COUNT(*) FROM entities WHERE id = ?1 AND kind = 'card'",
-            [id],
+            [id_str],
             |r| r.get::<_, i64>(0),
         )? > 0;
         if !exists {
-            return Err(KeysightError::NotFound(id.to_string()));
+            return Err(KeysightError::NotFound(id_str.to_string()));
         }
 
         // 出边
         let mut out_stmt = self.conn.prepare(
             "SELECT to_id, edge_type FROM edges WHERE from_id = ?1 ORDER BY rowid"
         )?;
-        let out_rows = out_stmt.query_map([id], |r| {
+        let out_rows = out_stmt.query_map([id_str], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })?;
 
@@ -662,7 +676,7 @@ impl CardStore for SqliteCardStore<'_> {
         let mut in_stmt = self.conn.prepare(
             "SELECT from_id, edge_type FROM edges WHERE to_id = ?1 ORDER BY rowid"
         )?;
-        let in_rows = in_stmt.query_map([id], |r| {
+        let in_rows = in_stmt.query_map([id_str], |r| {
             Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?))
         })?;
 
@@ -696,6 +710,11 @@ mod tests {
     use crate::db::init_db;
     use crate::domain::sync;
     use crate::vault_fs::MockVaultFs;
+
+    /// 测试 fixture 字面量 → CardId 包装(纯类型转换,语义不变,符合 anti-test-theater)。
+    fn cid(s: &str) -> CardId {
+        CardId::parse(s).unwrap()
+    }
 
     fn test_conn() -> Connection {
         let conn = Connection::open_in_memory().unwrap();
@@ -752,7 +771,7 @@ Second body.
         seed_card(&conn);
         let store = SqliteCardStore::new(&conn);
 
-        let card = store.get("card_test0001").unwrap();
+        let card = store.get(&cid("card_test0001")).unwrap();
         assert_eq!(card.title, "Test Card");
         assert_eq!(card.file_path, "whiteboard/test.md");
         assert_eq!(card.content, "Body content.\n");
@@ -769,7 +788,7 @@ Second body.
     fn test_get_card_not_found() {
         let conn = test_conn();
         let store = SqliteCardStore::new(&conn);
-        let result = store.get("card_nonexist");
+        let result = store.get(&cid("card_nonexist"));
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 
@@ -824,7 +843,7 @@ Second body.
         seed_card2(&conn);
         let store = SqliteCardStore::new(&conn);
 
-        let ids = vec!["card_test0001".to_string(), "card_test0002".to_string()];
+        let ids = vec![cid("card_test0001"), cid("card_test0002")];
         let cards = store.query_by_ids(&ids).unwrap();
         assert_eq!(cards.len(), 2);
     }
@@ -836,7 +855,7 @@ Second body.
         seed_card2(&conn);
         let store = SqliteCardStore::new(&conn);
 
-        let ids = vec!["card_test0002".to_string(), "card_test0001".to_string()];
+        let ids = vec![cid("card_test0002"), cid("card_test0001")];
         let cards = store.query_by_ids(&ids).unwrap();
 
         assert_eq!(
@@ -851,7 +870,7 @@ Second body.
         seed_card(&conn);
         let store = SqliteCardStore::new(&conn);
 
-        let ids = vec!["card_test0001".to_string(), "card_nonexist".to_string()];
+        let ids = vec![cid("card_test0001"), cid("card_nonexist")];
         let cards = store.query_by_ids(&ids).unwrap();
         assert_eq!(cards.len(), 1);
     }
@@ -950,10 +969,10 @@ Dirty body content.
         let vfs = seed_card_with_file(&conn);
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        store.edit_title("card_test0001", "New Title").unwrap();
+        store.edit_title(&cid("card_test0001"), "New Title").unwrap();
 
         // DB 更新
-        let card = store.get("card_test0001").unwrap();
+        let card = store.get(&cid("card_test0001")).unwrap();
         assert_eq!(card.title, "New Title");
 
         // 文件更新 — H1 行应包含新标题
@@ -969,10 +988,10 @@ Dirty body content.
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
         store
-            .edit_title("card_test0001", "**Arc<T>** 原子引用计数 [sync] (send) | #")
+            .edit_title(&cid("card_test0001"), "**Arc<T>** 原子引用计数 [sync] (send) | #")
             .unwrap();
 
-        let card = store.get("card_test0001").unwrap();
+        let card = store.get(&cid("card_test0001")).unwrap();
         assert_eq!(card.title, "**Arc<T>** 原子引用计数 [sync] (send) | #");
 
         let file = vfs.get_file("whiteboard/test.md").unwrap();
@@ -993,7 +1012,7 @@ Dirty body content.
         let vfs = seed_card_with_file(&conn);
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        let result = store.edit_title("card_test0001", "  ");
+        let result = store.edit_title(&cid("card_test0001"), "  ");
         assert!(matches!(result, Err(KeysightError::EmptyTitle)));
     }
 
@@ -1003,7 +1022,7 @@ Dirty body content.
         let vfs = MockVaultFs::new();
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        let result = store.edit_title("card_nonexist", "X");
+        let result = store.edit_title(&cid("card_nonexist"), "X");
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 
@@ -1013,7 +1032,7 @@ Dirty body content.
         let vfs = seed_card_with_file(&conn);
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        store.set_color("card_test0001", "#ffadad").unwrap();
+        store.set_color(&cid("card_test0001"), "#ffadad").unwrap();
 
         // DB 更新
         let color: Option<String> = conn
@@ -1038,9 +1057,9 @@ Dirty body content.
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
         // 先设颜色
-        store.set_color("card_test0001", "#ffadad").unwrap();
+        store.set_color(&cid("card_test0001"), "#ffadad").unwrap();
         // 再用 "default" 清空
-        store.set_color("card_test0001", "default").unwrap();
+        store.set_color(&cid("card_test0001"), "default").unwrap();
 
         let color: Option<String> = conn
             .query_row(
@@ -1061,7 +1080,7 @@ Dirty body content.
         let vfs = MockVaultFs::new();
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        let result = store.set_color("card_nonexist", "#ffadad");
+        let result = store.set_color(&cid("card_nonexist"), "#ffadad");
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 
@@ -1110,10 +1129,10 @@ Dirty body content.
         let vfs = seed_card_with_file(&conn);
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        store.edit_body("card_test0001", "Brand new body.\n").unwrap();
+        store.edit_body(&cid("card_test0001"), "Brand new body.\n").unwrap();
 
         // DB 更新
-        let card = store.get("card_test0001").unwrap();
+        let card = store.get(&cid("card_test0001")).unwrap();
         assert_eq!(card.content, "Brand new body.\n");
 
         // 文件更新 — frontmatter 和 H1 保留，body 替换
@@ -1132,12 +1151,12 @@ Dirty body content.
 
         store
             .edit_body(
-                "card_test0001",
+                &cid("card_test0001"),
                 "<details>\n<summary>折叠标题</summary>\n\n这里是详细内容\n</details>",
             )
             .unwrap();
 
-        let card = store.get("card_test0001").unwrap();
+        let card = store.get(&cid("card_test0001")).unwrap();
         assert_eq!(card.content, "?>> 折叠标题\n这里是详细内容\n?<<");
 
         let file = vfs.get_file("whiteboard/test.md").unwrap();
@@ -1153,7 +1172,7 @@ Dirty body content.
         let vfs = seed_card_with_file(&conn);
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
 
-        store.update_understanding("card_test0001", "新的理解").unwrap();
+        store.update_understanding(&cid("card_test0001"), "新的理解").unwrap();
 
         // DB 更新
         let understanding: String = conn
@@ -1251,7 +1270,7 @@ id: card_contentmatch
         sync::sync_file(&conn, "whiteboard/linker.md", md, 2000.0).unwrap();
 
         let store = SqliteCardStore::new(&conn);
-        let links = store.query_links("card_test0001").unwrap();
+        let links = store.query_links(&cid("card_test0001")).unwrap();
 
         // 出边
         assert_eq!(links.link_to, vec!["card_other001"]);
@@ -1266,7 +1285,7 @@ id: card_contentmatch
     fn test_query_links_not_found() {
         let conn = test_conn();
         let store = SqliteCardStore::new(&conn);
-        let result = store.query_links("card_nonexist");
+        let result = store.query_links(&cid("card_nonexist"));
         assert!(matches!(result, Err(KeysightError::NotFound(_))));
     }
 
@@ -1278,7 +1297,7 @@ id: card_contentmatch
         sync::sync_file(&conn, "whiteboard/lonely.md", md, 1000.0).unwrap();
 
         let store = SqliteCardStore::new(&conn);
-        let links = store.query_links("card_lonely1").unwrap();
+        let links = store.query_links(&cid("card_lonely1")).unwrap();
         assert!(links.link_to.is_empty());
         assert!(links.linked_from.is_empty());
     }
@@ -1295,7 +1314,7 @@ id: card_contentmatch
         .unwrap();
 
         let store = SqliteCardStore::with_vault_fs(&conn, &vfs);
-        store.sync_edges_to_file("card_test0001").unwrap();
+        store.sync_edges_to_file(&cid("card_test0001")).unwrap();
 
         let file = vfs.get_file("whiteboard/test.md").unwrap();
         let parsed = parser::parse_entity(&file).unwrap();

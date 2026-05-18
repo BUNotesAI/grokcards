@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { CardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -37,7 +38,7 @@ export function useEntityActions(whiteboardId?: string) {
 
   const relate = useCallback(
     async (fromCardId: string, toCardId: string) => {
-      await unwrapCommand(commands.entityRelate(fromCardId, toCardId));
+      await unwrapCommand(commands.entityRelate(fromCardId as CardId, toCardId as CardId));
       invalidate();
     },
     [invalidate],

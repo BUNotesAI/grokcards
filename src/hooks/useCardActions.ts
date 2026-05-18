@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { commands } from "@/bindings";
+import type { CardId } from "@/bindings";
 import { unwrapCommand } from "@/lib/commandResult";
 
 /**
@@ -21,7 +22,7 @@ export function useCardActions() {
 
   const editTitle = useCallback(
     async (id: string, title: string) => {
-      await unwrapCommand(commands.cardEditTitle(id, title));
+      await unwrapCommand(commands.cardEditTitle(id as CardId, title));
       invalidate();
     },
     [invalidate],
@@ -29,7 +30,7 @@ export function useCardActions() {
 
   const updateUnderstanding = useCallback(
     async (id: string, value: string) => {
-      await unwrapCommand(commands.cardUpdateUnderstanding(id, value));
+      await unwrapCommand(commands.cardUpdateUnderstanding(id as CardId, value));
       invalidate();
     },
     [invalidate],
@@ -37,7 +38,7 @@ export function useCardActions() {
 
   const editBody = useCallback(
     async (id: string, content: string) => {
-      await unwrapCommand(commands.cardEditBody(id, content));
+      await unwrapCommand(commands.cardEditBody(id as CardId, content));
       invalidate();
     },
     [invalidate],
@@ -45,7 +46,7 @@ export function useCardActions() {
 
   const setColor = useCallback(
     async (id: string, color: string) => {
-      await unwrapCommand(commands.cardSetColor(id, color));
+      await unwrapCommand(commands.cardSetColor(id as CardId, color));
       invalidate();
     },
     [invalidate],

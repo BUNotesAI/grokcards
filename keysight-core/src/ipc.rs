@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::id::WhiteboardId;
+use crate::domain::id::{CardId, WhiteboardId};
 
 /// 写命令请求参数 — tagged enum,wire 层 discriminator 字段为 `kind`(kebab-case)。
 ///
@@ -67,7 +67,7 @@ pub enum MutateParams {
     },
     AliasCreate {
         wb: WhiteboardId,
-        card_id: String,
+        card_id: CardId,
     },
     SetPos {
         wb: WhiteboardId,
@@ -222,7 +222,7 @@ mod tests {
             (
                 MutateParams::AliasCreate {
                     wb: WhiteboardId::parse("w").unwrap(),
-                    card_id: "c".into(),
+                    card_id: CardId::parse("card_c").unwrap(),
                 },
                 "alias-create",
             ),

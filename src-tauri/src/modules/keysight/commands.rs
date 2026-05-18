@@ -7,7 +7,7 @@ use super::domain::alias::{AliasStore, SqliteAliasStore};
 use super::domain::card::{CardStore, SqliteCardStore};
 use super::domain::edge::{user_draw_edge, Edge, EntityId};
 use super::domain::entity::{EntityGraph, SqliteEntityGraph};
-use super::domain::id::WhiteboardId;
+use super::domain::id::{CardId, WhiteboardId};
 use super::domain::layout::{LayoutStore, SqliteLayoutStore};
 use super::domain::legacy_import::{LegacyImporter, SqliteLegacyImporter, SqliteLegacyReader};
 use super::domain::note::{NoteStore, SqliteNoteStore};
@@ -31,7 +31,7 @@ use crate::perf::{lock_db, ScopedTimer};
 /// 按 ID 查询单张卡片。
 #[tauri::command]
 #[specta::specta]
-pub fn card_get(state: State<'_, KeysightRuntimeState>, id: String) -> Result<AtomicCard, AppError> {
+pub fn card_get(state: State<'_, KeysightRuntimeState>, id: CardId) -> Result<AtomicCard, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
@@ -73,7 +73,7 @@ pub fn card_query_by_file(
 #[specta::specta]
 pub fn card_query_by_ids(
     state: State<'_, KeysightRuntimeState>,
-    ids: Vec<String>,
+    ids: Vec<CardId>,
 ) -> Result<Vec<AtomicCard>, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -112,7 +112,7 @@ pub fn card_search(
 #[specta::specta]
 pub fn card_query_links(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: CardId,
 ) -> Result<CardLinksResponse, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -150,7 +150,7 @@ pub fn card_query_links(
 #[specta::specta]
 pub fn card_edit_title(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: CardId,
     new_title: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -186,7 +186,7 @@ pub fn card_edit_title(
 #[specta::specta]
 pub fn card_edit_body(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: CardId,
     new_body: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -221,7 +221,7 @@ pub fn card_edit_body(
 #[specta::specta]
 pub fn card_update_understanding(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: CardId,
     text: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -250,7 +250,7 @@ pub fn card_update_understanding(
 #[specta::specta]
 pub fn card_set_color(
     state: State<'_, KeysightRuntimeState>,
-    id: String,
+    id: CardId,
     color: String,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -973,7 +973,7 @@ pub fn alias_query_all(
 pub fn alias_create(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: WhiteboardId,
-    card_id: String,
+    card_id: CardId,
 ) -> Result<CardAlias, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -1176,7 +1176,7 @@ pub fn entity_connect(
         | Edge::CardRelated { from, .. }
         | Edge::CardSeeAlso { from, .. } => {
             let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
-            store.sync_edges_to_file(from.as_str()).map_err(AppError::from)?;
+            store.sync_edges_to_file(from).map_err(AppError::from)?;
         }
         Edge::NoteLink { from, .. } | Edge::NoteSeeAlso { from, .. } => {
             let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
@@ -1219,32 +1219,17 @@ pub fn entity_connect(
 #[specta::specta]
 pub fn entity_relate(
     state: State<'_, KeysightRuntimeState>,
-    from_card_id: String,
-    to_card_id: String,
+    from_card_id: CardId,
+    to_card_id: CardId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
 
-    let from_entity = EntityId::parse(&from_card_id).map_err(|e| AppError::Keysight {
-        message: format!("from_card_id 解析失败: {e}"),
-    })?;
-    let to_entity = EntityId::parse(&to_card_id).map_err(|e| AppError::Keysight {
-        message: format!("to_card_id 解析失败: {e}"),
-    })?;
-
-    let (from, to) = match (from_entity, to_entity) {
-        (EntityId::Card(a), EntityId::Card(b)) => (a, b),
-        _ => {
-            return Err(AppError::Keysight {
-                message: "entity_relate 只接受 card → card 关系".to_string(),
-            })
-        }
-    };
-
+    // 类型已强制保证 card → card,不需要 EntityId::parse 反推 + match 排错。
     let edge = Edge::CardRelated {
-        from: from.clone(),
-        to,
+        from: from_card_id.clone(),
+        to: to_card_id,
     };
     let graph = SqliteEntityGraph::new(&conn);
     graph.connect(&edge).map_err(AppError::from)?;
@@ -1252,7 +1237,7 @@ pub fn entity_relate(
     // Related 是 card→card,source card 需要同步文件
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
     let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
-    store.sync_edges_to_file(from.as_str()).map_err(AppError::from)?;
+    store.sync_edges_to_file(&from_card_id).map_err(AppError::from)?;
 
     Ok(())
 }
@@ -1289,7 +1274,13 @@ pub fn entity_disconnect(
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
     if from_id.starts_with("card_") && matches!(edge_type, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso) {
         let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
-        store.sync_edges_to_file(&from_id).map_err(AppError::from)?;
+        // entity_disconnect 是 entity-generic 命令(from_id: String,W5 EntityId 范围),
+        // 这里已经 prefix-checked = card_;跨 crate 不开 new_unchecked,显式 parse
+        // 重校验,O(starts_with) 开销可忽略;parse 失败走 propagate 而非 panic。
+        let card_id = CardId::parse(from_id.clone()).map_err(|e| AppError::Keysight {
+            message: format!("内部不变量:from_id 已 prefix-check 为 card_ 但 parse 失败: {e}"),
+        })?;
+        store.sync_edges_to_file(&card_id).map_err(AppError::from)?;
     } else if from_id.starts_with("note_") && edge_type == EdgeType::NoteLink {
         let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
         store.sync_links_to_file(&from_id).map_err(AppError::from)?;

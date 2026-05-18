@@ -8,7 +8,7 @@
 //! 所有业务规则由 server 侧 `MutateParams` dispatcher 判定(Phase 6.2b)。
 
 use keysight_core::domain::card::{CardStore, SqliteCardStore};
-use keysight_core::domain::id::WhiteboardId;
+use keysight_core::domain::id::{CardId, WhiteboardId};
 use keysight_core::domain::note::{self, NoteStore, SqliteNoteStore};
 use keysight_core::domain::overview;
 
@@ -49,7 +49,8 @@ pub fn file(client: &SqliteReadClient, path: &str) -> Result<(), CliError> {
 
 pub fn links(client: &SqliteReadClient, query: &str) -> Result<(), CliError> {
     let store = SqliteCardStore::new(&client.conn);
-    let links = store.query_links(query)?;
+    let card_id = CardId::parse(query).map_err(|e| CliError::Query(format!("非法 card id: {e}")))?;
+    let links = store.query_links(&card_id)?;
     println!("Links for: {}", query);
     print_edge_group("link_to", "→", &links.link_to);
     print_edge_group("related", "→", &links.related);
@@ -62,7 +63,8 @@ pub fn links(client: &SqliteReadClient, query: &str) -> Result<(), CliError> {
 
 pub fn related(client: &SqliteReadClient, id: &str) -> Result<(), CliError> {
     let store = SqliteCardStore::new(&client.conn);
-    let links = store.query_links(id)?;
+    let card_id = CardId::parse(id).map_err(|e| CliError::Query(format!("非法 card id: {e}")))?;
+    let links = store.query_links(&card_id)?;
     println!("Related for: {}", id);
     print_edge_group("out", "→", &links.related);
     print_edge_group("in", "←", &links.related_from);
