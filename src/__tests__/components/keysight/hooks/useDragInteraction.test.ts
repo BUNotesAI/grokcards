@@ -27,7 +27,6 @@ function makeDeps(overrides: Partial<UseDragInteractionDeps> = {}): UseDragInter
       aliases: [],
     } as unknown as UseDragInteractionDeps["data"],
     currentWhiteboardId: "wb_test",
-    allKinds: { card_a: "card" },
     ...overrides,
   };
 }
@@ -80,7 +79,6 @@ describe("useDragInteraction", () => {
         notes: [],
         aliases: [],
       } as unknown as UseDragInteractionDeps["data"],
-      allKinds: { sec_a: "section", card_b: "card", card_c: "card" },
     });
     const { result } = renderHook(() => useDragInteraction(deps));
 

@@ -14,6 +14,7 @@ import type { useViewport } from "@/components/keysight/useViewport";
 import type { useLayoutActions } from "@/hooks/useLayoutActions";
 import type { WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
 import type { EntityKind } from "@/components/keysight/types";
+import { deriveAllKinds } from "@/components/keysight/lib/deriveAllKinds";
 
 /** 拖拽阈值 — 小于此距离视为 click 而非 drag(屏幕像素) */
 const DRAG_THRESHOLD = 4;
@@ -47,7 +48,6 @@ export interface UseDragInteractionDeps {
   layouts: ReturnType<typeof useLayoutActions>;
   data: WhiteboardData;
   currentWhiteboardId: string;
-  allKinds: Record<string, EntityKind>;
 }
 
 export interface UseDragInteractionResult {
@@ -63,7 +63,14 @@ export interface UseDragInteractionResult {
 }
 
 export function useDragInteraction(deps: UseDragInteractionDeps): UseDragInteractionResult {
-  const { viewport, layouts, data, currentWhiteboardId, allKinds } = deps;
+  const { viewport, layouts, data, currentWhiteboardId } = deps;
+  // 自己 derive 一份 allKinds(供 mousedown 时按 kind 分支处理)— 与 useEntityIndexes 是
+  // 重复算,但避开"useDragInteraction 必须晚于 useEntityIndexes,而 useEntityIndexes
+  // 需要 effectivePositions 又来自 useDragInteraction"的循环依赖。
+  const allKinds = useMemo<Record<string, EntityKind>>(
+    () => deriveAllKinds(data),
+    [data.cards, data.notes, data.tasks, data.questions, data.sections, data.aliases],
+  );
 
   // 拖拽状态:ref 存储启动时的位置/屏幕坐标 + 被拖拽节点的 DOM 引用
   // mousemove 时直接 imperative 更新 el.style.transform,绕过 React 重渲染延迟

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import type { Dispatch, RefObject, SetStateAction } from "react";
 import type { Position } from "@/bindings";
 import type { useCardActions } from "@/hooks/useCardActions";
@@ -11,23 +11,16 @@ import type { useLayoutActions } from "@/hooks/useLayoutActions";
 import type { useEntityActions } from "@/hooks/useEntityActions";
 import type { useViewport } from "@/components/keysight/useViewport";
 import type { WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
-import type {
-  EntityWithPosition,
-  GraphSelection,
-} from "@/components/keysight/types";
+import type { EntityWithPosition, GraphSelection } from "@/components/keysight/types";
 import type { NodeContextMenuHandlers } from "@/components/keysight/nodes/EntityNode";
-import { normalizeCardTitleForClipboard } from "@/components/keysight/lib/normalizeCardTitleForClipboard";
 import { SECTION_PADDING } from "@/components/keysight/lib/sectionLayout";
 import {
-  TASK_JUMP_MIN_ZOOM,
-  TASK_NODE_HEIGHT,
-  TASK_NODE_WIDTH,
-  taskPositionAboveTopmost,
+  TASK_JUMP_MIN_ZOOM, TASK_NODE_HEIGHT, TASK_NODE_WIDTH, taskPositionAboveTopmost,
 } from "@/components/keysight/lib/taskLayout";
 import type { EditingField } from "@/components/keysight/hooks/useEntityEditing";
+import { useEntityMenuHandlers } from "@/components/keysight/hooks/useEntityMenuHandlers";
 
 export interface UseEntityContextMenuDeps {
-  // entity actions
   cards: ReturnType<typeof useCardActions>;
   notes: ReturnType<typeof useNoteActions>;
   tasks: ReturnType<typeof useTaskActions>;
@@ -36,38 +29,30 @@ export interface UseEntityContextMenuDeps {
   questions: ReturnType<typeof useQuestionActions>;
   layouts: ReturnType<typeof useLayoutActions>;
   entities: ReturnType<typeof useEntityActions>;
-  // GraphView state / memo
   data: WhiteboardData;
   currentWhiteboardId: string;
   effectivePositions: Record<string, Position>;
   allEntities: EntityWithPosition[];
   allDimensions: Record<string, { width: number; height: number }>;
   entityToSectionId: Record<string, string>;
-  // viewport
   viewport: ReturnType<typeof useViewport>;
   getVisibleViewportSize: () => { width: number; height: number };
   newEntityPositionAtCenter: (width: number, height: number) => { x: number; y: number };
-  // cross-hook
   lastDidDragRef: RefObject<boolean>;
   setEditing: Dispatch<SetStateAction<{ id: string; field: EditingField } | null>>;
   setLocalPositions: Dispatch<SetStateAction<Record<string, Position>>>;
-  // props passthrough
   onSelectEntity: ((selection: GraphSelection | null) => void) | undefined;
   onWhiteboardChange: (whiteboardId: string) => void;
 }
 
 export interface UseEntityContextMenuResult {
-  // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
   drawingState: { fromId: string } | null;
   setDrawingState: Dispatch<SetStateAction<{ fromId: string } | null>>;
-  // Related picker — 对齐旧 Obsidian 交互
   relatedPickerCardId: string | null;
   setRelatedPickerCardId: Dispatch<SetStateAction<string | null>>;
   relatedSearch: string;
   setRelatedSearch: Dispatch<SetStateAction<string>>;
-  // ⋯ 菜单回调集合(稳定 reference 传给 EntityNode)
   menuHandlers: NodeContextMenuHandlers;
-  // jump / select / sync
   handleJumpToSection: (sectionId: string) => void;
   handleJumpToTask: (taskId: string) => Promise<void>;
   handleJumpToBoard: (whiteboardId: string) => void;
@@ -75,32 +60,12 @@ export interface UseEntityContextMenuResult {
   handleSelectEntity: (selection: GraphSelection) => void;
 }
 
-export function useEntityContextMenu(
-  deps: UseEntityContextMenuDeps,
-): UseEntityContextMenuResult {
+export function useEntityContextMenu(deps: UseEntityContextMenuDeps): UseEntityContextMenuResult {
   const {
-    cards,
-    notes,
-    tasks,
-    sections,
-    aliases,
-    questions,
-    layouts,
-    entities,
-    data,
-    currentWhiteboardId,
-    effectivePositions,
-    allEntities,
-    allDimensions,
-    entityToSectionId,
-    viewport,
-    getVisibleViewportSize,
-    newEntityPositionAtCenter,
-    lastDidDragRef,
-    setEditing,
-    setLocalPositions,
-    onSelectEntity,
-    onWhiteboardChange,
+    cards, notes, tasks, sections, aliases, questions, layouts, entities,
+    data, currentWhiteboardId, effectivePositions, allEntities, allDimensions,
+    entityToSectionId, viewport, getVisibleViewportSize, newEntityPositionAtCenter,
+    lastDidDragRef, setEditing, setLocalPositions, onSelectEntity, onWhiteboardChange,
   } = deps;
 
   // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
@@ -118,206 +83,12 @@ export function useEntityContextMenu(
     setRelatedSearch("");
   }, [currentWhiteboardId]);
 
-  // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode,memo 比较依赖它不变
-  // 依赖 data/viewport/entity-actions,数据变化时整体替换(EntityNode 整体重渲染)
-  const menuHandlers = useMemo<NodeContextMenuHandlers>(
-    () => ({
-      // 共享:Copy UUID + normalized title(所有节点)
-      // pipeline: `UUID:${id} ${normalizeCardTitleForClipboard(title)}`
-      // kind 决定 entity 查找位置;Alias 借 source card 的 title
-      onCopyEntityUuidTitle: (entityId, kind) => {
-        let title: string | undefined;
-        switch (kind) {
-          case "card":
-            title = data.cards.find((c) => c.id === entityId)?.title;
-            break;
-          case "note":
-            title = data.notes.find((n) => n.id === entityId)?.title;
-            break;
-          case "question":
-            title = data.questions.find((q) => q.id === entityId)?.title;
-            break;
-          case "section":
-            title = data.sections.find((s) => s.id === entityId)?.title;
-            break;
-          case "alias": {
-            const alias = data.aliases.find((a) => a.aliasId === entityId);
-            if (!alias) break;
-            title = data.cards.find((c) => c.id === alias.cardId)?.title;
-            break;
-          }
-          case "task":
-            title = data.tasks.find((t) => t.id === entityId)?.title;
-            break;
-          case "whiteboard":
-            return; // whiteboard 无菜单
-        }
-        if (title === undefined) return;
-        void navigator.clipboard.writeText(
-          `UUID:${entityId} ${normalizeCardTitleForClipboard(title)}`,
-        );
-      },
-      onDrawConnectionFrom: (id) => {
-        setRelatedPickerCardId(null);
-        setRelatedSearch("");
-        setDrawingState({ fromId: id });
-      },
-      onRelatedFrom: (id) => {
-        setDrawingState(null);
-        setRelatedSearch("");
-        setRelatedPickerCardId(id);
-      },
-      onCreateAlias: async (cardId) => {
-        try {
-          const cardPos = effectivePositions[cardId];
-          const alias = await aliases.create(currentWhiteboardId, cardId);
-          if (cardPos) {
-            await layouts.setPosition(
-              currentWhiteboardId,
-              alias.aliasId,
-              cardPos.x + 540,
-              cardPos.y,
-            );
-          }
-        } catch (e) {
-          console.error("创建 alias 失败:", e);
-        }
-      },
-      onJumpToSourceCard: (aliasId) => {
-        const alias = data.aliases.find((a) => a.aliasId === aliasId);
-        if (!alias) return;
-        const cardPos = effectivePositions[alias.cardId];
-        if (!cardPos) return;
-        const size = getVisibleViewportSize();
-        if (size.width === 0 || size.height === 0) return;
-        const dim = allDimensions[alias.cardId];
-        viewport.actions.centerOn(
-          cardPos.x,
-          cardPos.y,
-          size.width,
-          size.height,
-          dim?.width ?? 520,
-          dim?.height ?? 220,
-        );
-      },
-      onDeleteAlias: async (aliasId) => {
-        try {
-          await aliases.remove(aliasId);
-        } catch (e) {
-          console.error("删除 alias 失败:", e);
-        }
-      },
-      onEditNoteTitle: (noteId) => setEditing({ id: noteId, field: "note-title" }),
-      onDeleteNote: async (noteId) => {
-        try {
-          await notes.remove(noteId);
-        } catch (e) {
-          console.error("删除 note 失败:", e);
-        }
-      },
-      onSetNoteColor: async (noteId, color) => {
-        try {
-          await notes.update(noteId, null, null, color);
-        } catch (e) {
-          console.error("更新 note 颜色失败:", e);
-        }
-      },
-      onEditQuestionTitle: (questionId) =>
-        setEditing({ id: questionId, field: "question-title" }),
-      onDeleteQuestion: async (questionId) => {
-        try {
-          await questions.remove(questionId);
-        } catch (e) {
-          console.error("删除 question 失败:", e);
-        }
-      },
-      onDeleteSection: async (sectionId) => {
-        try {
-          await sections.remove(sectionId);
-        } catch (e) {
-          console.error("删除 section 失败:", e);
-        }
-      },
-      onSetSectionColor: async (sectionId, color) => {
-        try {
-          await sections.update(sectionId, null, color);
-        } catch (e) {
-          console.error("更新 section 颜色失败:", e);
-        }
-      },
-      onMoveToSection: async (entityId, sectionId) => {
-        try {
-          const prevSection = entityToSectionId[entityId];
-          if (prevSection && prevSection !== sectionId) {
-            await sections.removeMember(prevSection, entityId);
-          }
-          await sections.addMember(sectionId, entityId);
-        } catch (e) {
-          console.error("移动到 section 失败:", e);
-        }
-      },
-      onRemoveFromGroup: async (entityId) => {
-        try {
-          const sectionId = entityToSectionId[entityId];
-          if (!sectionId) return;
-          await sections.removeMember(sectionId, entityId);
-        } catch (e) {
-          console.error("从 section 移除失败:", e);
-        }
-      },
-      onSetCardColor: async (cardId, color) => {
-        try {
-          await cards.setColor(cardId, color);
-        } catch (e) {
-          console.error("更新 card 颜色失败:", e);
-        }
-      },
-      onSetQuestionColor: async (questionId, color) => {
-        try {
-          await questions.update(questionId, null, null, null, color);
-        } catch (e) {
-          console.error("更新 question 颜色失败:", e);
-        }
-      },
-      onEditTaskTitle: (taskId) => setEditing({ id: taskId, field: "task-title" }),
-      onDeleteTask: async (taskId) => {
-        try {
-          await tasks.remove(taskId);
-        } catch (e) {
-          console.error("删除 task 失败:", e);
-        }
-      },
-      onSetTaskColor: async (taskId, color) => {
-        try {
-          await tasks.setColor(taskId, color);
-        } catch (e) {
-          console.error("更新 task 颜色失败:", e);
-        }
-      },
-    }),
-    [
-      data.cards,
-      data.notes,
-      data.questions,
-      data.aliases,
-      data.sections,
-      data.tasks,
-      effectivePositions,
-      entityToSectionId,
-      allDimensions,
-      getVisibleViewportSize,
-      viewport.actions,
-      currentWhiteboardId,
-      cards,
-      notes,
-      sections,
-      questions,
-      tasks,
-      aliases,
-      layouts,
-      setEditing,
-    ],
-  );
+  const menuHandlers = useEntityMenuHandlers({
+    cards, notes, tasks, sections, aliases, questions, layouts,
+    data, currentWhiteboardId, effectivePositions, allDimensions, entityToSectionId,
+    viewport, getVisibleViewportSize,
+    setEditing, setDrawingState, setRelatedPickerCardId, setRelatedSearch,
+  });
 
   // 跳转到指定 section — 用 allDimensions 算出真实尺寸后调 viewport.centerOn
   const handleJumpToSection = useCallback(
@@ -330,19 +101,13 @@ export function useEntityContextMenu(
       );
       if (sectionEntity) {
         viewport.actions.centerOn(
-          sectionEntity.position.x,
-          sectionEntity.position.y,
-          size.width,
-          size.height,
-          dim.width,
-          dim.height,
+          sectionEntity.position.x, sectionEntity.position.y,
+          size.width, size.height, dim.width, dim.height,
         );
         return;
       }
-
       const section = data.sections.find((item) => item.id === sectionId);
       if (!section) return;
-
       const memberPosList = section.cardIds
         .map((id) => effectivePositions[id])
         .filter((p): p is { x: number; y: number } => p != null);
@@ -350,26 +115,14 @@ export function useEntityContextMenu(
         const minX = Math.min(...memberPosList.map((p) => p.x));
         const minY = Math.min(...memberPosList.map((p) => p.y));
         viewport.actions.centerOn(
-          minX - SECTION_PADDING,
-          minY - SECTION_PADDING,
-          size.width,
-          size.height,
-          dim.width,
-          dim.height,
+          minX - SECTION_PADDING, minY - SECTION_PADDING,
+          size.width, size.height, dim.width, dim.height,
         );
         return;
       }
-
       const ownPos = effectivePositions[sectionId];
       if (!ownPos) return;
-      viewport.actions.centerOn(
-        ownPos.x,
-        ownPos.y,
-        size.width,
-        size.height,
-        dim.width,
-        dim.height,
-      );
+      viewport.actions.centerOn(ownPos.x, ownPos.y, size.width, size.height, dim.width, dim.height);
     },
     [allDimensions, allEntities, data.sections, effectivePositions, getVisibleViewportSize, viewport.actions],
   );
@@ -380,13 +133,11 @@ export function useEntityContextMenu(
       if (!task) return;
       const size = getVisibleViewportSize();
       if (size.width === 0 || size.height === 0) return;
-
       let position = effectivePositions[taskId];
       if (!position) {
         const fallbackPos = newEntityPositionAtCenter(TASK_NODE_WIDTH, TASK_NODE_HEIGHT);
         position = taskPositionAboveTopmost(data.tasks, effectivePositions, fallbackPos);
         setLocalPositions((prev) => ({ ...prev, [taskId]: position }));
-
         try {
           await layouts.setPosition(currentWhiteboardId, taskId, position.x, position.y);
         } catch (e) {
@@ -395,30 +146,16 @@ export function useEntityContextMenu(
           return;
         }
       }
-
       const dim = allDimensions[taskId] ?? { width: TASK_NODE_WIDTH, height: TASK_NODE_HEIGHT };
       viewport.actions.centerOn(
-        position.x,
-        position.y,
-        size.width,
-        size.height,
-        dim.width,
-        dim.height,
+        position.x, position.y, size.width, size.height, dim.width, dim.height,
         { minZoom: TASK_JUMP_MIN_ZOOM },
       );
       onSelectEntity?.({ id: taskId, kind: "task" });
     },
     [
-      allDimensions,
-      currentWhiteboardId,
-      data.tasks,
-      effectivePositions,
-      getVisibleViewportSize,
-      newEntityPositionAtCenter,
-      onSelectEntity,
-      layouts,
-      viewport.actions,
-      setLocalPositions,
+      allDimensions, currentWhiteboardId, data.tasks, effectivePositions, getVisibleViewportSize,
+      newEntityPositionAtCenter, onSelectEntity, layouts, viewport.actions, setLocalPositions,
     ],
   );
 
@@ -467,17 +204,10 @@ export function useEntityContextMenu(
   );
 
   return {
-    drawingState,
-    setDrawingState,
-    relatedPickerCardId,
-    setRelatedPickerCardId,
-    relatedSearch,
-    setRelatedSearch,
+    drawingState, setDrawingState,
+    relatedPickerCardId, setRelatedPickerCardId,
+    relatedSearch, setRelatedSearch,
     menuHandlers,
-    handleJumpToSection,
-    handleJumpToTask,
-    handleJumpToBoard,
-    handleSync,
-    handleSelectEntity,
+    handleJumpToSection, handleJumpToTask, handleJumpToBoard, handleSync, handleSelectEntity,
   };
 }

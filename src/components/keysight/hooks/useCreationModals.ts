@@ -1,5 +1,4 @@
-import { useCallback, useState } from "react";
-import type { Dispatch, SetStateAction } from "react";
+import { useCallback, useState, type Dispatch, type SetStateAction } from "react";
 import type { Position } from "@/bindings";
 import type { useNoteActions } from "@/hooks/useNoteActions";
 import type { useQuestionActions } from "@/hooks/useQuestionActions";
@@ -19,6 +18,17 @@ import {
 import { viewportCenterWorld } from "@/components/keysight/lib/graphPositioning";
 import type { EditingField } from "@/components/keysight/hooks/useEntityEditing";
 
+// 4 类 modal 的状态用 discriminated union 表达,让"同时多个 modal active"在类型层不可表达。
+// kind: "idle" 显式表达"无 modal active",避免用 null/undefined 模糊态。
+type Modal =
+  | { kind: "idle" }
+  | { kind: "note"; draft: string }
+  | { kind: "question"; draft: string }
+  | { kind: "task"; draft: string }
+  | { kind: "whiteboard"; draft: string };
+
+type ModalKind = "note" | "question" | "task" | "whiteboard";
+
 export interface UseCreationModalsDeps {
   notes: ReturnType<typeof useNoteActions>;
   questions: ReturnType<typeof useQuestionActions>;
@@ -36,7 +46,6 @@ export interface UseCreationModalsDeps {
   getVisibleViewportSize: () => { width: number; height: number };
   onSelectEntity: ((selection: GraphSelection | null) => void) | undefined;
   setEditing: Dispatch<SetStateAction<{ id: string; field: EditingField } | null>>;
-  // setLocalPositions 在 W2 抽 useDragInteraction 后会重整,这里暂以 setter 形式 inject。
   setLocalPositions: Dispatch<SetStateAction<Record<string, Position>>>;
 }
 
@@ -70,37 +79,41 @@ export interface UseCreationModalsResult {
   handleSubmitCreateWhiteboard: () => Promise<void>;
 }
 
+// 从 union state 派生 4 个 (boolean, draft, setDraft) 三元组,JSX 侧 API 不变。
+function modalAccessors(
+  modal: Modal,
+  setModal: Dispatch<SetStateAction<Modal>>,
+  kind: ModalKind,
+): { active: boolean; draft: string; setDraft: Dispatch<SetStateAction<string>> } {
+  const setDraft: Dispatch<SetStateAction<string>> = (next) =>
+    setModal((m) =>
+      m.kind === kind
+        ? { kind, draft: typeof next === "function" ? next(m.draft) : next }
+        : m,
+    );
+  return {
+    active: modal.kind === kind,
+    draft: modal.kind === kind ? modal.draft : "",
+    setDraft,
+  };
+}
+
 export function useCreationModals(deps: UseCreationModalsDeps): UseCreationModalsResult {
   const {
-    notes,
-    questions,
-    tasks,
-    whiteboardActions,
-    sections,
-    layouts,
-    viewport,
-    currentWhiteboardId,
-    data,
-    effectivePositions,
-    allEntities,
-    allDimensions,
-    newEntityPositionAtCenter,
-    getVisibleViewportSize,
-    onSelectEntity,
-    setEditing,
-    setLocalPositions,
+    notes, questions, tasks, whiteboardActions, sections, layouts, viewport,
+    currentWhiteboardId, data, effectivePositions, allEntities, allDimensions,
+    newEntityPositionAtCenter, getVisibleViewportSize, onSelectEntity,
+    setEditing, setLocalPositions,
   } = deps;
 
-  const [creatingNote, setCreatingNote] = useState(false);
-  const [noteDraft, setNoteDraft] = useState("");
-  const [creatingQuestion, setCreatingQuestion] = useState(false);
-  const [questionDraft, setQuestionDraft] = useState("");
-  const [creatingWhiteboard, setCreatingWhiteboard] = useState(false);
-  const [whiteboardDraft, setWhiteboardDraft] = useState("");
-  const [creatingTask, setCreatingTask] = useState(false);
-  const [taskDraft, setTaskDraft] = useState("");
+  const [modal, setModal] = useState<Modal>({ kind: "idle" });
 
-  // 创建 Section 回调
+  const note = modalAccessors(modal, setModal, "note");
+  const question = modalAccessors(modal, setModal, "question");
+  const task = modalAccessors(modal, setModal, "task");
+  const whiteboard = modalAccessors(modal, setModal, "whiteboard");
+
+  // section 没有 modal,直接创建 + 进入 inline 编辑
   const handleCreateSection = useCallback(async () => {
     try {
       const result = await sections.create(currentWhiteboardId, "New Section", null);
@@ -127,40 +140,14 @@ export function useCreationModals(deps: UseCreationModalsDeps): UseCreationModal
     } catch (e) {
       console.error("创建 section 失败:", e);
     }
-  }, [
-    allDimensions,
-    allEntities,
-    onSelectEntity,
-    currentWhiteboardId,
-    newEntityPositionAtCenter,
-    sections,
-    layouts,
-    setEditing,
-  ]);
+  }, [allDimensions, allEntities, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, sections, layouts, setEditing]);
 
-  // 创建 Note 回调
-  const handleCreateNote = useCallback(() => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    setCreatingTask(false);
-    setTaskDraft("");
-    setNoteDraft("");
-    setCreatingNote(true);
-  }, []);
-
-  const handleCancelCreateNote = useCallback(() => {
-    setCreatingNote(false);
-    setNoteDraft("");
-  }, []);
-
-  const handleSubmitCreateNote = useCallback(async () => {
-    const title = noteDraft.trim();
-    setCreatingNote(false);
-    setNoteDraft("");
+  const openNote = useCallback(() => setModal({ kind: "note", draft: "" }), []);
+  const submitNote = useCallback(async () => {
+    if (modal.kind !== "note") return;
+    const title = modal.draft.trim();
+    setModal({ kind: "idle" });
     if (!title) return;
-
     try {
       const result = await notes.create(currentWhiteboardId, title, null, null);
       const pos = newEntityPositionAtCenter(520, 180);
@@ -170,38 +157,14 @@ export function useCreationModals(deps: UseCreationModalsDeps): UseCreationModal
     } catch (e) {
       console.error("创建 note 失败:", e);
     }
-  }, [
-    noteDraft,
-    onSelectEntity,
-    currentWhiteboardId,
-    newEntityPositionAtCenter,
-    notes,
-    layouts,
-    setEditing,
-  ]);
+  }, [modal, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, notes, layouts, setEditing]);
 
-  const handleCreateQuestion = useCallback(async () => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    setCreatingNote(false);
-    setNoteDraft("");
-    setCreatingTask(false);
-    setTaskDraft("");
-    setQuestionDraft("");
-    setCreatingQuestion(true);
-  }, []);
-
-  const handleCancelCreateQuestion = useCallback(() => {
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-  }, []);
-
-  const handleSubmitCreateQuestion = useCallback(async () => {
-    const title = questionDraft.trim();
-    setCreatingQuestion(false);
-    setQuestionDraft("");
+  const openQuestion = useCallback(async () => setModal({ kind: "question", draft: "" }), []);
+  const submitQuestion = useCallback(async () => {
+    if (modal.kind !== "question") return;
+    const title = modal.draft.trim();
+    setModal({ kind: "idle" });
     if (!title) return;
-
     try {
       const result = await questions.create(currentWhiteboardId, title, null, null, null);
       const pos = newEntityPositionAtCenter(320, 140);
@@ -211,77 +174,38 @@ export function useCreationModals(deps: UseCreationModalsDeps): UseCreationModal
     } catch (e) {
       console.error("创建 question 失败:", e);
     }
-  }, [
-    questionDraft,
-    onSelectEntity,
-    currentWhiteboardId,
-    newEntityPositionAtCenter,
-    questions,
-    layouts,
-    setEditing,
-  ]);
+  }, [modal, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, questions, layouts, setEditing]);
 
-  // 创建 Task 回调 — 仅在 currentWhiteboardId 形如 "projects/{name}" 时由 GraphToolbar 触发
-  const handleCreateTask = useCallback(() => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    setCreatingNote(false);
-    setNoteDraft("");
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    setTaskDraft("");
-    setCreatingTask(true);
-  }, []);
-
-  const handleCancelCreateTask = useCallback(() => {
-    setCreatingTask(false);
-    setTaskDraft("");
-  }, []);
-
-  const handleSubmitCreateTask = useCallback(async () => {
-    const title = taskDraft.trim();
-    setCreatingTask(false);
-    setTaskDraft("");
+  const openTask = useCallback(() => setModal({ kind: "task", draft: "" }), []);
+  const submitTask = useCallback(async () => {
+    if (modal.kind !== "task") return;
+    const title = modal.draft.trim();
+    setModal({ kind: "idle" });
     if (!title) return;
-
     // project 从 currentWhiteboardId 剥 "projects/" 前缀推导:按钮仅在该上下文渲染,
     // 但防御性地再校验一次,避免静默写入错 project
-    const projectPrefix = "projects/";
-    if (!currentWhiteboardId.startsWith(projectPrefix)) {
-      console.error("handleSubmitCreateTask 在非 project 白板被调用", { currentWhiteboardId });
+    if (!currentWhiteboardId.startsWith("projects/")) {
+      console.error("submitTask 在非 project 白板被调用", { currentWhiteboardId });
       return;
     }
-    const project = currentWhiteboardId.slice(projectPrefix.length);
+    const project = currentWhiteboardId.slice("projects/".length);
     if (!project) {
-      console.error("handleSubmitCreateTask 派生出空 project name", { currentWhiteboardId });
+      console.error("submitTask 派生出空 project name", { currentWhiteboardId });
       return;
     }
-
     try {
       const fallbackPos = newEntityPositionAtCenter(320, 140);
       const pos = taskPositionAboveTopmost(data.tasks, effectivePositions, fallbackPos);
       const result = await tasks.create({
-        project,
-        title,
-        content: null,
-        status: "next",
-        area: null,
-        color: null,
-        position: pos,
+        project, title, content: null, status: "next", area: null, color: null, position: pos,
       });
       onSelectEntity?.({ id: result.id, kind: "task" });
     } catch (e) {
       console.error("创建 task 失败:", e);
     }
-  }, [
-    taskDraft,
-    data.tasks,
-    effectivePositions,
-    onSelectEntity,
-    currentWhiteboardId,
-    newEntityPositionAtCenter,
-    tasks,
-  ]);
+  }, [modal, data.tasks, effectivePositions, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, tasks]);
+
+  const cancelAny = useCallback(() => setModal({ kind: "idle" }), []);
 
   const handlePackTasks = useCallback(async () => {
     if (!currentWhiteboardId.startsWith("projects/")) return;
@@ -309,7 +233,6 @@ export function useCreationModals(deps: UseCreationModalsDeps): UseCreationModal
     try {
       // Promise.all 并发写,部分失败不 rollback 已成功的写入。catch 块
       // invalidate 让 query refetch 拿回 server 真实状态,UI 显示 partial。
-      // 如未来需要原子语义,加 layout_set_positions_bulk command 走单事务。
       await Promise.all(
         Object.entries(packed).map(([taskId, position]) =>
           layouts.setPositionWithoutInvalidate(
@@ -326,76 +249,51 @@ export function useCreationModals(deps: UseCreationModalsDeps): UseCreationModal
       console.error("整理 task 位置失败:", e);
       layouts.invalidatePositions();
     }
-  }, [
-    currentWhiteboardId,
-    data.tasks,
-    getVisibleViewportSize,
-    layouts,
-    viewport.actions,
-    viewport.state.panX,
-    viewport.state.panY,
-    viewport.state.zoom,
-    setLocalPositions,
-  ]);
+  }, [currentWhiteboardId, data.tasks, getVisibleViewportSize, layouts, viewport.actions, viewport.state.panX, viewport.state.panY, viewport.state.zoom, setLocalPositions]);
 
-  const handleCreateWhiteboard = useCallback(async () => {
+  const openWhiteboard = useCallback(async () => {
     if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
-    setCreatingNote(false);
-    setNoteDraft("");
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    setCreatingTask(false);
-    setTaskDraft("");
-    setWhiteboardDraft("");
-    setCreatingWhiteboard(true);
+    setModal({ kind: "whiteboard", draft: "" });
   }, [currentWhiteboardId]);
-
-  const handleCancelCreateWhiteboard = useCallback(() => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-  }, []);
-
-  const handleSubmitCreateWhiteboard = useCallback(async () => {
+  const submitWhiteboard = useCallback(async () => {
     if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
-
-    const name = whiteboardDraft.trim();
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
+    if (modal.kind !== "whiteboard") return;
+    const name = modal.draft.trim();
+    setModal({ kind: "idle" });
     if (!name) return;
-
     try {
       await whiteboardActions.create(name);
     } catch (e) {
       console.error("创建 whiteboard 失败:", e);
     }
-  }, [currentWhiteboardId, whiteboardActions, whiteboardDraft]);
+  }, [currentWhiteboardId, whiteboardActions, modal]);
 
   return {
-    creatingNote,
-    noteDraft,
-    setNoteDraft,
-    creatingQuestion,
-    questionDraft,
-    setQuestionDraft,
-    creatingTask,
-    taskDraft,
-    setTaskDraft,
-    creatingWhiteboard,
-    whiteboardDraft,
-    setWhiteboardDraft,
+    creatingNote: note.active,
+    noteDraft: note.draft,
+    setNoteDraft: note.setDraft,
+    creatingQuestion: question.active,
+    questionDraft: question.draft,
+    setQuestionDraft: question.setDraft,
+    creatingTask: task.active,
+    taskDraft: task.draft,
+    setTaskDraft: task.setDraft,
+    creatingWhiteboard: whiteboard.active,
+    whiteboardDraft: whiteboard.draft,
+    setWhiteboardDraft: whiteboard.setDraft,
     handleCreateSection,
-    handleCreateNote,
-    handleCancelCreateNote,
-    handleSubmitCreateNote,
-    handleCreateQuestion,
-    handleCancelCreateQuestion,
-    handleSubmitCreateQuestion,
-    handleCreateTask,
-    handleCancelCreateTask,
-    handleSubmitCreateTask,
+    handleCreateNote: openNote,
+    handleCancelCreateNote: cancelAny,
+    handleSubmitCreateNote: submitNote,
+    handleCreateQuestion: openQuestion,
+    handleCancelCreateQuestion: cancelAny,
+    handleSubmitCreateQuestion: submitQuestion,
+    handleCreateTask: openTask,
+    handleCancelCreateTask: cancelAny,
+    handleSubmitCreateTask: submitTask,
     handlePackTasks,
-    handleCreateWhiteboard,
-    handleCancelCreateWhiteboard,
-    handleSubmitCreateWhiteboard,
+    handleCreateWhiteboard: openWhiteboard,
+    handleCancelCreateWhiteboard: cancelAny,
+    handleSubmitCreateWhiteboard: submitWhiteboard,
   };
 }
