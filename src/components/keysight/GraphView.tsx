@@ -4,7 +4,7 @@ import { GraphEdges } from "@/components/keysight/GraphEdges";
 import { GraphToolbar, type EntityCounts } from "@/components/keysight/GraphToolbar";
 import { clearSavedViewport, useViewport } from "@/components/keysight/useViewport";
 import { useContainerSize } from "@/components/keysight/hooks/useContainerSize";
-import { useWhiteboardData, useWhiteboardList, type WhiteboardData } from "@/components/keysight/hooks/useWhiteboardData";
+import { useWhiteboardData, useWhiteboardList } from "@/components/keysight/hooks/useWhiteboardData";
 import { useVisibleEntities } from "@/components/keysight/hooks/useVisibleEntities";
 import { EntityNode } from "@/components/keysight/nodes/EntityNode";
 import { WhiteboardNode } from "@/components/keysight/nodes/WhiteboardNode";
@@ -16,10 +16,9 @@ import { perfLog } from "@/lib/perf";
 import type {
   AliasReference,
   EntityKind,
-  EntityWithPosition,
   GraphSelection,
 } from "@/components/keysight/types";
-import type { Position, TaskStatus } from "@/bindings";
+import type { Position } from "@/bindings";
 import type { NodeContextMenuHandlers } from "@/components/keysight/nodes/EntityNode";
 import type { SectionListItem } from "@/components/keysight/nodes/NodeContextMenu";
 import { useCardActions } from "@/hooks/useCardActions";
@@ -31,162 +30,28 @@ import { useQuestionActions } from "@/hooks/useQuestionActions";
 import { useLayoutActions } from "@/hooks/useLayoutActions";
 import { useWhiteboardActions } from "@/hooks/useWhiteboardActions";
 import { useEntityActions } from "@/hooks/useEntityActions";
+import {
+  viewportCenterWorld,
+  visibleViewportSize,
+} from "@/components/keysight/lib/graphPositioning";
+import {
+  avoidSectionOverlap,
+  SECTION_PADDING,
+} from "@/components/keysight/lib/sectionLayout";
+import {
+  TASK_NODE_WIDTH,
+  TASK_NODE_HEIGHT,
+  TASK_JUMP_MIN_ZOOM,
+  packTaskPositions,
+  taskPositionAboveTopmost,
+} from "@/components/keysight/lib/taskLayout";
+import { mergeEntitiesWithPositions } from "@/components/keysight/lib/mergeEntitiesWithPositions";
 
 /** 拖拽阈值 — 小于此距离视为 click 而非 drag（屏幕像素） */
 const DRAG_THRESHOLD = 4;
 
 /** 根白板 ID — rust/chentian 等是子白板，根白板显示子白板预览卡 */
 export const ROOT_WHITEBOARD = "wb_root";
-const SECTION_PADDING = 40;
-const TASK_NODE_WIDTH = 320;
-const TASK_NODE_HEIGHT = 140;
-const TASK_JUMP_MIN_ZOOM = 0.75;
-const TASK_TOP_INSERT_OFFSET_Y = 180;
-const TASK_PACK_COLUMN_GAP = 360;
-const TASK_PACK_ROW_GAP = 170;
-const TASK_PACK_TOP_OFFSET_Y = 200;
-// Record<TaskStatus, ...> 守护:Rust 端 TaskStatus 加 variant 时 TS 编译
-// 因缺 key 而失败,强制补 column。防 stringly typed 漏 case,符合 L0 防火墙
-// "想出错都难"——比 array + indexOf 更直接表达"每个 status 必有一列"。
-const TASK_STATUS_COLUMN: Record<TaskStatus, number> = {
-  inbox: 0,
-  next: 1,
-  active: 2,
-  blocked: 3,
-  done: 4,
-};
-const TASK_STATUS_COLUMN_COUNT = Object.keys(TASK_STATUS_COLUMN).length;
-
-/** 把屏幕中心转成世界坐标 — 给"在视口中央创建新实体"用 */
-function viewportCenterWorld(
-  zoom: number,
-  panX: number,
-  panY: number,
-  containerWidth: number,
-  containerHeight: number,
-): { x: number; y: number } {
-  return {
-    x: (-panX + containerWidth / 2) / zoom,
-    y: (-panY + containerHeight / 2) / zoom,
-  };
-}
-
-/**
- * 计算 wrapper div 在当前 window 里真正可见的尺寸。
- *
- * 为什么需要:body overflow 失控 / 嵌套 flex 异常时,wrapper 可以长出视口
- * 高度(如 contentRect.height = 12500),centerOn math 用这个错的高度
- * 会把 entity 推到屏幕外。此函数用 window.innerWidth/innerHeight 减去
- * rect.left/top 算可见区,作为 raw rect 的上限兜底。
- *
- * 1.5× buffer:允许 rect 比 visible 略大(scrollbar、sub-pixel rounding),
- * 超过则视为 layout 异常,用 visible 替换。阈值选 1.5 而不是 1.0 是为了
- * 避免临界尺寸下在 raw 和 visible 之间反复 flap 触发 re-render。
- */
-function visibleViewportSize(
-  element: HTMLElement | null,
-  fallback: { width: number; height: number },
-): { width: number; height: number } {
-  const rect = element?.getBoundingClientRect();
-  const rawWidth = rect && rect.width > 0 ? rect.width : fallback.width;
-  const rawHeight = rect && rect.height > 0 ? rect.height : fallback.height;
-  if (rawWidth <= 0 || rawHeight <= 0) return { width: 0, height: 0 };
-
-  const windowWidth = typeof window === "undefined" ? rawWidth : window.innerWidth;
-  const windowHeight = typeof window === "undefined" ? rawHeight : window.innerHeight;
-  const visibleWidth =
-    rect && rect.width > 0 ? Math.max(0, windowWidth - Math.max(rect.left, 0)) : windowWidth;
-  const visibleHeight =
-    rect && rect.height > 0 ? Math.max(0, windowHeight - Math.max(rect.top, 0)) : windowHeight;
-
-  return {
-    width: rawWidth > visibleWidth * 1.5 ? visibleWidth : rawWidth,
-    height: rawHeight > visibleHeight * 1.5 ? visibleHeight : rawHeight,
-  };
-}
-
-interface Rect {
-  left: number;
-  top: number;
-  right: number;
-  bottom: number;
-}
-
-function rectsOverlap(a: Rect, b: Rect): boolean {
-  return a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top;
-}
-
-function avoidSectionOverlap(
-  preferred: { x: number; y: number },
-  size: { width: number; height: number },
-  existingRects: Rect[],
-  gap = 40,
-): { x: number; y: number } {
-  let next = { ...preferred };
-
-  for (let i = 0; i < existingRects.length * 2 + 1; i += 1) {
-    const candidate: Rect = {
-      left: next.x,
-      top: next.y,
-      right: next.x + size.width,
-      bottom: next.y + size.height,
-    };
-    const hit = existingRects.find((rect) => rectsOverlap(candidate, rect));
-    if (!hit) return next;
-    next = {
-      x: hit.right + gap,
-      y: hit.top,
-    };
-  }
-
-  return next;
-}
-
-function taskPositionAboveTopmost(
-  tasks: Array<{ id: string }>,
-  positions: Record<string, Position>,
-  fallback: Position,
-): Position {
-  const taskPositions = tasks
-    .map((task) => positions[task.id])
-    .filter((position): position is Position => position != null);
-
-  if (taskPositions.length === 0) return fallback;
-
-  const topmost = taskPositions.reduce((best, position) => {
-    if (position.y < best.y) return position;
-    if (position.y === best.y && position.x < best.x) return position;
-    return best;
-  });
-
-  return {
-    x: topmost.x,
-    y: topmost.y - TASK_TOP_INSERT_OFFSET_Y,
-  };
-}
-
-function packTaskPositions(
-  tasks: Array<{ id: string; status: TaskStatus }>,
-  viewportCenter: Position,
-): Record<string, Position> {
-  const originX =
-    viewportCenter.x - ((TASK_STATUS_COLUMN_COUNT - 1) * TASK_PACK_COLUMN_GAP) / 2;
-  const originY = viewportCenter.y - TASK_PACK_TOP_OFFSET_Y;
-  const rowsByColumn = new Map<number, number>();
-  const packed: Record<string, Position> = {};
-
-  for (const task of tasks) {
-    const column = TASK_STATUS_COLUMN[task.status];
-    const row = rowsByColumn.get(column) ?? 0;
-    rowsByColumn.set(column, row + 1);
-    packed[task.id] = {
-      x: originX + column * TASK_PACK_COLUMN_GAP,
-      y: originY + row * TASK_PACK_ROW_GAP,
-    };
-  }
-
-  return packed;
-}
 
 export interface GraphFocusTarget {
   id: string;
@@ -210,82 +75,6 @@ interface GraphViewProps {
   onOpenAlias?: (aliasId: string) => void;
 }
 
-/**
- * 合并所有实体和位置数据为 EntityWithPosition[]。
- *
- * 只有有位置数据的实体才会被渲染（没位置的卡片不在画布上显示）。
- */
-function mergeEntitiesWithPositions(
-  data: WhiteboardData,
-  positions: Record<string, Position>,
-): EntityWithPosition[] {
-  const result: EntityWithPosition[] = [];
-
-  // Sections — 位置从成员动态计算（和旧 Obsidian 插件行为一致）
-  // Section 盒子的 top-left 是 min(member.x, member.y) - PADDING
-  // 如果没有任何成员有位置，section 不渲染
-  for (const section of data.sections) {
-    const memberPosList = section.cardIds
-      .map((id) => positions[id])
-      .filter((p): p is { x: number; y: number } => p != null);
-
-    if (memberPosList.length === 0) {
-      // 无成员位置 — 回退到 section 自己的位置（兼容空 section）
-      const ownPos = positions[section.id];
-      if (ownPos) {
-        result.push({ kind: "section", id: section.id, entity: section, position: ownPos });
-      }
-      continue;
-    }
-
-    const minX = Math.min(...memberPosList.map((p) => p.x));
-    const minY = Math.min(...memberPosList.map((p) => p.y));
-    const effectivePos = { x: minX - SECTION_PADDING, y: minY - SECTION_PADDING };
-    result.push({ kind: "section", id: section.id, entity: section, position: effectivePos });
-  }
-
-  // Cards
-  for (const card of data.cards) {
-    const pos = positions[card.id];
-    if (pos) {
-      result.push({ kind: "card", id: card.id, entity: card, position: pos });
-    }
-  }
-
-  // Tasks
-  for (const task of data.tasks) {
-    const pos = positions[task.id];
-    if (pos) {
-      result.push({ kind: "task", id: task.id, entity: task, position: pos });
-    }
-  }
-
-  // Questions
-  for (const question of data.questions) {
-    const pos = positions[question.id];
-    if (pos) {
-      result.push({ kind: "question", id: question.id, entity: question, position: pos });
-    }
-  }
-
-  // Notes
-  for (const note of data.notes) {
-    const pos = positions[note.id];
-    if (pos) {
-      result.push({ kind: "note", id: note.id, entity: note, position: pos });
-    }
-  }
-
-  // Aliases
-  for (const alias of data.aliases) {
-    const pos = positions[alias.aliasId];
-    if (pos) {
-      result.push({ kind: "alias", id: alias.aliasId, entity: alias, position: pos });
-    }
-  }
-
-  return result;
-}
 
 /**
  * KeySight 知识图谱主视图 — 数据枢纽
