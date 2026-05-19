@@ -103,6 +103,8 @@ pub(super) fn dispatch_mutate(
         MutateParams::SectionAdd { section_id, entity_id } => {
             op_section_add(conn, &section_id, &entity_id)?
         }
+        // ↑ wb / section_id / entity_id / from / to 经 IPC 反序列化已是 newtype,
+        //   op_* helper 全部接强类型;EntityId::parse 不再出现在内部。
         MutateParams::SectionMove { section_id, target_wb } => {
             op_section_move(conn, &section_id, &target_wb)?
         }
@@ -162,33 +164,32 @@ fn op_alias_create(conn: &Connection, wb: &WhiteboardId, card_id: &CardId) -> Op
     ))
 }
 
-fn op_set_pos(conn: &Connection, wb: &WhiteboardId, entity_id: &str, x: f64, y: f64) -> OpResult {
+fn op_set_pos(conn: &Connection, wb: &WhiteboardId, entity_id: &EntityId, x: f64, y: f64) -> OpResult {
     SqliteLayoutStore::new(conn).set_position(wb, entity_id, x, y)?;
     Ok((
         None,
-        json!({ "kind": "position", "entity_id": entity_id, "wb": wb.as_str(), "x": x, "y": y }),
+        json!({ "kind": "position", "entity_id": entity_id.as_str(), "wb": wb.as_str(), "x": x, "y": y }),
     ))
 }
 
 fn op_connect(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    from: String,
-    to: String,
+    from: EntityId,
+    to: EntityId,
 ) -> OpResult {
-    // Edge variant 由 `EntityId::parse(from)` 的 kind 决定(Card/Note/Alias/Question →
-    // 对应 `*Link`;Section/Task → `ConnectionNotAllowed`)。wire 不传 edge_type:
-    // 类型已强制保证唯一合法形状。
-    let from_id = EntityId::parse(&from)
-        .map_err(|e| KeysightError::ParseError(format!("from_id 解析失败: {e}")))?;
-    let to_id = EntityId::parse(&to)
-        .map_err(|e| KeysightError::ParseError(format!("to_id 解析失败: {e}")))?;
-    let edge = user_draw_edge(from_id, to_id)?;
+    // Edge variant 由 EntityId variant 决定(Card/Note/Alias/Question → 对应
+    // `*Link`;Section/Task → `ConnectionNotAllowed`)。EntityId::parse 已在
+    // IPC 反序列化边界完成,内部不再 parse。emit_payload 需要原始 from/to 字面量,
+    // user_draw_edge 会消耗 EntityId,提前 clone 字符串投影。
+    let from_str = from.as_str().to_string();
+    let to_str = to.as_str().to_string();
+    let edge = user_draw_edge(from, to)?;
     SqliteEntityGraph::new(conn).connect(&edge)?;
 
     sync_source_file_for_edge(conn, vault_fs, &edge)?;
 
-    Ok((None, json!({ "kind": "edge", "op": "connect", "from": from, "to": to })))
+    Ok((None, json!({ "kind": "edge", "op": "connect", "from": from_str, "to": to_str })))
 }
 
 /// 文件 sync —— 对齐 entity_connect 的 Edge 变体穷尽 match(硬约束:禁 `_` 通配,踩坑样例 1)
@@ -222,44 +223,46 @@ fn sync_source_file_for_edge(
 fn op_disconnect(
     conn: &Connection,
     vault_fs: &dyn VaultFs,
-    from: String,
-    to: String,
+    from: EntityId,
+    to: EntityId,
     edge_type: String,
 ) -> OpResult {
     let et = EdgeType::from_db_str(&edge_type)
         .ok_or_else(|| KeysightError::ParseError(format!("未知 edge_type: {edge_type}")))?;
     SqliteEntityGraph::new(conn).disconnect(&from, &to, et)?;
 
-    // 文件 sync —— 对齐 entity_disconnect(stringly-typed 旧 API 保留形状)
-    if from.starts_with("card_")
-        && matches!(et, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso)
-    {
-        // 同 commands::entity_disconnect:prefix-checked,跨 crate parse 重校验,
-        // O(starts_with) 开销可忽略,不开放 new_unchecked API 表面;失败走 propagate。
-        let card_id = CardId::parse(from.clone()).map_err(|e| {
-            KeysightError::ParseError(format!("内部不变量:from 已 prefix-check 为 card_ 但 parse 失败: {e}"))
-        })?;
-        SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(&card_id)?;
-    } else if from.starts_with("note_") && et == EdgeType::NoteLink {
-        // 同 op_disconnect card 分支:prefix-checked,跨 crate parse 重校验,
-        // O(starts_with) 开销可忽略,不开放 new_unchecked API 表面;失败走 propagate。
-        let note_id = NoteId::parse(from.clone()).map_err(|e| {
-            KeysightError::ParseError(format!("内部不变量:from 已 prefix-check 为 note_ 但 parse 失败: {e}"))
-        })?;
-        SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(&note_id)?;
+    // 文件 sync —— W5 后直接 match EntityId variant 拿强类型 inner id,删去原
+    // `starts_with` + 跨 crate `CardId::parse` 重校验(那两步等价于 IPC 边界已经
+    // 做过的校验,且 new_unchecked 仍是 pub(crate),不外泄)。
+    match (&from, et) {
+        (EntityId::Card(card_id), EdgeType::LinkTo)
+        | (EntityId::Card(card_id), EdgeType::Related)
+        | (EntityId::Card(card_id), EdgeType::SeeAlso) => {
+            SqliteCardStore::with_vault_fs(conn, vault_fs).sync_edges_to_file(card_id)?;
+        }
+        (EntityId::Note(note_id), EdgeType::NoteLink) => {
+            SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(note_id)?;
+        }
+        _ => {}
     }
 
     Ok((
         None,
-        json!({ "kind": "edge", "op": "disconnect", "from": from, "to": to, "edge_type": edge_type }),
+        json!({
+            "kind": "edge",
+            "op": "disconnect",
+            "from": from.as_str(),
+            "to": to.as_str(),
+            "edge_type": edge_type,
+        }),
     ))
 }
 
-fn op_section_add(conn: &Connection, section_id: &SectionId, entity_id: &str) -> OpResult {
+fn op_section_add(conn: &Connection, section_id: &SectionId, entity_id: &EntityId) -> OpResult {
     SqliteSectionStore::new(conn).add_member(section_id, entity_id)?;
     Ok((
         None,
-        json!({ "kind": "section_member", "op": "add", "section_id": section_id.as_str(), "entity_id": entity_id }),
+        json!({ "kind": "section_member", "op": "add", "section_id": section_id.as_str(), "entity_id": entity_id.as_str() }),
     ))
 }
 

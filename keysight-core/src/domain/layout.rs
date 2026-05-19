@@ -3,15 +3,15 @@ use std::collections::HashMap;
 
 use rusqlite::{params, Connection};
 
-use crate::domain::id::WhiteboardId;
+use crate::domain::id::{EntityId, WhiteboardId};
 use crate::errors::KeysightError;
 use crate::models::Position;
 
 /// 位置管理契约。
 pub trait LayoutStore {
-    fn set_position(&self, whiteboard_id: &WhiteboardId, entity_id: &str, x: f64, y: f64) -> Result<(), KeysightError>;
+    fn set_position(&self, whiteboard_id: &WhiteboardId, entity_id: &EntityId, x: f64, y: f64) -> Result<(), KeysightError>;
     fn query_positions(&self, whiteboard_id: &WhiteboardId) -> Result<HashMap<String, Position>, KeysightError>;
-    fn remove_position(&self, whiteboard_id: &WhiteboardId, entity_id: &str) -> Result<(), KeysightError>;
+    fn remove_position(&self, whiteboard_id: &WhiteboardId, entity_id: &EntityId) -> Result<(), KeysightError>;
 }
 
 pub struct SqliteLayoutStore<'a> {
@@ -23,10 +23,10 @@ impl<'a> SqliteLayoutStore<'a> {
 }
 
 impl LayoutStore for SqliteLayoutStore<'_> {
-    fn set_position(&self, whiteboard_id: &WhiteboardId, entity_id: &str, x: f64, y: f64) -> Result<(), KeysightError> {
+    fn set_position(&self, whiteboard_id: &WhiteboardId, entity_id: &EntityId, x: f64, y: f64) -> Result<(), KeysightError> {
         self.conn.execute(
             "INSERT OR REPLACE INTO positions (entity_id, whiteboard_id, x, y) VALUES (?1, ?2, ?3, ?4)",
-            params![entity_id, whiteboard_id.as_str(), x, y],
+            params![entity_id.as_str(), whiteboard_id.as_str(), x, y],
         )?;
         Ok(())
     }
@@ -49,10 +49,10 @@ impl LayoutStore for SqliteLayoutStore<'_> {
         Ok(map)
     }
 
-    fn remove_position(&self, whiteboard_id: &WhiteboardId, entity_id: &str) -> Result<(), KeysightError> {
+    fn remove_position(&self, whiteboard_id: &WhiteboardId, entity_id: &EntityId) -> Result<(), KeysightError> {
         self.conn.execute(
             "DELETE FROM positions WHERE entity_id = ?1 AND whiteboard_id = ?2",
-            params![entity_id, whiteboard_id.as_str()],
+            params![entity_id.as_str(), whiteboard_id.as_str()],
         )?;
         Ok(())
     }
@@ -69,12 +69,18 @@ mod tests {
         conn
     }
 
+    /// 测试 fixture 桥接:把字面量 id 包成 EntityId。W5 渗透后 trait 方法签名
+    /// 要求 `&EntityId`,字面量来自 test code,这里集中转换。
+    fn eid(s: &str) -> EntityId {
+        EntityId::parse(s).expect("test fixture entity id 应合法")
+    }
+
     #[test]
     fn test_set_and_query_position() {
         let conn = test_conn();
         let store = SqliteLayoutStore::new(&conn);
         let wb = WhiteboardId::parse("wb_root").unwrap();
-        store.set_position(&wb, "card_aaa", 100.0, 200.0).unwrap();
+        store.set_position(&wb, &eid("card_aaa"), 100.0, 200.0).unwrap();
 
         let positions = store.query_positions(&wb).unwrap();
         assert_eq!(positions.len(), 1);
@@ -88,8 +94,8 @@ mod tests {
         let conn = test_conn();
         let store = SqliteLayoutStore::new(&conn);
         let wb = WhiteboardId::parse("wb_root").unwrap();
-        store.set_position(&wb, "card_aaa", 100.0, 200.0).unwrap();
-        store.set_position(&wb, "card_aaa", 300.0, 400.0).unwrap();
+        store.set_position(&wb, &eid("card_aaa"), 100.0, 200.0).unwrap();
+        store.set_position(&wb, &eid("card_aaa"), 300.0, 400.0).unwrap();
 
         let positions = store.query_positions(&wb).unwrap();
         assert_eq!(positions.len(), 1);
@@ -101,8 +107,8 @@ mod tests {
         let conn = test_conn();
         let store = SqliteLayoutStore::new(&conn);
         let wb = WhiteboardId::parse("wb_root").unwrap();
-        store.set_position(&wb, "card_aaa", 100.0, 200.0).unwrap();
-        store.remove_position(&wb, "card_aaa").unwrap();
+        store.set_position(&wb, &eid("card_aaa"), 100.0, 200.0).unwrap();
+        store.remove_position(&wb, &eid("card_aaa")).unwrap();
 
         let positions = store.query_positions(&wb).unwrap();
         assert!(positions.is_empty());
@@ -114,8 +120,8 @@ mod tests {
         let store = SqliteLayoutStore::new(&conn);
         let wb_root = WhiteboardId::parse("wb_root").unwrap();
         let wb_other = WhiteboardId::parse("wb_other").unwrap();
-        store.set_position(&wb_root, "card_aaa", 10.0, 20.0).unwrap();
-        store.set_position(&wb_other, "card_bbb", 30.0, 40.0).unwrap();
+        store.set_position(&wb_root, &eid("card_aaa"), 10.0, 20.0).unwrap();
+        store.set_position(&wb_other, &eid("card_bbb"), 30.0, 40.0).unwrap();
 
         let root = store.query_positions(&wb_root).unwrap();
         assert_eq!(root.len(), 1);

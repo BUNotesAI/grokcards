@@ -1,7 +1,7 @@
 #![allow(dead_code)]
 use rusqlite::{params, Connection};
 
-use crate::domain::id::{SectionId, WhiteboardId};
+use crate::domain::id::{EntityId, SectionId, WhiteboardId};
 use crate::errors::KeysightError;
 use crate::id;
 use crate::models::GraphSection;
@@ -11,8 +11,8 @@ pub trait SectionStore {
     fn create(&self, whiteboard_id: &WhiteboardId, title: &str, color: Option<&str>) -> Result<GraphSection, KeysightError>;
     fn delete(&self, id: &SectionId) -> Result<(), KeysightError>;
     fn update(&self, id: &SectionId, title: Option<&str>, color: Option<&str>) -> Result<(), KeysightError>;
-    fn add_member(&self, section_id: &SectionId, entity_id: &str) -> Result<(), KeysightError>;
-    fn remove_member(&self, section_id: &SectionId, entity_id: &str) -> Result<(), KeysightError>;
+    fn add_member(&self, section_id: &SectionId, entity_id: &EntityId) -> Result<(), KeysightError>;
+    fn remove_member(&self, section_id: &SectionId, entity_id: &EntityId) -> Result<(), KeysightError>;
     fn get(&self, id: &SectionId) -> Result<GraphSection, KeysightError>;
     fn query_all(&self, whiteboard_id: &WhiteboardId) -> Result<Vec<GraphSection>, KeysightError>;
     fn move_to_whiteboard(&self, section_id: &SectionId, target_whiteboard_id: &WhiteboardId) -> Result<(), KeysightError>;
@@ -73,18 +73,18 @@ impl SectionStore for SqliteSectionStore<'_> {
         Ok(())
     }
 
-    fn add_member(&self, section_id: &SectionId, entity_id: &str) -> Result<(), KeysightError> {
+    fn add_member(&self, section_id: &SectionId, entity_id: &EntityId) -> Result<(), KeysightError> {
         self.conn.execute(
             "INSERT OR IGNORE INTO section_members (section_id, entity_id) VALUES (?1, ?2)",
-            params![section_id.as_str(), entity_id],
+            params![section_id.as_str(), entity_id.as_str()],
         )?;
         Ok(())
     }
 
-    fn remove_member(&self, section_id: &SectionId, entity_id: &str) -> Result<(), KeysightError> {
+    fn remove_member(&self, section_id: &SectionId, entity_id: &EntityId) -> Result<(), KeysightError> {
         self.conn.execute(
             "DELETE FROM section_members WHERE section_id = ?1 AND entity_id = ?2",
-            params![section_id.as_str(), entity_id],
+            params![section_id.as_str(), entity_id.as_str()],
         )?;
         Ok(())
     }
@@ -211,6 +211,12 @@ mod tests {
         SectionId::parse(s).expect("test fixture section id 应合法")
     }
 
+    /// 测试 fixture 桥接:把字面量 entity id 包成 EntityId。W5 渗透后
+    /// `add_member` / `remove_member` 签名要求 `&EntityId`。
+    fn eid(s: &str) -> EntityId {
+        EntityId::parse(s).expect("test fixture entity id 应合法")
+    }
+
     #[test]
     fn test_create_section() {
         let conn = test_conn();
@@ -246,13 +252,13 @@ mod tests {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
         let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Sec", None).unwrap();
-        store.add_member(&sid(&sec.id), "card_aaa").unwrap();
-        store.add_member(&sid(&sec.id), "card_bbb").unwrap();
+        store.add_member(&sid(&sec.id), &eid("card_aaa")).unwrap();
+        store.add_member(&sid(&sec.id), &eid("card_bbb")).unwrap();
 
         let loaded = store.get(&sid(&sec.id)).unwrap();
         assert_eq!(loaded.card_ids.len(), 2);
 
-        store.remove_member(&sid(&sec.id), "card_aaa").unwrap();
+        store.remove_member(&sid(&sec.id), &eid("card_aaa")).unwrap();
         let loaded2 = store.get(&sid(&sec.id)).unwrap();
         assert_eq!(loaded2.card_ids.len(), 1);
     }
@@ -262,8 +268,8 @@ mod tests {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
         let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Sec", None).unwrap();
-        store.add_member(&sid(&sec.id), "card_aaa").unwrap();
-        store.add_member(&sid(&sec.id), "card_aaa").unwrap(); // 重复
+        store.add_member(&sid(&sec.id), &eid("card_aaa")).unwrap();
+        store.add_member(&sid(&sec.id), &eid("card_aaa")).unwrap(); // 重复
         let loaded = store.get(&sid(&sec.id)).unwrap();
         assert_eq!(loaded.card_ids.len(), 1);
     }
@@ -285,7 +291,7 @@ mod tests {
         let conn = test_conn();
         let store = SqliteSectionStore::new(&conn);
         let sec = store.create(&WhiteboardId::parse("wb_root").unwrap(),"Movable", None).unwrap();
-        store.add_member(&sid(&sec.id), "card_aaa").unwrap();
+        store.add_member(&sid(&sec.id), &eid("card_aaa")).unwrap();
 
         // 设置位置(create 已经写入 auto-position row,这里用 OR REPLACE 覆盖成固定坐标供断言)
         conn.execute(
@@ -331,8 +337,8 @@ mod tests {
         // 移 sec1 到另一个白板
         store.move_to_whiteboard(&sid(&sec1.id), &WhiteboardId::parse("wb_other").unwrap()).unwrap();
 
-        // 跨白板 link 被清
-        let edges = graph.edges_from(&sec1.id).unwrap();
+        // 跨白板 link 被清(sec_ 前缀 → EntityId::Section,fixture parse)
+        let edges = graph.edges_from(&eid(&sec1.id)).unwrap();
         assert!(edges.is_empty(), "跨白板 section_link 应被清除");
     }
 

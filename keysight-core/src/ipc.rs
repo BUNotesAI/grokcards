@@ -9,7 +9,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::domain::id::{CardId, NoteId, SectionId, WhiteboardId};
+use crate::domain::id::{CardId, EntityId, NoteId, SectionId, WhiteboardId};
 
 /// 写命令请求参数 — tagged enum,wire 层 discriminator 字段为 `kind`(kebab-case)。
 ///
@@ -30,15 +30,17 @@ use crate::domain::id::{CardId, NoteId, SectionId, WhiteboardId};
 /// | `SectionAdd` | `SectionStore::add_member(section_id, entity_id)` | No |
 /// | `SectionMove` | `SectionStore::move_to_whiteboard(section_id, target_wb)` | No |
 ///
-/// ## Design note — Connect 由 EntityId 推导,Disconnect 仍 stringly-typed
+/// ## Design note — W5 EntityId 跨实体统一
 ///
-/// `Connect`: wire 只传 `from` / `to`。Edge variant 由 `EntityId::parse` 得到的
-/// kind 唯一决定(Card/Note/Alias/Question → 对应 `*Link` 变体;Section/Task →
+/// `Connect` / `Disconnect`: wire 字段 `from` / `to` 反序列化为 [`EntityId`],
+/// IPC 边界自动 reject 任何不匹配 6 个 entity prefix 的字符串
+/// (`IdError::UnknownPrefix`)。Edge variant 由 EntityId variant 唯一决定
+/// (Card/Note/Alias/Question → 对应 `*Link` 变体;Section/Task →
 /// `ConnectionNotAllowed`),无需调用方判别。
 ///
-/// `Disconnect`: 仍透传 `edge_type: String`,server 侧 `EdgeType::from_db_str`
-/// parse(domain `EntityGraph::disconnect` API 仍是 stringly-typed,子阶段统一
-/// 升级待 D Theme 后再做)。
+/// `Disconnect.edge_type` 保留 `String` wire(server 侧 `EdgeType::from_db_str`
+/// parse),不在 W5 范围 —— edge type 是关系修饰符而非 entity id,渗透到强类型
+/// `EdgeType` enum 走另一个 wave。
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "kebab-case")]
 pub enum MutateParams {
@@ -71,22 +73,22 @@ pub enum MutateParams {
     },
     SetPos {
         wb: WhiteboardId,
-        entity_id: String,
+        entity_id: EntityId,
         x: f64,
         y: f64,
     },
     Connect {
-        from: String,
-        to: String,
+        from: EntityId,
+        to: EntityId,
     },
     Disconnect {
-        from: String,
-        to: String,
+        from: EntityId,
+        to: EntityId,
         edge_type: String,
     },
     SectionAdd {
         section_id: SectionId,
-        entity_id: String,
+        entity_id: EntityId,
     },
     SectionMove {
         section_id: SectionId,
@@ -159,12 +161,13 @@ mod tests {
     fn test_mutate_params_set_pos_kebab_case() {
         let params = MutateParams::SetPos {
             wb: WhiteboardId::parse("wb_root").unwrap(),
-            entity_id: "sec_abc12345".into(),
+            entity_id: EntityId::parse("sec_abc12345").unwrap(),
             x: 100.5,
             y: -50.25,
         };
         let j = serde_json::to_value(&params).unwrap();
         assert_eq!(j["kind"], "set-pos");
+        assert_eq!(j["entity_id"], "sec_abc12345");
         assert_eq!(j["x"], 100.5);
         assert_eq!(j["y"], -50.25);
     }
@@ -174,8 +177,8 @@ mod tests {
     #[test]
     fn test_mutate_params_connect_wire_has_no_edge_type() {
         let params = MutateParams::Connect {
-            from: "note_aaa".into(),
-            to: "card_bbb".into(),
+            from: EntityId::parse("note_aaa").unwrap(),
+            to: EntityId::parse("card_bbb").unwrap(),
         };
         let j = serde_json::to_value(&params).unwrap();
         assert_eq!(
@@ -187,6 +190,48 @@ mod tests {
             })
         );
         assert!(j.get("edge_type").is_none(), "edge_type 应已从 wire 移除");
+    }
+
+    /// W5 spec scenario 3:invalid prefix 在 IPC 反序列化边界被 EntityId 的
+    /// `try_from = "String"` 拒绝(`IdError::UnknownPrefix`)。
+    #[test]
+    fn test_mutate_params_set_pos_rejects_unknown_entity_prefix() {
+        let payload = json!({
+            "kind": "set-pos",
+            "wb": "wb_root",
+            "entity_id": "unknown_xxx",
+            "x": 0.0,
+            "y": 0.0,
+        });
+        let result: Result<MutateParams, _> = serde_json::from_value(payload);
+        assert!(result.is_err(), "unknown_xxx 应被 EntityId try_from 拒绝");
+        let err_msg = format!("{}", result.unwrap_err());
+        assert!(
+            err_msg.contains("UnknownPrefix") || err_msg.contains("unknown_xxx"),
+            "错误消息应含 UnknownPrefix 或原 id 字面量,实际: {err_msg}"
+        );
+    }
+
+    #[test]
+    fn test_mutate_params_connect_rejects_unknown_entity_prefix() {
+        let payload = json!({
+            "kind": "connect",
+            "from": "card_aaa",
+            "to": "garbage_no_prefix",
+        });
+        let result: Result<MutateParams, _> = serde_json::from_value(payload);
+        assert!(result.is_err(), "garbage_no_prefix 应被 EntityId try_from 拒绝");
+    }
+
+    #[test]
+    fn test_mutate_params_section_add_rejects_unknown_entity_prefix() {
+        let payload = json!({
+            "kind": "section-add",
+            "section_id": "sec_abc12345",
+            "entity_id": "bogus_id",
+        });
+        let result: Result<MutateParams, _> = serde_json::from_value(payload);
+        assert!(result.is_err(), "bogus_id 应被 EntityId try_from 拒绝");
     }
 
     /// 所有 9 kind 字符串 round-trip 稳定(避免 variant rename 悄悄破协议)
@@ -229,7 +274,7 @@ mod tests {
             (
                 MutateParams::SetPos {
                     wb: WhiteboardId::parse("w").unwrap(),
-                    entity_id: "e".into(),
+                    entity_id: EntityId::parse("card_e").unwrap(),
                     x: 0.0,
                     y: 0.0,
                 },
@@ -237,15 +282,15 @@ mod tests {
             ),
             (
                 MutateParams::Connect {
-                    from: "a".into(),
-                    to: "b".into(),
+                    from: EntityId::parse("card_a").unwrap(),
+                    to: EntityId::parse("card_b").unwrap(),
                 },
                 "connect",
             ),
             (
                 MutateParams::Disconnect {
-                    from: "a".into(),
-                    to: "b".into(),
+                    from: EntityId::parse("card_a").unwrap(),
+                    to: EntityId::parse("card_b").unwrap(),
                     edge_type: "link_to".into(),
                 },
                 "disconnect",
@@ -253,7 +298,7 @@ mod tests {
             (
                 MutateParams::SectionAdd {
                     section_id: SectionId::parse("sec_s0000001").unwrap(),
-                    entity_id: "e".into(),
+                    entity_id: EntityId::parse("card_e").unwrap(),
                 },
                 "section-add",
             ),

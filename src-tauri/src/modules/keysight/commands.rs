@@ -412,7 +412,7 @@ pub fn section_update(
 pub fn section_add_member(
     state: State<'_, KeysightRuntimeState>,
     section_id: SectionId,
-    entity_id: String,
+    entity_id: EntityId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -439,7 +439,7 @@ pub fn section_add_member(
 pub fn section_remove_member(
     state: State<'_, KeysightRuntimeState>,
     section_id: SectionId,
-    entity_id: String,
+    entity_id: EntityId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -1044,7 +1044,7 @@ pub fn layout_query_positions(
 pub fn layout_set_position(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: WhiteboardId,
-    entity_id: String,
+    entity_id: EntityId,
     x: f64,
     y: f64,
 ) -> Result<(), AppError> {
@@ -1075,7 +1075,7 @@ pub fn layout_set_position(
 pub fn layout_remove_position(
     state: State<'_, KeysightRuntimeState>,
     whiteboard_id: WhiteboardId,
-    entity_id: String,
+    entity_id: EntityId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -1095,7 +1095,7 @@ pub fn layout_remove_position(
 #[specta::specta]
 pub fn entity_edges_from(
     state: State<'_, KeysightRuntimeState>,
-    entity_id: String,
+    entity_id: EntityId,
 ) -> Result<Vec<EdgeRow>, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -1109,7 +1109,7 @@ pub fn entity_edges_from(
 #[specta::specta]
 pub fn entity_edges_to(
     state: State<'_, KeysightRuntimeState>,
-    entity_id: String,
+    entity_id: EntityId,
 ) -> Result<Vec<EdgeRow>, AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
@@ -1124,17 +1124,16 @@ pub fn entity_edges_to(
 /// typed 版本(edge_type / style / label 参数已整体退役)。
 ///
 /// ## 前置条件
-/// - from_id 和 to_id 都必须是合法 entity id(prefix 匹配 card_/note_/alias_/
-///   sec_/q_/task_),否则 parse 失败返 `AppError::Keysight`
+/// - from_id / to_id 均为 [`EntityId`](W5 后 IPC 边界 try_from 已校验 prefix,
+///   非法 id 不会到达本函数)
 /// - from 不能是 section / task (业务规则:这两类不主动发边),否则返
 ///   `KeysightError::ConnectionNotAllowed`
 ///
 /// ## 执行效果
-/// 1. [`EntityId::parse`] 两端字符串 → 强类型
-/// 2. [`user_draw_edge`] 派发为具体 [`Edge`] 变体(CardLink/NoteLink/AliasLink/
+/// 1. [`user_draw_edge`] 派发为具体 [`Edge`] 变体(CardLink/NoteLink/AliasLink/
 ///    QuestionLink)
-/// 3. [`SqliteEntityGraph::connect`] 落 DB
-/// 4. 按 edge 变体穷尽 match 决定是否需要同步 source 的 md 文件
+/// 2. [`SqliteEntityGraph::connect`] 落 DB
+/// 3. 按 edge 变体穷尽 match 决定是否需要同步 source 的 md 文件
 ///
 /// ## 不做的事
 /// - 不处理 Related picker (用 [`entity_relate`])
@@ -1150,21 +1149,14 @@ pub fn entity_edges_to(
 #[specta::specta]
 pub fn entity_connect(
     state: State<'_, KeysightRuntimeState>,
-    from_id: String,
-    to_id: String,
+    from_id: EntityId,
+    to_id: EntityId,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
     // 例外: Mutex poisoning 不可恢复
     let conn = state.core.db.lock().unwrap();
 
-    let from = EntityId::parse(&from_id).map_err(|e| AppError::Keysight {
-        message: format!("from_id 解析失败: {e}"),
-    })?;
-    let to = EntityId::parse(&to_id).map_err(|e| AppError::Keysight {
-        message: format!("to_id 解析失败: {e}"),
-    })?;
-
-    let edge = user_draw_edge(from, to).map_err(AppError::from)?;
+    let edge = user_draw_edge(from_id, to_id).map_err(AppError::from)?;
 
     let graph = SqliteEntityGraph::new(&conn);
     graph.connect(&edge).map_err(AppError::from)?;
@@ -1259,8 +1251,8 @@ pub fn entity_relate(
 #[specta::specta]
 pub fn entity_disconnect(
     state: State<'_, KeysightRuntimeState>,
-    from_id: String,
-    to_id: String,
+    from_id: EntityId,
+    to_id: EntityId,
     edge_type: EdgeType,
 ) -> Result<(), AppError> {
     let state = state.resolved()?;
@@ -1271,24 +1263,22 @@ pub fn entity_disconnect(
         .disconnect(&from_id, &to_id, edge_type)
         .map_err(AppError::from)?;
 
+    // 文件 sync —— W5 后直接 match EntityId variant 拿强类型 inner id,删去原
+    // `starts_with` + 跨 crate `CardId::parse` 重校验(那两步等价于 IPC 边界已
+    // 做过的校验,且 new_unchecked 仍是 pub(crate),不外泄)。
     let vault_fs = RecordingVaultFs::wrap_real(state.core.vault_path.to_string_lossy().to_string(), state.suppression.clone());
-    if from_id.starts_with("card_") && matches!(edge_type, EdgeType::LinkTo | EdgeType::Related | EdgeType::SeeAlso) {
-        let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
-        // entity_disconnect 是 entity-generic 命令(from_id: String,W5 EntityId 范围),
-        // 这里已经 prefix-checked = card_;跨 crate 不开 new_unchecked,显式 parse
-        // 重校验,O(starts_with) 开销可忽略;parse 失败走 propagate 而非 panic。
-        let card_id = CardId::parse(from_id.clone()).map_err(|e| AppError::Keysight {
-            message: format!("内部不变量:from_id 已 prefix-check 为 card_ 但 parse 失败: {e}"),
-        })?;
-        store.sync_edges_to_file(&card_id).map_err(AppError::from)?;
-    } else if from_id.starts_with("note_") && edge_type == EdgeType::NoteLink {
-        let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
-        // 同 card 分支:prefix-checked,跨 crate parse 重校验,
-        // O(starts_with) 开销可忽略,不开放 new_unchecked API 表面;失败走 propagate。
-        let note_id = NoteId::parse(from_id.clone()).map_err(|e| AppError::Keysight {
-            message: format!("内部不变量:from_id 已 prefix-check 为 note_ 但 parse 失败: {e}"),
-        })?;
-        store.sync_links_to_file(&note_id).map_err(AppError::from)?;
+    match (&from_id, edge_type) {
+        (EntityId::Card(card_id), EdgeType::LinkTo)
+        | (EntityId::Card(card_id), EdgeType::Related)
+        | (EntityId::Card(card_id), EdgeType::SeeAlso) => {
+            let store = SqliteCardStore::with_vault_fs(&conn, &vault_fs);
+            store.sync_edges_to_file(card_id).map_err(AppError::from)?;
+        }
+        (EntityId::Note(note_id), EdgeType::NoteLink) => {
+            let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
+            store.sync_links_to_file(note_id).map_err(AppError::from)?;
+        }
+        _ => {}
     }
 
     Ok(())

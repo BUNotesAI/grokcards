@@ -2,6 +2,7 @@
 use rusqlite::Connection;
 
 use crate::domain::edge::Edge;
+use crate::domain::id::EntityId;
 use crate::errors::KeysightError;
 use crate::models::{EdgeRow, EdgeType};
 
@@ -18,22 +19,21 @@ pub trait EntityGraph {
 
     /// 断开两个实体的连接(按 DB 行原始键定位)。
     ///
-    /// 子阶段 2a 保留旧字符串签名 —— disconnect 的语义是「删除一行 DB 记录」
-    /// 而不是「表达一个合法 Edge」,且 TS 侧目前无 disconnect 调用,类型化
-    /// 投入收益比不高。子阶段 2b 的 reader 能力到位后,本方法可统一升级到
-    /// `disconnect(edge: &Edge)`。
+    /// W5 渗透后接 `&EntityId`(原始字符串接口由 IPC 边界 / 调用方负责 parse)。
+    /// disconnect 的语义是「删除一行 DB 记录」,与 connect 不同,接受可能 stale
+    /// 的 (from, to, edge_type) 组合(对应 DB 行不存在则无效果)。
     fn disconnect(
         &self,
-        from_id: &str,
-        to_id: &str,
+        from_id: &EntityId,
+        to_id: &EntityId,
         edge_type: EdgeType,
     ) -> Result<(), KeysightError>;
 
     /// 查询某实体的所有出边(返回 DB 行投影,未做类型安全校验)
-    fn edges_from(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
+    fn edges_from(&self, entity_id: &EntityId) -> Result<Vec<EdgeRow>, KeysightError>;
 
     /// 查询某实体的所有入边(返回 DB 行投影,未做类型安全校验)
-    fn edges_to(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError>;
+    fn edges_to(&self, entity_id: &EntityId) -> Result<Vec<EdgeRow>, KeysightError>;
 }
 
 pub struct SqliteEntityGraph<'a> {
@@ -58,24 +58,24 @@ impl EntityGraph for SqliteEntityGraph<'_> {
 
     fn disconnect(
         &self,
-        from_id: &str,
-        to_id: &str,
+        from_id: &EntityId,
+        to_id: &EntityId,
         edge_type: EdgeType,
     ) -> Result<(), KeysightError> {
         let edge_type_str = edge_type.as_db_str();
         self.conn.execute(
             "DELETE FROM edges WHERE from_id = ?1 AND to_id = ?2 AND edge_type = ?3",
-            rusqlite::params![from_id, to_id, edge_type_str],
+            rusqlite::params![from_id.as_str(), to_id.as_str(), edge_type_str],
         )?;
         Ok(())
     }
 
-    fn edges_from(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError> {
+    fn edges_from(&self, entity_id: &EntityId) -> Result<Vec<EdgeRow>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT from_id, to_id, edge_type, style, label FROM edges WHERE from_id = ?1",
         )?;
         let edges = stmt
-            .query_map(rusqlite::params![entity_id], |row| {
+            .query_map(rusqlite::params![entity_id.as_str()], |row| {
                 Ok(EdgeRow {
                     from_id: row.get(0)?,
                     to_id: row.get(1)?,
@@ -88,12 +88,12 @@ impl EntityGraph for SqliteEntityGraph<'_> {
         Ok(edges)
     }
 
-    fn edges_to(&self, entity_id: &str) -> Result<Vec<EdgeRow>, KeysightError> {
+    fn edges_to(&self, entity_id: &EntityId) -> Result<Vec<EdgeRow>, KeysightError> {
         let mut stmt = self.conn.prepare(
             "SELECT from_id, to_id, edge_type, style, label FROM edges WHERE to_id = ?1",
         )?;
         let edges = stmt
-            .query_map(rusqlite::params![entity_id], |row| {
+            .query_map(rusqlite::params![entity_id.as_str()], |row| {
                 Ok(EdgeRow {
                     from_id: row.get(0)?,
                     to_id: row.get(1)?,
@@ -128,6 +128,12 @@ mod tests {
         }
     }
 
+    /// 测试辅助:把字符串 id 解析成 [`EntityId`],用于 disconnect / edges_from /
+    /// edges_to 等 W5 渗透后的 `&EntityId` 入参。
+    fn eid(s: &str) -> EntityId {
+        EntityId::parse(s).expect("test fixture entity id 应合法")
+    }
+
     /// 测试辅助:构造一条 card → card 的 [`Edge::CardLink`] fixture。
     fn card_link(from: &str, to: &str) -> Edge {
         user_draw_edge(
@@ -143,7 +149,7 @@ mod tests {
         let graph = SqliteEntityGraph::new(&conn);
         graph.connect(&card_link("card_aaa", "card_bbb")).unwrap();
 
-        let edges = graph.edges_from("card_aaa").unwrap();
+        let edges = graph.edges_from(&eid("card_aaa")).unwrap();
         assert_eq!(edges.len(), 1);
         assert_eq!(edges[0].from_id, "card_aaa");
         assert_eq!(edges[0].to_id, "card_bbb");
@@ -158,7 +164,7 @@ mod tests {
         graph.connect(&edge).unwrap();
         graph.connect(&edge).unwrap();
 
-        let edges = graph.edges_from("card_aaa").unwrap();
+        let edges = graph.edges_from(&eid("card_aaa")).unwrap();
         assert_eq!(edges.len(), 1, "重复连接应幂等");
     }
 
@@ -168,10 +174,10 @@ mod tests {
         let graph = SqliteEntityGraph::new(&conn);
         graph.connect(&card_link("card_aaa", "card_bbb")).unwrap();
         graph
-            .disconnect("card_aaa", "card_bbb", EdgeType::LinkTo)
+            .disconnect(&eid("card_aaa"), &eid("card_bbb"), EdgeType::LinkTo)
             .unwrap();
 
-        let edges = graph.edges_from("card_aaa").unwrap();
+        let edges = graph.edges_from(&eid("card_aaa")).unwrap();
         assert!(edges.is_empty(), "断开后应无边");
     }
 
@@ -180,7 +186,7 @@ mod tests {
         let conn = test_conn();
         let graph = SqliteEntityGraph::new(&conn);
         graph
-            .disconnect("card_aaa", "card_bbb", EdgeType::LinkTo)
+            .disconnect(&eid("card_aaa"), &eid("card_bbb"), EdgeType::LinkTo)
             .unwrap();
     }
 
@@ -196,7 +202,7 @@ mod tests {
         };
         graph.connect(&related).unwrap();
 
-        let edges = graph.edges_to("card_bbb").unwrap();
+        let edges = graph.edges_to(&eid("card_bbb")).unwrap();
         assert_eq!(edges.len(), 2);
     }
 
@@ -220,7 +226,7 @@ mod tests {
             })
             .unwrap();
 
-        let edges = graph.edges_from("card_aaa").unwrap();
+        let edges = graph.edges_from(&eid("card_aaa")).unwrap();
         assert_eq!(edges.len(), 2, "不同类型的边应共存");
     }
 }

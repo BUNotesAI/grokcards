@@ -211,8 +211,18 @@ impl From<WhiteboardId> for String {
 // EntityId —— 6 个 entity newtype 的判别联合
 // WhiteboardId 不属于 EntityId(wb owns entities,不是 entity)
 // ====================================================================
+//
+// Serde / specta 路径与 6 个 entity newtype 完全一致:`try_from = "String"`
+// + `into = "String"` + `#[specta(type = String)]`。TS 端 wire 是 plain string,
+// Rust 端业务层是 enum union。invalid prefix 在 IPC 反序列化边界被
+// `IdError::UnknownPrefix` 拒绝(W5 spec scenario 3)。
+//
+// **禁止** 使用 specta enum 默认 ser shape(`{ Card: "card_xxx" }`)—— 那会
+// 破坏 7 个 id 类型统一的 string wire 约定,TS callsite 需要构造 discriminator。
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
+#[serde(try_from = "String", into = "String")]
+#[specta(type = String)]
 pub enum EntityId {
     Card(CardId),
     Note(NoteId),
@@ -252,6 +262,29 @@ impl EntityId {
             Self::Question(id) => id.as_str(),
             Self::Task(id) => id.as_str(),
         }
+    }
+}
+
+impl TryFrom<String> for EntityId {
+    type Error = IdError;
+    fn try_from(s: String) -> Result<Self, IdError> {
+        Self::parse(&s)
+    }
+}
+
+impl From<EntityId> for String {
+    fn from(id: EntityId) -> String {
+        id.as_str().to_string()
+    }
+}
+
+// SQL bind 支持。让 `params![entity_id]` 直接接 EntityId,不需要每处 `.as_str()`。
+// 与 6 个 entity newtype 的 ToSql impl 风格对齐。
+impl rusqlite::types::ToSql for EntityId {
+    fn to_sql(&self) -> rusqlite::Result<rusqlite::types::ToSqlOutput<'_>> {
+        Ok(rusqlite::types::ToSqlOutput::Borrowed(
+            rusqlite::types::ValueRef::Text(self.as_str().as_bytes()),
+        ))
     }
 }
 
