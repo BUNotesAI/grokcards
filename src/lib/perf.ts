@@ -39,15 +39,12 @@ function dumpPreviousSession(): void {
     if (!raw) return;
     const prev = JSON.parse(raw) as string[];
     if (!Array.isArray(prev) || prev.length === 0) return;
-    // eslint-disable-next-line no-console
     console.log(
       `[perf prev session] === 上次启动遗留 ${prev.length} 条事件 ===`,
     );
     for (const line of prev) {
-      // eslint-disable-next-line no-console
       console.log(`[perf prev] ${line}`);
     }
-    // eslint-disable-next-line no-console
     console.log(`[perf prev session] === end ===`);
   } catch {
     // ignore
@@ -60,17 +57,14 @@ export function perfLog(message: string): void {
   const now = performance.now();
   const elapsed = now - APP_START;
   const line = `${nowTs()} +${elapsed.toFixed(0)}ms ${message}`;
-  // eslint-disable-next-line no-console
   console.log(`[perf ${line}]`);
   persist(line);
 }
 
 /** 手动 dump 所有 in-memory 事件到 console（DevTools 里调用） */
 export function dumpPerfLog(): void {
-  // eslint-disable-next-line no-console
   console.log(`[perf dump] === ${events.length} events ===`);
   for (const line of events) {
-    // eslint-disable-next-line no-console
     console.log(`[perf] ${line}`);
   }
 }
@@ -230,7 +224,6 @@ export function perfMeasure<T>(name: string, fn: () => T): T {
   const start = performance.now();
   const result = fn();
   const dur = performance.now() - start;
-  // eslint-disable-next-line no-console
   console.log(`[perf ${dur.toFixed(0)}ms] ${name}`);
   return result;
 }
@@ -245,7 +238,6 @@ export async function perfMeasureAsync<T>(
     return await fn();
   } finally {
     const dur = performance.now() - start;
-    // eslint-disable-next-line no-console
     console.log(`[perf ${dur.toFixed(0)}ms] ${name}`);
   }
 }

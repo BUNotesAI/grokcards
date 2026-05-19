@@ -1,0 +1,8 @@
+# task_ca5ece70 — workspace 级 clippy 配置
+#
+# 单函数行数阈值 80(stricter than clippy default 100)。
+# 与 ESLint `max-lines-per-function: 100` 配合:JS/TS 100 / Rust 80 — 后者更紧因 Rust 显式且密集。
+# 触发 `clippy::too_many_lines` 时:
+#   - 新代码 → 拆 helper
+#   - 现有超标 → 加 `#[allow(clippy::too_many_lines)] // 例外: {理由}` 单点豁免
+too-many-lines-threshold = 80

@@ -1,3 +1,5 @@
+#![warn(clippy::too_many_lines)]
+
 //! keysight-cli — 查询 CLI 的 library crate。
 //!
 //! main.rs 用 `use keysight_cli::*;` 消费这里的模块;

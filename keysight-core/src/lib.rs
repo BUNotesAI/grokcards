@@ -1,3 +1,5 @@
+#![warn(clippy::too_many_lines)]
+
 //! keysight-core — 业务逻辑 crate
 //!
 //! 从 super-tauri app 抽出的纯业务模块,无 tauri 依赖。被 super-tauri app

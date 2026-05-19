@@ -112,7 +112,7 @@ export function useViewport(whiteboardId: string) {
       setState(loadViewport(whiteboardId));
       setNeedsFit(!hadSaved);
     }
-  }, [whiteboardId]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [whiteboardId]);
 
   // Debounced 持久化
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);

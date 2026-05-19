@@ -1,3 +1,5 @@
+#![warn(clippy::too_many_lines)]
+
 use std::sync::Mutex;
 
 use rusqlite::Connection;
