@@ -363,8 +363,20 @@ fn read_sync_rs() -> Option<(PathBuf, String)> {
     read_file(Path::new("../keysight-core/src/domain/sync.rs"))
 }
 
+/// task_a60ceca2 后 commands 已拆为子目录;扫描 `src/modules/keysight/commands/`
+/// 全部 `.rs` 文件,合并为单一 source 供 audit 扫描。
 fn read_commands_rs() -> Option<(PathBuf, String)> {
-    read_file(Path::new("src/modules/keysight/commands.rs"))
+    let dir = PathBuf::from("src/modules/keysight/commands");
+    let mut combined = String::new();
+    for entry in std::fs::read_dir(&dir).ok()? {
+        let entry = entry.ok()?;
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            combined.push_str(&std::fs::read_to_string(&path).ok()?);
+            combined.push('\n');
+        }
+    }
+    if combined.is_empty() { None } else { Some((dir, combined)) }
 }
 
 // =============================================================================

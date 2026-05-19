@@ -320,8 +320,20 @@ fn test_entity_id_propagated_in_cross_entity_layer() {
 
 #[test]
 fn test_entity_tauri_commands_use_entity_id() {
-    let (cmd_path, cmd_src) = read_file(Path::new("src/modules/keysight/commands.rs"))
-        .expect("commands.rs 未找到 —— 检查 CWD 是否为 src-tauri/");
+    // task_a60ceca2 后 commands 已拆为子目录;walk dir 把所有 .rs 拼起来扫描,
+    // audit 业务逻辑(find_command_residue)不变。
+    let dir = PathBuf::from("src/modules/keysight/commands");
+    let mut combined = String::new();
+    for entry in std::fs::read_dir(&dir).expect("commands/ 目录未找到 —— 检查 CWD 是否为 src-tauri/") {
+        let entry = entry.expect("read_dir entry");
+        let path = entry.path();
+        if path.extension().and_then(|s| s.to_str()) == Some("rs") {
+            combined.push_str(&std::fs::read_to_string(&path).expect("read .rs"));
+            combined.push('\n');
+        }
+    }
+    let cmd_path = dir;
+    let cmd_src = combined;
     let violations = find_command_residue(&cmd_src, &cmd_path);
     assert!(
         violations.is_empty(),

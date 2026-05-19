@@ -327,11 +327,19 @@ fn walk_src_tauri_tests() -> Vec<(PathBuf, String)> {
     walk_rs(Path::new("tests"))
 }
 
-/// 读 `src-tauri/src/modules/keysight/commands.rs`。
+/// 读 `src-tauri/src/modules/keysight/commands/` 子目录全部 `.rs` 文件,合并为单一 source。
+///
+/// 历史:task_a60ceca2 把原单文件 `commands.rs` 拆为 `commands/{entity}.rs` 子目录。
+/// audit 业务逻辑(找 `#[tauri::command]` fn 中 wb_id 残留 `String|&str`)零变更,
+/// 仅扩展读取范围:从单文件改为 walk 目录把所有子文件 source 拼起来当一个 blob 扫描。
 fn read_commands_rs() -> Option<(PathBuf, String)> {
-    let p = PathBuf::from("src/modules/keysight/commands.rs");
-    let s = std::fs::read_to_string(&p).ok()?;
-    Some((p, s))
+    let dir = PathBuf::from("src/modules/keysight/commands");
+    let files = walk_rs(&dir);
+    if files.is_empty() {
+        return None;
+    }
+    let combined: String = files.into_iter().map(|(_, s)| s).collect::<Vec<_>>().join("\n");
+    Some((dir, combined))
 }
 
 // =============================================================================
