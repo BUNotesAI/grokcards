@@ -243,6 +243,11 @@ fn op_disconnect(
         (EntityId::Note(note_id), EdgeType::NoteLink) => {
             SqliteNoteStore::with_vault_fs(conn, vault_fs).sync_links_to_file(note_id)?;
         }
+        // 例外:其余 (EntityId, EdgeType) 组合无独立文件同步副作用 ——
+        // 与 commands::entity_disconnect 同步路由严格对齐(防火墙原则:CLI 写
+        // 和 UI 写副作用一致)。Alias 继承 owning card;Section / Task 不主动
+        // 发边;Question 的文件同步由 op_connect → sync_source_file_for_edge
+        // 走 question::sync_links_to_file 独立路径,非 disconnect 副作用。
         _ => {}
     }
 

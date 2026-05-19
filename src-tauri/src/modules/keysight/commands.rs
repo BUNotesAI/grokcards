@@ -1278,6 +1278,15 @@ pub fn entity_disconnect(
             let store = SqliteNoteStore::with_vault_fs(&conn, &vault_fs);
             store.sync_links_to_file(note_id).map_err(AppError::from)?;
         }
+        // 例外:其余 (EntityId, EdgeType) 组合无独立文件同步副作用:
+        //   - Alias 继承 owning card,无独立 md 文件
+        //   - Section / Task 不主动发边(业务规则),不会进入 disconnect
+        //   - Question 的文件同步走 question::sync_links_to_file 独立路径,
+        //     由 entity_connect 路径处理,非 disconnect 副作用
+        //   - Card / Note 的其他 EdgeType 在 connect 路径由 user_draw_edge
+        //     编译期穷尽,生产路径不会出现非 (Card, LinkTo|Related|SeeAlso) /
+        //     (Note, NoteLink) 的组合
+        // 未来若 EntityId 新增 variant 或 EdgeType 加新业务行为,需评估是否补 arm。
         _ => {}
     }
 
