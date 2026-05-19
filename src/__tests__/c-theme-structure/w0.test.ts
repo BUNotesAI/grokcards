@@ -50,18 +50,8 @@ describe("C Theme W0 — 模块顶部纯函数 → lib/", () => {
     expect(graphViewSrc).not.toMatch(/^const\s+TASK_PACK_ROW_GAP\b/m);
     expect(graphViewSrc).not.toMatch(/^const\s+TASK_PACK_TOP_OFFSET_Y\b/m);
 
-    // GraphView.tsx 应该 import 这些新 lib(否则搬走后 GraphView 自身引用断裂)
-    expect(graphViewSrc).toMatch(
-      /import\s+\{[^}]*\bviewportCenterWorld\b[^}]*\}\s+from\s+["']@\/components\/keysight\/lib\/graphPositioning["']/,
-    );
-    expect(graphViewSrc).toMatch(
-      /import\s+\{[^}]*\bavoidSectionOverlap\b[^}]*\}\s+from\s+["']@\/components\/keysight\/lib\/sectionLayout["']/,
-    );
-    expect(graphViewSrc).toMatch(
-      /import\s+\{[^}]*\bpackTaskPositions\b[^}]*\}\s+from\s+["']@\/components\/keysight\/lib\/taskLayout["']/,
-    );
-    expect(graphViewSrc).toMatch(
-      /import\s+\{[^}]*\bmergeEntitiesWithPositions\b[^}]*\}\s+from\s+["']@\/components\/keysight\/lib\/mergeEntitiesWithPositions["']/,
-    );
+    // 抽走后引用是否断裂由 pnpm build / 编译期保证,无需 import-assertion;
+    // W1+ 后某些函数被 useCreationModals 等 hook 直接 import,GraphView 不再持有 import,
+    // 留 import-assertion 会随实施波次 stale。
   });
 });

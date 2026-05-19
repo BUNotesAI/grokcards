@@ -34,18 +34,16 @@ import {
   viewportCenterWorld,
   visibleViewportSize,
 } from "@/components/keysight/lib/graphPositioning";
-import {
-  avoidSectionOverlap,
-  SECTION_PADDING,
-} from "@/components/keysight/lib/sectionLayout";
+import { SECTION_PADDING } from "@/components/keysight/lib/sectionLayout";
 import {
   TASK_NODE_WIDTH,
   TASK_NODE_HEIGHT,
   TASK_JUMP_MIN_ZOOM,
-  packTaskPositions,
   taskPositionAboveTopmost,
 } from "@/components/keysight/lib/taskLayout";
 import { mergeEntitiesWithPositions } from "@/components/keysight/lib/mergeEntitiesWithPositions";
+import { useEntityEditing } from "@/components/keysight/hooks/useEntityEditing";
+import { useCreationModals } from "@/components/keysight/hooks/useCreationModals";
 
 /** 拖拽阈值 — 小于此距离视为 click 而非 drag（屏幕像素） */
 const DRAG_THRESHOLD = 4;
@@ -158,16 +156,23 @@ export function GraphView({
   const lastDidDragRef = useRef(false);
   const [localPositions, setLocalPositions] = useState<Record<string, Position>>({});
 
+  const {
+    editing,
+    setEditing,
+    handleStartEdit,
+    handleCancelEdit,
+    handleCommitEdit,
+  } = useEntityEditing({
+    lastDidDragRef,
+    cards,
+    notes,
+    sections,
+    questions,
+    tasks,
+  });
+
   // 展开状态 — 同时只有一张卡片展开显示 body / 关联列表
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [creatingNote, setCreatingNote] = useState(false);
-  const [noteDraft, setNoteDraft] = useState("");
-  const [creatingQuestion, setCreatingQuestion] = useState(false);
-  const [questionDraft, setQuestionDraft] = useState("");
-  const [creatingWhiteboard, setCreatingWhiteboard] = useState(false);
-  const [whiteboardDraft, setWhiteboardDraft] = useState("");
-  const [creatingTask, setCreatingTask] = useState(false);
-  const [taskDraft, setTaskDraft] = useState("");
   const handleToggleExpand = useCallback((entityId: string) => {
     // click 之前如果发生了拖拽就不切换
     if (lastDidDragRef.current) {
@@ -190,19 +195,6 @@ export function GraphView({
     };
   }, []);
 
-  // 行内编辑状态：同时只能编辑一个字段
-  // field 区分：card-title / card-understanding / note-title / note-body / section-title / task-title
-  // 注意:此处和 EntityNode.tsx 的 EditingField 是同步副本,扩展时两处都要改
-  type EditingField =
-    | "card-title"
-    | "card-understanding"
-    | "note-title"
-    | "note-body"
-    | "question-title"
-    | "question-body"
-    | "section-title"
-    | "task-title";
-  const [editing, setEditing] = useState<{ id: string; field: EditingField } | null>(null);
 
   // 画连线状态 — ⋯ 菜单 Draw connection 后进入两阶段点击模式
   // 第一次点菜单设置 fromId；第二次点其他实体触发 entityConnect + 清空。
@@ -221,56 +213,6 @@ export function GraphView({
     setRelatedSearch("");
   }, [currentWhiteboardId]);
 
-  const handleStartEdit = useCallback((id: string, field: EditingField) => {
-    if (lastDidDragRef.current) {
-      lastDidDragRef.current = false;
-      return;
-    }
-    setEditing({ id, field });
-  }, []);
-
-  const handleCancelEdit = useCallback(() => {
-    setEditing(null);
-  }, []);
-
-  // 提交编辑 — 调用对应 entity hook(hook 内自动 invalidate 对应 query cache)
-  const handleCommitEdit = useCallback(
-    async (id: string, field: EditingField, value: string) => {
-      try {
-        switch (field) {
-          case "card-title":
-            await cards.editTitle(id, value);
-            break;
-          case "card-understanding":
-            await cards.updateUnderstanding(id, value);
-            break;
-          case "note-title":
-            await notes.update(id, value, null, null);
-            break;
-          case "note-body":
-            await notes.update(id, null, value, null);
-            break;
-          case "section-title":
-            await sections.update(id, value, null);
-            break;
-          case "question-title":
-            await questions.update(id, value, null, null, null);
-            break;
-          case "question-body":
-            await questions.update(id, null, value, null, null);
-            break;
-          case "task-title":
-            await tasks.update(id, value, null, null, null, null);
-            break;
-        }
-      } catch (e) {
-        console.error(`提交 ${field} 失败:`, e);
-      } finally {
-        setEditing(null);
-      }
-    },
-    [cards, notes, sections, questions, tasks],
-  );
 
   // entityId → 所在 section id 的反向索引
   // 用于 ⋯ 菜单判断 "Remove from group" 是否显示
@@ -779,241 +721,52 @@ export function GraphView({
     ],
   );
 
-  // 创建 Section 回调
-  const handleCreateSection = useCallback(async () => {
-    try {
-      const result = await sections.create(currentWhiteboardId, "New Section", null);
-      const preferredPos = newEntityPositionAtCenter(400, 300);
-      const existingSectionRects = allEntities
-        .filter((entity) => entity.kind === "section")
-        .map((entity) => {
-          const dim = allDimensions[entity.id] ?? { width: 400, height: 300 };
-          return {
-            left: entity.position.x,
-            top: entity.position.y,
-            right: entity.position.x + dim.width,
-            bottom: entity.position.y + dim.height,
-          };
-        });
-      const pos = avoidSectionOverlap(preferredPos, { width: 400, height: 300 }, existingSectionRects);
-      await layouts.setPosition(currentWhiteboardId, result.id, pos.x, pos.y);
-      onSelectEntity?.({ id: result.id, kind: "section" });
-      setEditing({ id: result.id, field: "section-title" });
-    } catch (e) {
-      console.error("创建 section 失败:", e);
-    }
-  }, [allDimensions, allEntities, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, sections, layouts]);
-
-  // 创建 Note 回调
-  const handleCreateNote = useCallback(() => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    setCreatingTask(false);
-    setTaskDraft("");
-    setNoteDraft("");
-    setCreatingNote(true);
-  }, []);
-
-  const handleCancelCreateNote = useCallback(() => {
-    setCreatingNote(false);
-    setNoteDraft("");
-  }, []);
-
-  const handleSubmitCreateNote = useCallback(async () => {
-    const title = noteDraft.trim();
-    setCreatingNote(false);
-    setNoteDraft("");
-    if (!title) return;
-
-    try {
-      const result = await notes.create(currentWhiteboardId, title, null, null);
-      const pos = newEntityPositionAtCenter(520, 180);
-      await layouts.setPosition(currentWhiteboardId, result.id, pos.x, pos.y);
-      onSelectEntity?.({ id: result.id, kind: "note" });
-      setEditing({ id: result.id, field: "note-body" });
-    } catch (e) {
-      console.error("创建 note 失败:", e);
-    }
-  }, [noteDraft, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, notes, layouts]);
-
-  const handleCreateQuestion = useCallback(async () => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    setCreatingNote(false);
-    setNoteDraft("");
-    setCreatingTask(false);
-    setTaskDraft("");
-    setQuestionDraft("");
-    setCreatingQuestion(true);
-  }, []);
-
-  const handleCancelCreateQuestion = useCallback(() => {
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-  }, []);
-
-  const handleSubmitCreateQuestion = useCallback(async () => {
-    const title = questionDraft.trim();
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    if (!title) return;
-
-    try {
-      const result = await questions.create(currentWhiteboardId, title, null, null, null);
-      const pos = newEntityPositionAtCenter(320, 140);
-      await layouts.setPosition(currentWhiteboardId, result.id, pos.x, pos.y);
-      onSelectEntity?.({ id: result.id, kind: "question" });
-      setEditing({ id: result.id, field: "question-body" });
-    } catch (e) {
-      console.error("创建 question 失败:", e);
-    }
-  }, [questionDraft, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, questions, layouts]);
-
-  // 创建 Task 回调 — 仅在 currentWhiteboardId 形如 "projects/{name}" 时由 GraphToolbar 触发
-  const handleCreateTask = useCallback(() => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    setCreatingNote(false);
-    setNoteDraft("");
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    setTaskDraft("");
-    setCreatingTask(true);
-  }, []);
-
-  const handleCancelCreateTask = useCallback(() => {
-    setCreatingTask(false);
-    setTaskDraft("");
-  }, []);
-
-  const handleSubmitCreateTask = useCallback(async () => {
-    const title = taskDraft.trim();
-    setCreatingTask(false);
-    setTaskDraft("");
-    if (!title) return;
-
-    // project 从 currentWhiteboardId 剥 "projects/" 前缀推导:按钮仅在该上下文渲染,
-    // 但防御性地再校验一次,避免静默写入错 project
-    const projectPrefix = "projects/";
-    if (!currentWhiteboardId.startsWith(projectPrefix)) {
-      console.error("handleSubmitCreateTask 在非 project 白板被调用", { currentWhiteboardId });
-      return;
-    }
-    const project = currentWhiteboardId.slice(projectPrefix.length);
-    if (!project) {
-      console.error("handleSubmitCreateTask 派生出空 project name", { currentWhiteboardId });
-      return;
-    }
-
-    try {
-      const fallbackPos = newEntityPositionAtCenter(320, 140);
-      const pos = taskPositionAboveTopmost(data.tasks, effectivePositions, fallbackPos);
-      const result = await tasks.create({
-        project,
-        title,
-        content: null,
-        status: "next",
-        area: null,
-        color: null,
-        position: pos,
-      });
-      onSelectEntity?.({ id: result.id, kind: "task" });
-    } catch (e) {
-      console.error("创建 task 失败:", e);
-    }
-  }, [taskDraft, data.tasks, effectivePositions, onSelectEntity, currentWhiteboardId, newEntityPositionAtCenter, tasks]);
-
-  const handlePackTasks = useCallback(async () => {
-    if (!currentWhiteboardId.startsWith("projects/")) return;
-    if (data.tasks.length === 0) return;
-    const size = getVisibleViewportSize();
-    if (size.width === 0 || size.height === 0) return;
-
-    const confirmed = window.confirm(
-      "Pack all project tasks into visible columns? This rewrites task positions only.",
-    );
-    if (!confirmed) return;
-
-    const center = viewportCenterWorld(
-      viewport.state.zoom,
-      viewport.state.panX,
-      viewport.state.panY,
-      size.width,
-      size.height,
-    );
-    const packed = packTaskPositions(data.tasks, center);
-    const packedPositions = Object.values(packed);
-
-    setLocalPositions((prev) => ({ ...prev, ...packed }));
-
-    try {
-      // Promise.all 并发写,部分失败不 rollback 已成功的写入。catch 块
-      // invalidate 让 query refetch 拿回 server 真实状态,UI 显示 partial。
-      // 如未来需要原子语义,加 layout_set_positions_bulk command 走单事务。
-      await Promise.all(
-        Object.entries(packed).map(([taskId, position]) =>
-          layouts.setPositionWithoutInvalidate(
-            currentWhiteboardId,
-            taskId,
-            position.x,
-            position.y,
-          ),
-        ),
-      );
-      layouts.invalidatePositions();
-      viewport.actions.fitToContent(
-        packedPositions,
-        size.width,
-        size.height,
-      );
-    } catch (e) {
-      console.error("整理 task 位置失败:", e);
-      layouts.invalidatePositions();
-    }
-  }, [
-    currentWhiteboardId,
-    data.tasks,
-    getVisibleViewportSize,
+  const {
+    creatingNote,
+    noteDraft,
+    setNoteDraft,
+    creatingQuestion,
+    questionDraft,
+    setQuestionDraft,
+    creatingTask,
+    taskDraft,
+    setTaskDraft,
+    creatingWhiteboard,
+    whiteboardDraft,
+    setWhiteboardDraft,
+    handleCreateSection,
+    handleCreateNote,
+    handleCancelCreateNote,
+    handleSubmitCreateNote,
+    handleCreateQuestion,
+    handleCancelCreateQuestion,
+    handleSubmitCreateQuestion,
+    handleCreateTask,
+    handleCancelCreateTask,
+    handleSubmitCreateTask,
+    handlePackTasks,
+    handleCreateWhiteboard,
+    handleCancelCreateWhiteboard,
+    handleSubmitCreateWhiteboard,
+  } = useCreationModals({
+    notes,
+    questions,
+    tasks,
+    whiteboardActions,
+    sections,
     layouts,
-    viewport.actions,
-    viewport.state.panX,
-    viewport.state.panY,
-    viewport.state.zoom,
-  ]);
-
-  const handleCreateWhiteboard = useCallback(async () => {
-    if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
-    setCreatingNote(false);
-    setNoteDraft("");
-    setCreatingQuestion(false);
-    setQuestionDraft("");
-    setCreatingTask(false);
-    setTaskDraft("");
-    setWhiteboardDraft("");
-    setCreatingWhiteboard(true);
-  }, [currentWhiteboardId]);
-
-  const handleCancelCreateWhiteboard = useCallback(() => {
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-  }, []);
-
-  const handleSubmitCreateWhiteboard = useCallback(async () => {
-    if (currentWhiteboardId !== ROOT_WHITEBOARD) return;
-
-    const name = whiteboardDraft.trim();
-    setCreatingWhiteboard(false);
-    setWhiteboardDraft("");
-    if (!name) return;
-
-    try {
-      await whiteboardActions.create(name);
-    } catch (e) {
-      console.error("创建 whiteboard 失败:", e);
-    }
-  }, [currentWhiteboardId, whiteboardActions, whiteboardDraft]);
+    viewport,
+    currentWhiteboardId,
+    data,
+    effectivePositions,
+    allEntities,
+    allDimensions,
+    newEntityPositionAtCenter,
+    getVisibleViewportSize,
+    onSelectEntity,
+    setEditing,
+    setLocalPositions,
+  });
 
   // ⋯ 菜单回调集合 — 稳定 reference 传给 EntityNode,memo 比较依赖它不变
   // 依赖 data/viewport/entity-actions,数据变化时整体替换(EntityNode 整体重渲染)
