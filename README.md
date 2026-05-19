@@ -114,12 +114,15 @@ super-tauri/
 │   └── tests/                    # Rust 集成测试
 ├── keysight-core/                # 共享 domain 层（Tauri + CLI 共用）
 │   └── src/
-│       ├── domain/               #   业务纯函数（10 个子模块）
+│       ├── domain/               #   业务纯函数（15 个子模块）
+│       │                         #   id.rs newtype 集中定义 / migration.rs schema 演进 /
+│       │                         #   alias·card·note·section·task·question·entity·edge·
+│       │                         #   layout·sync·whiteboard·overview·legacy_import
 │       ├── models.rs             #   数据类型
 │       └── parser.rs             #   Markdown/YAML frontmatter 解析
 └── keysight-cli/                 # CLI 工具
     └── src/
-        ├── main.rs               #   clap 入口（27 个子命令）
+        ├── main.rs               #   clap 入口（RootCommand 16 顶层 + 嵌套子组 ≈ 29 命令）
         └── commands.rs           #   命令实现
 ```
 
@@ -128,6 +131,7 @@ super-tauri/
 **TS 只负责 UI，Rust 独占业务逻辑。** 所有数据写入通过 Rust → SQLite，TS 侧不持有持久业务状态。
 
 - **IPC 类型安全**：每个 `#[tauri::command]` 同时标记 `#[specta::specta]`，自动生成 `bindings.ts`。TS 侧从 bindings import typed commands，不使用 raw `invoke()`
+- **双端 branded ID**：7 个 entity id（WhiteboardId / CardId / NoteId / AliasId / SectionId / QuestionId / TaskId）+ EntityId 判别联合，Rust 端是 newtype（prefix 校验 + `#[serde(try_from = "String")]` + `ToSql`），IPC 反序列化边界自动 reject illegal prefix；TS 端通过 ts-morph 后处理把 `bindings.ts` 中对应 type alias 改写为 `string & { __brand: "XId" }`，编译期挡 id 类型混用与参数顺序写反
 - **Deep Module 模式**：每个业务模块（`keysight/`、`todo/`）对外暴露窄接口（commands + models），内部实现（domain、db、errors）对外不可见
 - **CLI 双路径**：查询命令直连 SQLite（WAL 多进程读）；写命令走 localhost HTTP IPC 委托 Tauri 主进程处理
 
